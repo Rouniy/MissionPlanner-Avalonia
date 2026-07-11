@@ -104,6 +104,10 @@ jobs:
             security list-keychains -d user -s "$KEYCHAIN"
             security default-keychain -s "$KEYCHAIN"
             rm -f "$RUNNER_TEMP/cert.p12"
+            if ! security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "Developer ID Application"; then
+              echo "::error::No Developer ID Application identity after import — check MACOS_CERT_P12 (must be built with OpenSSL -legacy) and MACOS_CERT_PASSWORD."
+              exit 1
+            fi
             export SIGN_IDENTITY="$MACOS_SIGN_IDENTITY"
           fi
 
