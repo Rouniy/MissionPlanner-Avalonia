@@ -151,6 +151,58 @@ public class UpdaterTests {
     Assert.Equal(origA, File.ReadAllBytes(Path.Combine(install, "a.dll")));
   }
 
+  private static byte[] BundleManifestJson(string version, string url, byte[] pkg) {
+    var m = new {
+      version,
+      notes = "https://example/notes",
+      files = Array.Empty<object>(),
+      bundle = new { url, sha256 = Sha(pkg), size = pkg.LongLength },
+    };
+    return JsonSerializer.SerializeToUtf8Bytes(m);
+  }
+
+  [Fact]
+  public async Task Bundle_manifest_downloads_and_verifies_package() {
+    var (priv, pub) = NewKey();
+    byte[] pkg = [4, 8, 15, 16, 23, 42];
+    string pkgUrl = "https://test.local/downloads/app.zip";
+    byte[] json = BundleManifestJson("2026.7.0", pkgUrl, pkg);
+
+    var handler = new FakeHandler();
+    handler.Routes[$"{Base}/{Rid}/manifest.json"] = json;
+    handler.Routes[$"{Base}/{Rid}/manifest.sig"] =
+        System.Text.Encoding.ASCII.GetBytes(Convert.ToBase64String(Sign(priv, json)));
+    handler.Routes[pkgUrl] = pkg;
+
+    var engine = new UpdateEngine(new HttpClient(handler), TempDir(), Base, pub, Rid);
+    var m = await engine.FetchManifestAsync();
+    Assert.NotNull(m!.Bundle);
+    Assert.Equal(pkgUrl, m.Bundle!.Url);
+
+    string dest = Path.Combine(TempDir(), "update.zip");
+    await engine.DownloadBundleAsync(m.Bundle, dest);
+    Assert.Equal(pkg, File.ReadAllBytes(dest));
+  }
+
+  [Fact]
+  public async Task Bundle_download_throws_on_hash_mismatch() {
+    var (priv, pub) = NewKey();
+    byte[] pkg = [1, 2, 3];
+    string pkgUrl = "https://test.local/downloads/app.zip";
+    byte[] json = BundleManifestJson("2026.7.0", pkgUrl, pkg);
+
+    var handler = new FakeHandler();
+    handler.Routes[$"{Base}/{Rid}/manifest.json"] = json;
+    handler.Routes[$"{Base}/{Rid}/manifest.sig"] =
+        System.Text.Encoding.ASCII.GetBytes(Convert.ToBase64String(Sign(priv, json)));
+    handler.Routes[pkgUrl] = [9, 9, 9];
+
+    var engine = new UpdateEngine(new HttpClient(handler), TempDir(), Base, pub, Rid);
+    var m = await engine.FetchManifestAsync();
+    await Assert.ThrowsAsync<InvalidDataException>(
+        () => engine.DownloadBundleAsync(m!.Bundle!, Path.Combine(TempDir(), "update.zip")));
+  }
+
   [Theory]
   [InlineData("2026.7.0", "2026.6.9", true)]
   [InlineData("2026.7.1", "2026.7.0", true)]

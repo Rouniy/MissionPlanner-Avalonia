@@ -92,6 +92,11 @@ public static class Updater {
       break;
     }
 
+    if (m.Bundle != null && OperatingSystem.IsMacOS()) {
+      await InstallBundleAsync(engine, m.Bundle);
+      return;
+    }
+
     var changed = engine.Diff(m);
     if (changed.Count == 0) {
       await Dialogs.Alert("Update", "You already have all the latest files.");
@@ -138,16 +143,88 @@ public static class Updater {
 
       RunWindowsHelper(engine.InstallDir, staging, exe);
     } else {
+      // Linux: in-place per-file swap. macOS never reaches here — a mac manifest always carries a
+      // bundle, so RunAsync takes the full-bundle path (swapping loose files would break the
+      // Developer ID signature + notarization staple that Gatekeeper checks).
       engine.Apply(changed, staging);
-      if (OperatingSystem.IsMacOS()) {
-        ReSignMacBundle(engine.InstallDir);
-      }
       if (!string.IsNullOrEmpty(exe)) {
         Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false });
       }
     }
     Shutdown();
   }
+
+  // macOS: download the whole notarized .app zip, verify its hash, then hand off to a detached
+  // helper that swaps the entire bundle after we exit and relaunches. Whole-bundle replacement
+  // keeps the signature + stapled notarization ticket intact.
+  private static async Task InstallBundleAsync(UpdateEngine engine, UpdateEngine.ManifestBundle bundle) {
+    string staging = Path.Combine(engine.CacheDir, "staging");
+    try {
+      if (Directory.Exists(staging)) {
+        Directory.Delete(staging, true);
+      }
+      Directory.CreateDirectory(staging);
+    } catch { }
+    string zip = Path.Combine(staging, "update.zip");
+
+    var progress = new ProgressReporter("Downloading update");
+    progress.Show2();
+    try {
+      await engine.DownloadBundleAsync(bundle, zip,
+          new Progress<double>(p => progress.Set(p, "Downloading…")), progress.Token).ConfigureAwait(true);
+    } catch (OperationCanceledException) {
+      progress.Close();
+      return;
+    } catch (Exception ex) {
+      progress.Close();
+      await Dialogs.Alert("Update", "Download failed: " + ex.Message);
+      return;
+    }
+    progress.Close();
+
+    try {
+      RunMacBundleHelper(engine.InstallDir, zip, staging);
+      Shutdown();
+    } catch (Exception ex) {
+      await Dialogs.Alert("Update", "Install failed: " + ex.Message);
+    }
+  }
+
+  private static void RunMacBundleHelper(string installDir, string zip, string staging) {
+    string app = Path.GetFullPath(Path.Combine(installDir, "..", ".."));
+    if (!app.EndsWith(".app", StringComparison.OrdinalIgnoreCase)) {
+      throw new InvalidOperationException("Not running from a .app bundle; cannot self-update.");
+    }
+    int pid = Environment.ProcessId;
+    string extract = Path.Combine(staging, "extract");
+    string newApp = Path.Combine(extract, Path.GetFileName(app));
+    string sh = Path.Combine(Path.GetTempPath(), $"mp-update-{pid}.sh");
+
+    // Wait for us to exit, unpack with ditto (preserves +x/symlinks/xattrs/signature), swap the
+    // whole bundle, relaunch. Rollback from <app>.old if the copy fails; the staging tree is wiped.
+    string script = string.Join('\n', new[] {
+      "#!/bin/sh",
+      $"while kill -0 {pid} 2>/dev/null; do sleep 0.5; done",
+      $"rm -rf {Q(extract)}",
+      $"ditto -x -k {Q(zip)} {Q(extract)} || {{ open {Q(app)}; exit 1; }}",
+      $"[ -d {Q(newApp)} ] || {{ open {Q(app)}; exit 1; }}",
+      $"rm -rf {Q(app + ".old")}",
+      $"mv {Q(app)} {Q(app + ".old")} || {{ open {Q(app)}; exit 1; }}",
+      $"if ditto {Q(newApp)} {Q(app)}; then",
+      $"  xattr -dr com.apple.quarantine {Q(app)} 2>/dev/null",
+      $"  rm -rf {Q(app + ".old")} {Q(staging)}",
+      $"  open {Q(app)}",
+      "else",
+      $"  rm -rf {Q(app)}; mv {Q(app + ".old")} {Q(app)}; open {Q(app)}",
+      "fi",
+      "rm -f \"$0\"",
+      "",
+    });
+    File.WriteAllText(sh, script);
+    Process.Start(new ProcessStartInfo("/bin/sh", $"\"{sh}\"") { UseShellExecute = false });
+  }
+
+  private static string Q(string s) => "'" + s.Replace("'", "'\\''") + "'";
 
   private static void RunWindowsHelper(string installDir, string staging, string exe) {
     int pid = Environment.ProcessId;
@@ -164,18 +241,6 @@ public static class Updater {
       UseShellExecute = false,
       CreateNoWindow = true,
     });
-  }
-
-  private static void ReSignMacBundle(string installDir) {
-    try {
-      string app = Path.GetFullPath(Path.Combine(installDir, "..", ".."));
-      if (!app.EndsWith(".app", StringComparison.OrdinalIgnoreCase)) {
-        return;
-      }
-      Process.Start(new ProcessStartInfo("codesign", $"--force --sign - --deep \"{app}\"") {
-        UseShellExecute = false,
-      })?.WaitForExit(30000);
-    } catch { }
   }
 
   private static void Shutdown() {
@@ -218,7 +283,10 @@ public sealed class UpdateEngine {
 
   public sealed record ManifestFile(string Path, string Sha256, long Size);
 
-  public sealed record Manifest(string Version, string? Notes, IReadOnlyList<ManifestFile> Files);
+  public sealed record ManifestBundle(string Url, string Sha256, long Size);
+
+  public sealed record Manifest(
+      string Version, string? Notes, IReadOnlyList<ManifestFile> Files, ManifestBundle? Bundle = null);
 
   public async Task<Manifest?> FetchManifestAsync(CancellationToken ct = default) {
     byte[] json, sig;
@@ -291,6 +359,31 @@ public sealed class UpdateEngine {
       if (!string.Equals(Sha256File(dest), f.Sha256, StringComparison.OrdinalIgnoreCase)) {
         throw new InvalidDataException($"Downloaded file hash mismatch: {f.Path}");
       }
+    }
+  }
+
+  public async Task DownloadBundleAsync(ManifestBundle bundle, string destZip,
+      IProgress<double>? progress = null, CancellationToken ct = default) {
+    Directory.CreateDirectory(Path.GetDirectoryName(destZip)!);
+    using (var resp = await _http.GetAsync(bundle.Url, HttpCompletionOption.ResponseHeadersRead, ct)
+        .ConfigureAwait(false)) {
+      resp.EnsureSuccessStatusCode();
+      long total = resp.Content.Headers.ContentLength ?? bundle.Size;
+      await using var src = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+      await using var dst = File.Create(destZip);
+      var buffer = new byte[81920];
+      long done = 0;
+      int n;
+      while ((n = await src.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0) {
+        await dst.WriteAsync(buffer.AsMemory(0, n), ct).ConfigureAwait(false);
+        done += n;
+        if (total > 0) {
+          progress?.Report(Math.Clamp(done * 100.0 / total, 0, 100));
+        }
+      }
+    }
+    if (!string.Equals(Sha256File(destZip), bundle.Sha256, StringComparison.OrdinalIgnoreCase)) {
+      throw new InvalidDataException("Downloaded update package hash mismatch.");
     }
   }
 

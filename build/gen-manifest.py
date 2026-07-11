@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
-"""Emit manifest.json for the auto-updater: every file under a publish dir with its SHA-256 + size.
+"""Emit manifest.json for the auto-updater.
 
-Usage: gen-manifest.py <publish_dir> <version> <notes_url> <out_manifest.json>
+Usage:
+  gen-manifest.py <publish_dir> <version> <notes_url> <out.json>
+      Loose-file mode (Windows/Linux): every file under <publish_dir> with its SHA-256 + size.
+  gen-manifest.py <publish_dir> <version> <notes_url> <out.json> \
+      --bundle-url URL --bundle-sha256 HEX --bundle-size N
+      Full-bundle mode (macOS): manifest carries a single signed+notarized package the client
+      swaps whole; files[] is emitted empty so per-file diffing is skipped. Overwriting loose
+      files inside a notarized .app breaks its seal/staple, so mac must replace the whole bundle.
 
-Paths are stored relative to <publish_dir> with forward slashes (the updater joins them onto the
-per-platform Pages base URL and onto the local install dir). The client verifies the Ed25519
+Paths are stored relative to <publish_dir> with forward slashes. The client verifies the Ed25519
 signature over the exact bytes of the emitted file, so sign this file as-is (no re-formatting).
 """
+import argparse
 import hashlib
 import json
 import os
-import sys
 
 
 def sha256(path):
@@ -22,21 +28,38 @@ def sha256(path):
 
 
 def main():
-    if len(sys.argv) != 5:
-        sys.exit("usage: gen-manifest.py <publish_dir> <version> <notes_url> <out.json>")
-    publish_dir, version, notes, out = sys.argv[1:]
+    ap = argparse.ArgumentParser()
+    ap.add_argument("publish_dir")
+    ap.add_argument("version")
+    ap.add_argument("notes")
+    ap.add_argument("out")
+    ap.add_argument("--bundle-url")
+    ap.add_argument("--bundle-sha256")
+    ap.add_argument("--bundle-size", type=int)
+    a = ap.parse_args()
 
-    files = []
-    for root, _, names in os.walk(publish_dir):
-        for name in names:
-            full = os.path.join(root, name)
-            rel = os.path.relpath(full, publish_dir).replace(os.sep, "/")
-            files.append({"path": rel, "sha256": sha256(full), "size": os.path.getsize(full)})
-    files.sort(key=lambda f: f["path"])
+    manifest = {"version": a.version, "notes": a.notes}
 
-    with open(out, "w") as f:
-        json.dump({"version": version, "notes": notes, "files": files}, f, indent=2)
-    print(f"manifest: {len(files)} files -> {out}")
+    if a.bundle_url:
+        if not (a.bundle_sha256 and a.bundle_size):
+            ap.error("--bundle-url requires --bundle-sha256 and --bundle-size")
+        manifest["bundle"] = {"url": a.bundle_url, "sha256": a.bundle_sha256, "size": a.bundle_size}
+        manifest["files"] = []
+        summary = f"bundle {a.bundle_sha256[:12]}…"
+    else:
+        files = []
+        for root, _, names in os.walk(a.publish_dir):
+            for name in names:
+                full = os.path.join(root, name)
+                rel = os.path.relpath(full, a.publish_dir).replace(os.sep, "/")
+                files.append({"path": rel, "sha256": sha256(full), "size": os.path.getsize(full)})
+        files.sort(key=lambda f: f["path"])
+        manifest["files"] = files
+        summary = f"{len(files)} files"
+
+    with open(a.out, "w") as f:
+        json.dump(manifest, f, indent=2)
+    print(f"manifest: {summary} -> {a.out}")
 
 
 if __name__ == "__main__":
