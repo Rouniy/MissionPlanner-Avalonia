@@ -79,7 +79,8 @@ public class SetupViewModel : BackstageViewModel {
     Add(">> Advanced", () => new InfoPageViewModel("Advanced", "Advanced configuration. Pick a sub-page."));
     Add("Advanced Tools", () => new ConfigAdvancedViewModel(), sub: true);
     Add("Terminal", () => new ConfigTerminalViewModel(), sub: true);
-    Add("Script REPL", () => new ConfigScriptReplViewModel(), sub: true);
+    Add("Onboard Lua REPL", () => new ConfigOnboardReplViewModel(), sub: true, requiresConnection: true);
+    Add("Local Script REPL", () => new ConfigScriptReplViewModel(), sub: true);
 
     SelectFirst();
   }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform.Storage;
@@ -138,8 +139,14 @@ public partial class FlightDataViewModel : ViewModelBase {
       AuxOptions.Add(new AuxRow(ch, new ParamField($"RC{ch}_OPTION")));
     }
 
+    _quickViewCount = Math.Clamp(Settings.Instance.GetInt32("quickViewCount", 6), 1, 12);
+    _quickColumns = Math.Clamp(Settings.Instance.GetInt32("quickViewColumns", 2), 1, 6);
     InitQuickItems();
+    InitPreflightChecks();
     InitTuningFields();
+
+    SelectedMessage = MessageOptions.FirstOrDefault(m =>
+        m.Id == (uint)MAVLink.MAVLINK_MSG_ID.ATTITUDE) ?? MessageOptions.FirstOrDefault();
 
     _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
     _timer.Tick += (_, _) => Pump();
@@ -335,6 +342,12 @@ public partial class FlightDataViewModel : ViewModelBase {
 
   public ObservableCollection<QuickItem> QuickItems { get; } = new();
 
+  [ObservableProperty]
+  private int _quickViewCount = 6;
+
+  [ObservableProperty]
+  private int _quickColumns = 2;
+
   private static readonly (string field, string color)[] _quickDefaults = {
     ("alt", "#D197F8"),
     ("groundspeed", "#FE842E"),
@@ -345,16 +358,49 @@ public partial class FlightDataViewModel : ViewModelBase {
   };
 
   private void InitQuickItems() {
-    var cs = _comPort.MAV?.cs;
-    for (int i = 0; i < _quickDefaults.Length; i++) {
-      var key = $"quickView{i + 1}";
-      string field = Settings.Instance.ContainsKey(key) && !string.IsNullOrEmpty(Settings.Instance[key])
-          ? Settings.Instance[key]
-          : _quickDefaults[i].field;
-      var item = new QuickItem(field, _quickDefaults[i].color);
-      item.Desc = DescFor(cs, field);
-      QuickItems.Add(item);
+    for (int i = 0; i < QuickViewCount; i++) {
+      QuickItems.Add(CreateQuickItem(i));
     }
+  }
+
+  private QuickItem CreateQuickItem(int index) {
+    var defaults = _quickDefaults[index % _quickDefaults.Length];
+    var key = $"quickView{index + 1}";
+    string field = Settings.Instance.ContainsKey(key) && !string.IsNullOrEmpty(Settings.Instance[key])
+        ? Settings.Instance[key]
+        : defaults.field;
+    var item = new QuickItem(field, defaults.color) {
+      Desc = DescFor(_comPort.MAV?.cs, field),
+    };
+    return item;
+  }
+
+  private void ResizeQuickItems() {
+    while (QuickItems.Count > QuickViewCount) {
+      QuickItems.RemoveAt(QuickItems.Count - 1);
+    }
+    while (QuickItems.Count < QuickViewCount) {
+      QuickItems.Add(CreateQuickItem(QuickItems.Count));
+    }
+  }
+
+  partial void OnQuickViewCountChanged(int value) {
+    int clamped = Math.Clamp(value, 1, 12);
+    if (value != clamped) {
+      QuickViewCount = clamped;
+      return;
+    }
+    Settings.Instance["quickViewCount"] = value.ToString(CultureInfo.InvariantCulture);
+    ResizeQuickItems();
+  }
+
+  partial void OnQuickColumnsChanged(int value) {
+    int clamped = Math.Clamp(value, 1, 6);
+    if (value != clamped) {
+      QuickColumns = clamped;
+      return;
+    }
+    Settings.Instance["quickViewColumns"] = value.ToString(CultureInfo.InvariantCulture);
   }
 
   private static string DescFor(MissionPlanner.CurrentState? cs, string field) {
@@ -437,22 +483,47 @@ public partial class FlightDataViewModel : ViewModelBase {
   public ObservableCollection<CheckItem> PreflightChecks { get; } = new();
 
   private const int _autoCheckCount = 6;
+  private const string _manualChecksJsonKey = "preflight_manual_json";
+
+  private static readonly string[] _defaultManualChecks = {
+    "Tail and wings secured?",
+    "All servos respond to input?",
+    "All servos respond to pitch and roll?",
+    "Center of gravity at indicated point?",
+    "Servo linkages are secure?",
+    "Camera is on and ready to fly?",
+  };
+
+  private void InitPreflightChecks() {
+    PreflightChecks.Add(new CheckItem("Ready GPS"));
+    PreflightChecks.Add(new CheckItem("Gps Sat Count"));
+    PreflightChecks.Add(new CheckItem("Telemetry Signal"));
+    PreflightChecks.Add(new CheckItem("Battery Level"));
+    PreflightChecks.Add(new CheckItem("Mode"));
+    PreflightChecks.Add(new CheckItem("Check Altitude"));
+
+    foreach (string name in LoadManualPreflightChecks()) {
+      PreflightChecks.Add(new CheckItem(name, manual: true));
+    }
+  }
+
+  private static IReadOnlyList<string> LoadManualPreflightChecks() {
+    if (Settings.Instance[_manualChecksJsonKey] is { Length: > 0 } json) {
+      try {
+        return (JsonSerializer.Deserialize<string[]>(json) ?? Array.Empty<string>())
+            .Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
+      } catch (JsonException) {
+        // Fall through to the legacy semicolon-separated value.
+      }
+    }
+
+    bool hasLegacyValue = Settings.Instance.ContainsKey("preflight_manual");
+    var legacy = Settings.Instance.GetList("preflight_manual")
+        .Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
+    return hasLegacyValue ? legacy : _defaultManualChecks;
+  }
 
   private void RefreshPreflight(MissionPlanner.CurrentState cs) {
-    if (PreflightChecks.Count == 0) {
-      PreflightChecks.Add(new CheckItem("Ready GPS"));
-      PreflightChecks.Add(new CheckItem("Gps Sat Count"));
-      PreflightChecks.Add(new CheckItem("Telemetry Signal"));
-      PreflightChecks.Add(new CheckItem("Battery Level"));
-      PreflightChecks.Add(new CheckItem("Mode"));
-      PreflightChecks.Add(new CheckItem("Check Altitude"));
-      PreflightChecks.Add(new CheckItem("Tail and wings secured?", manual: true));
-      PreflightChecks.Add(new CheckItem("All servos respond to input?", manual: true));
-      PreflightChecks.Add(new CheckItem("All servos respond to pitch and roll?", manual: true));
-      PreflightChecks.Add(new CheckItem("Center of gravity at indicated point?", manual: true));
-      PreflightChecks.Add(new CheckItem("Servo linkages are secure?", manual: true));
-      PreflightChecks.Add(new CheckItem("Camera is on and ready to fly?", manual: true));
-    }
     PreflightChecks[0].Set($"{cs.satcount} >= 3", cs.satcount >= 3);
     PreflightChecks[1].Set($"{cs.satcount} Sats", cs.satcount >= 3);
     PreflightChecks[2].Set($"{cs.linkqualitygcs}%", cs.linkqualitygcs > 0);
@@ -510,6 +581,8 @@ public partial class FlightDataViewModel : ViewModelBase {
         PreflightChecks.Add(new CheckItem(name, manual: true));
       }
     }
+    var manual = PreflightChecks.Skip(_autoCheckCount).Select(item => item.Name).ToArray();
+    Settings.Instance[_manualChecksJsonKey] = JsonSerializer.Serialize(manual);
   }
 
   public ObservableCollection<object> ServoRelayItems { get; } = new();
@@ -1027,6 +1100,72 @@ public partial class FlightDataViewModel : ViewModelBase {
   private Task QuickRtl() {
     SelectedMode = "RTL";
     return SetMode();
+  }
+
+  public IReadOnlyList<MavlinkMessageOption> MessageOptions { get; } =
+      Enum.GetValues<MAVLink.MAVLINK_MSG_ID>()
+          .GroupBy(value => Convert.ToUInt32(value, CultureInfo.InvariantCulture))
+          .Select(group => new MavlinkMessageOption(group.Key, group.First().ToString()))
+          .OrderBy(option => option.Id)
+          .ToArray();
+
+  [ObservableProperty]
+  private MavlinkMessageOption? _selectedMessage;
+
+  [ObservableProperty]
+  private double _messageRateHz = 1;
+
+  [ObservableProperty]
+  private string _messageIntervalStatus = "";
+
+  public static float MessageIntervalMicroseconds(double rateHz) {
+    if (!double.IsFinite(rateHz) || rateHz <= 0) {
+      throw new ArgumentOutOfRangeException(nameof(rateHz), "Message rate must be greater than zero.");
+    }
+    return (float)Math.Round(1_000_000d / Math.Clamp(rateHz, 0.01, 1000d));
+  }
+
+  [RelayCommand]
+  private async Task ApplyMessageInterval() {
+    try {
+      await SetMessageInterval(
+          MessageIntervalMicroseconds(MessageRateHz), $"{MessageRateHz:0.##} Hz");
+    } catch (ArgumentOutOfRangeException ex) {
+      MessageIntervalStatus = ex.Message;
+    }
+  }
+
+  [RelayCommand]
+  private Task StopMessageInterval() => SetMessageInterval(-1, "stopped");
+
+  [RelayCommand]
+  private Task ResetMessageInterval() => SetMessageInterval(0, "firmware default");
+
+  private async Task SetMessageInterval(float intervalMicroseconds, string description) {
+    if (!Connected || SelectedMessage == null) {
+      MessageIntervalStatus = "Connect and select a MAVLink message first.";
+      return;
+    }
+
+    var message = SelectedMessage;
+    try {
+#pragma warning disable CS0612 // Upstream MAVLinkInterface exposes only this command API today.
+      bool accepted = await Task.Run(() =>
+          _comPort.doCommand(
+              _comPort.MAV.sysid,
+              _comPort.MAV.compid,
+              MAVLink.MAV_CMD.SET_MESSAGE_INTERVAL,
+              message.Id,
+              intervalMicroseconds,
+              0, 0, 0, 0, 0));
+#pragma warning restore CS0612
+      MessageIntervalStatus = accepted
+          ? $"{message.Name}: {description}"
+          : $"{message.Name}: request rejected";
+      Log("Message interval " + MessageIntervalStatus);
+    } catch (Exception ex) {
+      MessageIntervalStatus = $"{message.Name}: {ex.Message}";
+    }
   }
 
   public ObservableCollection<string> Actions { get; } =
@@ -1774,7 +1913,11 @@ public partial class FlightDataViewModel : ViewModelBase {
 
       _video = new MissionPlannerAvalonia.Controls.VideoControl();
       _videoWindow = new Views.VideoPopupWindow(_video);
-      _videoWindow.Closed += (_, _) => { _video?.Stop(); _videoWindow = null; };
+      _videoWindow.Closed += (_, _) => {
+        _video?.Dispose();
+        _video = null;
+        _videoWindow = null;
+      };
       if (top != null) {
         _videoWindow.Show(top);
       } else {
@@ -2060,6 +2203,10 @@ public partial class QuickItem : ObservableObject {
 }
 
 public record AuxRow(int Channel, ParamField Field);
+
+public sealed record MavlinkMessageOption(uint Id, string Name) {
+  public override string ToString() => $"{Id}: {Name}";
+}
 
 public class RelayChannel {
   public RelayChannel(int index) {

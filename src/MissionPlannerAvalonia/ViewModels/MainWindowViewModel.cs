@@ -3,7 +3,7 @@ using CommunityToolkit.Mvvm.Input;
 
 namespace MissionPlannerAvalonia.ViewModels;
 
-public partial class MainWindowViewModel : ViewModelBase {
+public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
   public ConnectionViewModel Connection { get; } = new();
 
   public FlightDataViewModel FlightData { get; } = new();
@@ -30,7 +30,7 @@ public partial class MainWindowViewModel : ViewModelBase {
   [RelayCommand]
   private void Navigate(string target) {
     ActiveTab = target;
-    CurrentScreen = target switch {
+    var nextScreen = target switch {
       "DATA" => FlightData,
       "PLAN" => FlightPlanner,
       "SETUP" => Setup,
@@ -39,6 +39,12 @@ public partial class MainWindowViewModel : ViewModelBase {
       "HELP" => Help,
       _ => CurrentScreen,
     };
+    if (!ReferenceEquals(CurrentScreen, nextScreen)) {
+      if (CurrentScreen is IDeactivationAware lifecycle) {
+        lifecycle.Deactivate();
+      }
+      CurrentScreen = nextScreen;
+    }
   }
 
   [RelayCommand]
@@ -61,5 +67,12 @@ public partial class MainWindowViewModel : ViewModelBase {
     await System.Threading.Tasks.Task.Run(() =>
         AppState.comPort.doCommand(AppState.comPort.MAV.sysid, AppState.comPort.MAV.compid,
             MAVLink.MAV_CMD.PREFLIGHT_STORAGE, 1, 0, 0, 0, 0, 0, 0));
+  }
+
+  public void Dispose() {
+    Setup.Dispose();
+#pragma warning disable CS0612 // The CONFIG screen remains part of the current application shell.
+    Config.Dispose();
+#pragma warning restore CS0612
   }
 }

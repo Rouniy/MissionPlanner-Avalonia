@@ -175,6 +175,7 @@
           <Button Content="Survey (Grid)" HorizontalAlignment="Stretch" Click="OnSurveyGrid" />
           <Separator />
           <Button Content="Load File" HorizontalAlignment="Stretch" Click="OnLoadFile" />
+          <Button Content="Load + Append" HorizontalAlignment="Stretch" Click="OnLoadAndAppendFile" />
           <Button Content="Save File" HorizontalAlignment="Stretch" Click="OnSaveFile" />
           <Separator />
           <TextBlock Text="Mission Type" Foreground="#BBBBBB" FontSize="11" />

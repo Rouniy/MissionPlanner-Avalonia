@@ -127,12 +127,21 @@
 
       <TabControl x:Name="FdTabs" Grid.Row="2" Background="{DynamicResource MpControlBg}">
         <TabItem Header="Quick">
+          <DockPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="4,2">
+              <TextBlock Text="Cells" VerticalAlignment="Center" />
+              <NumericUpDown Width="62" Minimum="1" Maximum="12" FormatString="0"
+                             Value="{Binding QuickViewCount}" />
+              <TextBlock Text="Columns" VerticalAlignment="Center" Margin="8,0,0,0" />
+              <NumericUpDown Width="62" Minimum="1" Maximum="6" FormatString="0"
+                             Value="{Binding QuickColumns}" />
+            </StackPanel>
 
-          <ItemsControl x:Name="QuickGrid" ItemsSource="{Binding QuickItems}" Margin="2"
-                        DoubleTapped="OnQuickViewDoubleTapped">
+            <ItemsControl x:Name="QuickGrid" ItemsSource="{Binding QuickItems}" Margin="2"
+                          DoubleTapped="OnQuickViewDoubleTapped">
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate>
-                <UniformGrid Columns="2" Rows="3" />
+                <UniformGrid Columns="{Binding $parent[ItemsControl].DataContext.QuickColumns}" />
               </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
@@ -146,7 +155,8 @@
                 </Border>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
-          </ItemsControl>
+            </ItemsControl>
+          </DockPanel>
         </TabItem>
 
         <TabItem Header="Actions">
@@ -258,6 +268,22 @@
               <Button Content="Clear Track" Command="{Binding ClearTrackCommand}" />
               <Button Content="Message" Command="{Binding ShowMessageCommand}" />
               <Button Content="Joystick" Command="{Binding JoystickCommand}" />
+
+              <Panel Width="382">
+                <Grid ColumnDefinitions="*,64,54,48,54" ColumnSpacing="3">
+                  <ComboBox Grid.Column="0" ItemsSource="{Binding MessageOptions}"
+                            SelectedItem="{Binding SelectedMessage}" />
+                  <NumericUpDown Grid.Column="1" Minimum="0.01" Maximum="1000"
+                                 Increment="1" FormatString="0.##"
+                                 Value="{Binding MessageRateHz}"
+                                 ToolTip.Tip="Requested MAVLink message rate in Hz" />
+                  <Button Grid.Column="2" Content="Apply" Command="{Binding ApplyMessageIntervalCommand}" />
+                  <Button Grid.Column="3" Content="Stop" Command="{Binding StopMessageIntervalCommand}" />
+                  <Button Grid.Column="4" Content="Default" Command="{Binding ResetMessageIntervalCommand}" />
+                </Grid>
+              </Panel>
+              <TextBlock Width="382" Margin="3" Text="{Binding MessageIntervalStatus}"
+                         TextWrapping="Wrap" VerticalAlignment="Center" />
             </WrapPanel>
           </ScrollViewer>
         </TabItem>

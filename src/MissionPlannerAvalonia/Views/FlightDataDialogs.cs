@@ -96,8 +96,15 @@ public class VideoPopupWindow : Window {
     grid.Children.Add(video);
     grid.Children.Add(_status);
     Content = grid;
+    Video.StatusChanged += OnVideoStatusChanged;
+    Closed += (_, _) => {
+      Video.StatusChanged -= OnVideoStatusChanged;
+      Video.Stop();
+    };
     UpdateStatus();
   }
+
+  private void OnVideoStatusChanged(object? sender, EventArgs e) => UpdateStatus();
 
   public void UpdateStatus() => _status.Text = Video.Status;
 }

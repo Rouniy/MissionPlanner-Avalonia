@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -52,9 +53,10 @@ public partial class BackstagePage : ObservableObject {
   private bool _visible = true;
 
   public ViewModelBase Content => _content ??= _factory();
+  public ViewModelBase? CreatedContent => _content;
 }
 
-public partial class BackstageViewModel : ViewModelBase {
+public partial class BackstageViewModel : ViewModelBase, IDeactivationAware, IDisposable {
   public ObservableCollection<BackstagePage> Pages { get; } = new();
 
   [ObservableProperty]
@@ -71,6 +73,7 @@ public partial class BackstageViewModel : ViewModelBase {
   private bool _showParamLoading;
 
   private readonly Avalonia.Threading.DispatcherTimer _paramLoadTimer;
+  private bool _disposed;
 
   protected BackstageViewModel(string? persistKey = null) {
     _persistKey = persistKey;
@@ -105,8 +108,12 @@ public partial class BackstageViewModel : ViewModelBase {
   }
 
   partial void OnSelectedPageChanged(BackstagePage? oldValue, BackstagePage? newValue) {
-    if (oldValue != null)
+    if (oldValue?.CreatedContent is IDeactivationAware lifecycle) {
+      lifecycle.Deactivate();
+    }
+    if (oldValue != null) {
       oldValue.IsSelected = false;
+    }
     if (newValue != null) {
       newValue.IsSelected = true;
       CurrentContent = newValue.Content;
@@ -114,6 +121,30 @@ public partial class BackstageViewModel : ViewModelBase {
         MissionPlanner.Utilities.Settings.Instance[_persistKey] = newValue.Header;
       }
     }
+  }
+
+  public void Deactivate() {
+    if (CurrentContent is IDeactivationAware lifecycle) {
+      lifecycle.Deactivate();
+    }
+  }
+
+  public void Dispose() {
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
+    _paramLoadTimer.Stop();
+    AppState.ConnectionChanged -= OnConnectionChanged;
+    foreach (var content in Pages.Select(page => page.CreatedContent).OfType<ViewModelBase>().Distinct()) {
+      if (content is IDeactivationAware lifecycle) {
+        lifecycle.Deactivate();
+      }
+      if (content is IDisposable disposable) {
+        disposable.Dispose();
+      }
+    }
+    ParamLoading.Dispose();
   }
 
   [RelayCommand]

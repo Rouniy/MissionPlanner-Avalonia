@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Release build, 56 tests, package install and Xvfb startup verified locally |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Release build, 81 tests, package install and Xvfb startup verified locally |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -54,6 +54,15 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 - Linux joystick UI uses upstream joydev; Windows continues to use upstream DirectInput.
 - Cross-platform telemetry log directory picker.
 - Four palette resources use statically typed Avalonia resources.
+- MAVLink NSH shell over `SERIAL_CONTROL`, with raw-link mode kept as an explicit expert option.
+- ArduPilot onboard Lua REPL over `MAV_CMD_SCRIPTING` and MAVFTP, separate from the local script console.
+- Runtime MAVLink message interval control (`SET_MESSAGE_INTERVAL`) from Flight Data.
+- Configurable/persistent QuickView cell count and columns, plus persistent manual preflight checks.
+- Mission file compatibility for QGC WPL, Mission Planner `.mission`, QGC `.plan`, `.poly`, legacy
+  `.fen`/`.ral`, and load-and-append. QGC Plan round-trips mission, polygon/circle fence, and rally data.
+- Fence inclusion/exclusion polygons and circles can be created from the Avalonia planner.
+- libVLC startup now resolves versioned Linux `libvlc.so.5`, reports live playback errors, retains
+  media for its full native lifetime, and accepts direct MRLs plus common RTP/GStreamer input.
 
 Existing port functionality includes serial/TCP/UDP/UDP-client/WebSocket connections, flight data,
 mission planning, parameter pages, firmware/log tools, simulation launcher, NMEA/mirroring tools,
@@ -65,7 +74,7 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 56 passed, 0 failed.
+- Automated tests: 81 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 156 MB.
 - Headless Xvfb startup: reaches the normal application event loop.
 - `tar.gz` and `.deb` targets: build successfully with the distribution SDK; `lintian` passes.
@@ -111,11 +120,21 @@ not remove required Windows-native files from `win-x64` builds.
 | --- | --- | --- |
 | Multiple simultaneous vehicle links / Connection List | All | Menu remains disabled; the port has one global primary link. Requires multi-link AppState/UI architecture. |
 | Full Mission Planner plugin loader | All | Discovery, lifecycle and WinForms plugin hosting are absent. Keep the new portable action/HUD hooks and add a cross-platform plugin host separately. |
+| Traffic, airport and TFR map overlays | All | Planner settings are persisted, but Mapsui does not yet render upstream ADS-B/AIS traffic, airports or TFR overlays. |
+| SHP/DXF and optional GDAL map import | All | KML is supported. The upstream managed SHP/DXF readers and an optional native GDAL adapter still need Mapsui layers and an Avalonia import flow. |
+| Vehicle terrain service and extra elevation sources | All | Local SRTM profiles work; serving `TERRAIN_DATA` to a vehicle and DTED/GeoTIFF sources are absent. |
+| MAVLink Camera Protocol v2 integration | All | Reusable upstream protocol code exists, but stream discovery/selection and the gimbal/video overlay recorder are not wired into the Avalonia video UI. |
 | Moving Base tool | All | Advanced-page window is not ported. Follow Me is available but is not equivalent. |
+| Swarm / formation flight | All | The upstream swarm controllers and UI are absent. The control logic is portable, but needs a new multi-vehicle foundation and Avalonia safety UI. |
+| General startup auto-connect | All | SITL can auto-connect after launch; persisted serial/network auto-connect and upstream discovery pipelines are not wired into normal application startup. |
+| Grid v2 / SimpleGrid variants | All | The main survey grid is ported; the alternative upstream/plugin grid workflows remain absent. |
+| DroneCAN file browser | All, hardware-specific | Node parameters and firmware upload work; general node file browsing is not exposed. |
+| Secondary log/interchange tools | All | Tlog conversion is present; tlog parameter/waypoint extraction, ULog UI, offline MagFit and CoT output remain to be ported. |
 | Direct DroneCAN SLCAN adapter mode | All, hardware-specific | UI reports unsupported; MAVLink-CAN1/CAN2 works. Direct serial lifecycle needs porting and native testing. |
 | Antenna tracker interfaces other than Maestro | All, hardware-specific | Configuration rejects other drivers; port/test each driver independently. |
 | Traditional-heli live curve/servo visualization | All | Writable configuration is present; remaining ZedGraph visuals need Avalonia replacements. |
 | Persistent map tile cache | All | The Mapsui layer does not connect a persistent tile cache; the nonfunctional selector is disabled and maps currently need network access. |
+| QGC Plan fence return point | All | QGC Plan has polygons/circles but no Mission Planner fence-return field. `.plan` export warns when it omits one; use legacy `.fen` when that point must round-trip. |
 | Custom theme editor and audio vario | All | Theme selection works, but the editor is absent. Upstream vario uses unsupported `Console.Beep`; it needs a native audio abstraction. |
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
@@ -129,6 +148,10 @@ not remove required Windows-native files from `win-x64` builds.
 | Embedded Mission Planner HTTP/KML/MJPEG server | Not compiled on any target. Do not restore the older server implementation; any replacement needs the current authentication and anti-DoS model. |
 | Support Proxy | Not ported on any target until authentication, explicit consent and networking are designed and reviewed. |
 | Original WinForms/Windows driver-install UI | Not part of the Avalonia UI. Use native OS driver handling and add board-specific cross-platform DFU implementations where required. |
+| Legacy CLI firmware/log paths and AC3.3-era terminal flows | Obsolete for supported firmware and intentionally not exposed. |
+| X-Plane/FlightGear legacy HIL and Ateryx-specific pages | Superseded by SITL and not restored without a current user and maintenance case. |
+| IronPython script host | The portable local console uses MoonSharp Lua. Old Python scripts would require a large legacy runtime and are not enabled by default. |
+| Historical third-party service plugins | AltitudeAngel, DigitalSky, AirMarket and similar integrations require current API, authentication and privacy review before any port. |
 | DirectShow device enumeration | Replaced by libVLC video input so the feature can share one API across Windows, macOS and Linux. |
 | Windows SimpleBLE/libusb DLLs in Linux packages | Explicitly filtered only for Linux; shipping PE native libraries on Linux would not provide BLE/USB support. |
 | NativeAOT as release format | Disabled by default on every target. Supported releases are self-contained CoreCLR builds. |

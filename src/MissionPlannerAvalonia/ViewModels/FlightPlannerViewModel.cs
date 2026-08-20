@@ -111,6 +111,42 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     Status = $"Polygon built from {DrawnPolygon.Count} point(s).";
   }
 
+  public void AddDrawnPolygonToFence(bool inclusion) {
+    if (DrawnPolygon.Count < 3) {
+      Status = "Draw at least 3 polygon points first.";
+      return;
+    }
+    if (MissionType != "Fence") {
+      MissionType = "Fence";
+    }
+    var command = inclusion
+        ? MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION
+        : MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_EXCLUSION;
+    int count = DrawnPolygon.Count;
+    foreach (var point in DrawnPolygon) {
+      AddCommandRow(command, point.Lat, point.Lng, 0, p1: count,
+          frame: (byte)MAVLink.MAV_FRAME.GLOBAL);
+    }
+    Status = $"Added {(inclusion ? "inclusion" : "exclusion")} fence polygon ({count} vertices).";
+  }
+
+  public async Task AddFenceCircle(double lat, double lng, bool inclusion) {
+    var text = await Services.Dialogs.InputBox(
+        "Fence circle", "Radius (m)", "100");
+    if (!double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out double radius)
+        || radius <= 0) {
+      Status = "Fence circle radius must be greater than zero.";
+      return;
+    }
+    if (MissionType != "Fence") {
+      MissionType = "Fence";
+    }
+    AddCommandRow(
+        inclusion ? MAVLink.MAV_CMD.FENCE_CIRCLE_INCLUSION : MAVLink.MAV_CMD.FENCE_CIRCLE_EXCLUSION,
+        lat, lng, 0, p1: radius, frame: (byte)MAVLink.MAV_FRAME.GLOBAL);
+    Status = $"Added {(inclusion ? "inclusion" : "exclusion")} fence circle ({radius:0.##} m).";
+  }
+
   public string PolygonArea() {
     if (DrawnPolygon.Count < 3) {
       Status = "Need at least 3 polygon points for area.";
@@ -174,13 +210,13 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     _ => MAVLink.MAV_MISSION_TYPE.MISSION,
   };
 
-  private List<WpRow> StoreFor(string type) => type switch {
+  private List<WpRow> StoreFor(string? type) => type switch {
     "Fence" => _fenceStore,
     "Rally" => _rallyStore,
     _ => _missionStore,
   };
 
-  partial void OnMissionTypeChanged(string oldValue, string newValue) {
+  partial void OnMissionTypeChanged(string? oldValue, string newValue) {
     var prev = StoreFor(oldValue);
     prev.Clear();
     prev.AddRange(Waypoints);
@@ -284,6 +320,16 @@ public partial class FlightPlannerViewModel : ViewModelBase {
         }
         return list;
       });
+      if (type == MAVLink.MAV_MISSION_TYPE.MISSION && rows.Count > 0) {
+        var home = rows[0];
+        HomeLat = home.Lat;
+        HomeLng = home.Lng;
+        HomeAlt = home.Alt;
+        rows.RemoveAt(0);
+        for (int index = 0; index < rows.Count; index++) {
+          rows[index].Seq = index;
+        }
+      }
       Replace(rows);
       Status = $"Read {rows.Count} {MissionType.ToLowerInvariant()} point(s).";
     } catch (Exception ex) {
@@ -325,10 +371,18 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       await Task.Run(async () => {
         if (type == MAVLink.MAV_MISSION_TYPE.MISSION) {
           WriteRadiusParams();
-          _comPort.setWPTotal((ushort)rows.Count, type);
+          _comPort.setWPTotal((ushort)(rows.Count + 1), type);
+          var home = new WpRow {
+            Command = (ushort)MAVLink.MAV_CMD.WAYPOINT,
+            Frame = (byte)MAVLink.MAV_FRAME.GLOBAL,
+            Lat = HomeLat,
+            Lng = HomeLng,
+            Alt = HomeAlt,
+          };
+          _comPort.setWP(home.ToLocationwp(), 0, MAVLink.MAV_FRAME.GLOBAL, 1);
           for (int i = 0; i < rows.Count; i++) {
-            _comPort.setWP(rows[i].ToLocationwp(), (ushort)i,
-                (MAVLink.MAV_FRAME)rows[i].Frame, (byte)(i == 0 ? 1 : 0));
+            _comPort.setWP(rows[i].ToLocationwp(), (ushort)(i + 1),
+                (MAVLink.MAV_FRAME)rows[i].Frame, 0);
           }
           _comPort.setWPACK(type);
         } else {
@@ -377,29 +431,44 @@ public partial class FlightPlannerViewModel : ViewModelBase {
 
   public async Task SaveFileAsync(string path) {
     try {
+      string extension = Path.GetExtension(path).ToLowerInvariant();
+      switch (extension) {
+        case ".mission":
+        case ".plan":
+          bool omittedFenceReturn = SaveJsonMission(path);
+          int savedCount = RowsForFile("Mission").Count;
+          if (extension == ".plan") {
+            savedCount += RowsForFile("Fence").Count + RowsForFile("Rally").Count;
+          }
+          Status = omittedFenceReturn
+              ? $"Saved {Path.GetFileName(path)}. Note: QGC Plan has no fence-return field; use .fen to preserve it."
+              : $"Saved {savedCount} item(s) to {Path.GetFileName(path)}.";
+          return;
+        case ".poly":
+          await SavePolygonAsync(path);
+          return;
+        case ".fen":
+          await SaveLegacyFenceAsync(path);
+          return;
+        case ".ral":
+          await SaveLegacyRallyAsync(path);
+          return;
+      }
+
       var lines = new List<string> { "QGC WPL 110" };
+      int sequenceOffset = 0;
+      if (MissionType == "Mission") {
+        lines.Add(ToWplLine(new WpRow {
+          Command = (ushort)MAVLink.MAV_CMD.WAYPOINT,
+          Frame = (byte)MAVLink.MAV_FRAME.GLOBAL,
+          Lat = HomeLat,
+          Lng = HomeLng,
+          Alt = HomeAlt,
+        }, 0, true));
+        sequenceOffset = 1;
+      }
       for (int i = 0; i < Waypoints.Count; i++) {
-        var w = Waypoints[i];
-        lines.Add(
-            string.Join(
-                "\t",
-                new[]
-                {
-                            i.ToString(),
-                            i == 0 ? "1" : "0",
-                            "3",
-                            ((int)w.Command).ToString(),
-                            F(w.P1),
-                            F(w.P2),
-                            F(w.P3),
-                            F(w.P4),
-                            F(w.Lat),
-                            F(w.Lng),
-                            F(w.Alt),
-                            "1",
-                }
-            )
-        );
+        lines.Add(ToWplLine(Waypoints[i], i + sequenceOffset, false));
       }
       await File.WriteAllLinesAsync(path, lines);
       Status = $"Saved {Waypoints.Count} waypoint(s) to {Path.GetFileName(path)}.";
@@ -408,12 +477,32 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     }
   }
 
-  public async Task LoadFileAsync(string path) {
+  public async Task LoadFileAsync(string path, bool append = false) {
     try {
+      string extension = Path.GetExtension(path).ToLowerInvariant();
+      switch (extension) {
+        case ".mission":
+        case ".plan":
+          LoadJsonMission(path, append);
+          return;
+        case ".poly":
+          await LoadPolygonAsync(path, append);
+          return;
+        case ".fen":
+          await LoadLegacyFenceAsync(path, append);
+          return;
+        case ".ral":
+          await LoadLegacyRallyAsync(path, append);
+          return;
+      }
+
       var lines = await File.ReadAllLinesAsync(path);
+      if (lines.Length == 0 || !lines[0].StartsWith("QGC WPL", StringComparison.OrdinalIgnoreCase)) {
+        throw new InvalidDataException("Unsupported mission file header.");
+      }
       var rows = new List<WpRow>();
       foreach (var line in lines.Skip(1)) {
-        var t = line.Split('\t');
+        var t = line.Split(new[] { ' ', '\t', ',' }, StringSplitOptions.RemoveEmptyEntries);
         if (t.Length < 12) {
           continue;
         }
@@ -422,6 +511,9 @@ public partial class FlightPlannerViewModel : ViewModelBase {
             new WpRow {
               Seq = int.Parse(t[0], CultureInfo.InvariantCulture),
               Command = (ushort)int.Parse(t[3], CultureInfo.InvariantCulture),
+              Frame = byte.TryParse(t[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out byte frame)
+                  ? frame
+                  : (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT,
               P1 = D(t[4]),
               P2 = D(t[5]),
               P3 = D(t[6]),
@@ -432,11 +524,406 @@ public partial class FlightPlannerViewModel : ViewModelBase {
             }
         );
       }
-      Replace(rows);
-      Status = $"Loaded {rows.Count} waypoint(s) from {Path.GetFileName(path)}.";
+      if (rows.FirstOrDefault() is { Seq: 0, Command: (ushort)MAVLink.MAV_CMD.WAYPOINT } home) {
+        rows.RemoveAt(0);
+        if (!append && MissionType == "Mission") {
+          HomeLat = home.Lat;
+          HomeLng = home.Lng;
+          HomeAlt = home.Alt;
+        }
+      }
+      ReplaceOrAppend(rows, append);
+      Status = $"{(append ? "Appended" : "Loaded")} {rows.Count} waypoint(s) from {Path.GetFileName(path)}.";
     } catch (Exception ex) {
       Status = "Load failed: " + ex.Message;
     }
+  }
+
+  private static string ToWplLine(WpRow row, int sequence, bool current) =>
+      string.Join("\t", new[] {
+        sequence.ToString(CultureInfo.InvariantCulture),
+        current ? "1" : "0",
+        row.Frame.ToString(CultureInfo.InvariantCulture),
+        row.Command.ToString(CultureInfo.InvariantCulture),
+        F(row.P1), F(row.P2), F(row.P3), F(row.P4),
+        F(row.Lat), F(row.Lng), F(row.Alt), "1",
+      });
+
+  private bool SaveJsonMission(string path) {
+    var missionRows = RowsForFile("Mission");
+    var format = new MissionFile.RootObject {
+      fileType = "Plan",
+      groundStation = "MissionPlanner",
+      version = 1,
+      mission = new MissionFile.Mission {
+        cruiseSpeed = 15,
+        firmwareType = (int)_comPort.MAV.apname,
+        hoverSpeed = 5,
+        items = missionRows.Select(ToPlanItem).ToList(),
+        plannedHomePosition = new List<double> { HomeLat, HomeLng, HomeAlt },
+        vehicleType = (int)_comPort.MAV.aptype,
+        version = 2,
+      },
+    };
+
+    bool isPlan = Path.GetExtension(path).Equals(".plan", StringComparison.OrdinalIgnoreCase);
+    var fenceRows = RowsForFile("Fence");
+    if (isPlan) {
+      format.geoFence = BuildPlanGeoFence(fenceRows);
+      format.rallyPoints = new MissionFile.RallyPoints {
+        points = RowsForFile("Rally")
+            .Where(row => row.Command == (ushort)MAVLink.MAV_CMD.RALLY_POINT)
+            .Select(row => new List<double> { row.Lat, row.Lng, row.Alt })
+            .ToList(),
+        version = 2,
+      };
+    }
+
+    MissionFile.WriteFile(path, format);
+    return isPlan && fenceRows.Any(row =>
+        row.Command == (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT);
+  }
+
+  private void LoadJsonMission(string path, bool append) {
+    var format = MissionFile.ReadFile(path)
+                 ?? throw new InvalidDataException("The JSON mission is empty.");
+    if (format.mission == null) {
+      throw new InvalidDataException("The JSON file has no mission section.");
+    }
+
+    if (!append && format.mission.plannedHomePosition is { Count: >= 3 } home) {
+      HomeLat = home[0];
+      HomeLng = home[1];
+      HomeAlt = home[2];
+    }
+
+    var missionRows = ReadPlanMissionItems(format.mission.items);
+    bool hasPlanSections = Path.GetExtension(path).Equals(".plan", StringComparison.OrdinalIgnoreCase)
+                           || format.geoFence != null
+                           || format.rallyPoints != null;
+    if (!hasPlanSections) {
+      if (MissionType != "Mission") {
+        MissionType = "Mission";
+      }
+      ReplaceOrAppend(missionRows, append);
+      Status = $"{(append ? "Appended" : "Loaded")} {missionRows.Count} waypoint(s) from {Path.GetFileName(path)}.";
+      return;
+    }
+
+    var fenceRows = ReadPlanGeoFence(format.geoFence);
+    var rallyRows = ReadPlanRally(format.rallyPoints);
+    MergePlanStores(missionRows, fenceRows, rallyRows, append);
+    Status = $"{(append ? "Appended" : "Loaded")} QGC Plan: {missionRows.Count} mission, "
+             + $"{fenceRows.Count} fence and {rallyRows.Count} rally item(s).";
+  }
+
+  private IReadOnlyList<WpRow> RowsForFile(string type) =>
+      MissionType == type ? Waypoints.ToList() : StoreFor(type).ToList();
+
+  private static MissionFile.Item ToPlanItem(WpRow row) => new() {
+    autoContinue = true,
+    command = row.Command,
+    doJumpId = row.Seq + 1,
+    frame = row.Frame,
+    @params = new List<double?> { row.P1, row.P2, row.P3, row.P4, row.Lat, row.Lng, row.Alt },
+    type = "SimpleItem",
+  };
+
+  private static MissionFile.GeoFence BuildPlanGeoFence(IReadOnlyList<WpRow> rows) {
+    var result = new MissionFile.GeoFence {
+      circles = new List<MissionFile.Circle>(),
+      polygons = new List<MissionFile.Polygon>(),
+      version = 2,
+    };
+    for (int index = 0; index < rows.Count;) {
+      var row = rows[index];
+      bool circleInclusion = row.Command == (ushort)MAVLink.MAV_CMD.FENCE_CIRCLE_INCLUSION;
+      bool circleExclusion = row.Command == (ushort)MAVLink.MAV_CMD.FENCE_CIRCLE_EXCLUSION;
+      if (circleInclusion || circleExclusion) {
+        result.circles.Add(new MissionFile.Circle {
+          circle = new MissionFile.Circle2 {
+            center = new List<double> { row.Lat, row.Lng },
+            radius = row.P1,
+          },
+          inclusion = circleInclusion,
+          version = 1,
+        });
+        index++;
+        continue;
+      }
+
+      bool polygonInclusion = row.Command == (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION;
+      bool polygonExclusion = row.Command == (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_EXCLUSION;
+      if (!polygonInclusion && !polygonExclusion) {
+        index++;
+        continue;
+      }
+
+      ushort command = row.Command;
+      int declaredCount = (int)Math.Round(row.P1);
+      int availableCount = rows.Skip(index).TakeWhile(item => item.Command == command).Count();
+      int count = declaredCount >= 3 ? Math.Min(declaredCount, availableCount) : availableCount;
+      var points = rows.Skip(index).Take(count)
+          .Select(item => new List<double> { item.Lat, item.Lng }).ToList();
+      if (points.Count >= 3) {
+        result.polygons.Add(new MissionFile.Polygon {
+          inclusion = polygonInclusion,
+          polygon = points,
+          version = 1,
+        });
+      }
+      index += Math.Max(count, 1);
+    }
+    return result;
+  }
+
+  private static List<WpRow> ReadPlanMissionItems(IEnumerable<MissionFile.Item>? items) {
+    var result = new List<WpRow>();
+    foreach (var item in items ?? Enumerable.Empty<MissionFile.Item>()) {
+      if (item.type == "ComplexItem") {
+        foreach (var child in item.TransectStyleComplexItem?.Items
+                     ?? Enumerable.Empty<MissionFile.Item>()) {
+          result.Add(FromPlanItem(child, result.Count));
+        }
+      } else {
+        // Mission Planner's older exporter omitted type; accept it as a SimpleItem.
+        result.Add(FromPlanItem(item, result.Count));
+      }
+    }
+    return result;
+  }
+
+  private static WpRow FromPlanItem(MissionFile.Item item, int sequence) {
+    var values = item.@params ?? new List<double?>();
+    double Param(int index) => values.Count > index ? values[index] ?? 0 : 0;
+    return new WpRow {
+      Seq = sequence,
+      Command = (ushort)item.command,
+      Frame = (byte)item.frame,
+      P1 = Param(0),
+      P2 = Param(1),
+      P3 = Param(2),
+      P4 = Param(3),
+      Lat = Param(4),
+      Lng = Param(5),
+      Alt = Param(6),
+    };
+  }
+
+  private static List<WpRow> ReadPlanGeoFence(MissionFile.GeoFence? fence) {
+    var result = new List<WpRow>();
+    foreach (var polygon in fence?.polygons ?? Enumerable.Empty<MissionFile.Polygon>()) {
+      var points = polygon.polygon ?? new List<List<double>>();
+      var validPoints = points.Where(point => point.Count >= 2).ToList();
+      var command = polygon.inclusion
+          ? MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION
+          : MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_EXCLUSION;
+      foreach (var point in validPoints) {
+        result.Add(NewFileRow(command, point[0], point[1], 0, p1: validPoints.Count));
+      }
+    }
+    foreach (var circle in fence?.circles ?? Enumerable.Empty<MissionFile.Circle>()) {
+      if (circle.circle?.center is not { Count: >= 2 } center) {
+        continue;
+      }
+      result.Add(NewFileRow(
+          circle.inclusion ? MAVLink.MAV_CMD.FENCE_CIRCLE_INCLUSION : MAVLink.MAV_CMD.FENCE_CIRCLE_EXCLUSION,
+          center[0], center[1], 0, p1: circle.circle.radius));
+    }
+    return result;
+  }
+
+  private static List<WpRow> ReadPlanRally(MissionFile.RallyPoints? rally) =>
+      (rally?.points ?? new List<List<double>>())
+          .Where(point => point.Count >= 2)
+          .Select(point => NewFileRow(MAVLink.MAV_CMD.RALLY_POINT, point[0], point[1],
+              point.Count >= 3 ? point[2] : 0,
+              frame: (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT))
+          .ToList();
+
+  private void MergePlanStores(List<WpRow> mission, List<WpRow> fence, List<WpRow> rally,
+      bool append) {
+    var activeStore = StoreFor(MissionType);
+    activeStore.Clear();
+    activeStore.AddRange(Waypoints);
+
+    static void Merge(List<WpRow> target, IEnumerable<WpRow> source, bool appendRows) {
+      if (!appendRows) {
+        target.Clear();
+      }
+      target.AddRange(source);
+      for (int index = 0; index < target.Count; index++) {
+        target[index].Seq = index;
+      }
+    }
+
+    Merge(_missionStore, mission, append);
+    Merge(_fenceStore, fence, append);
+    Merge(_rallyStore, rally, append);
+    Replace(StoreFor(MissionType).ToList());
+    WaypointsChanged?.Invoke();
+  }
+
+  private async Task SavePolygonAsync(string path) {
+    if (DrawnPolygon.Count < 3) {
+      throw new InvalidOperationException("Draw at least 3 polygon points first.");
+    }
+    var lines = new List<string> { "# saved by MissionPlanner-Avalonia" };
+    lines.AddRange(DrawnPolygon.Select(point => $"{F(point.Lat)} {F(point.Lng)}"));
+    lines.Add($"{F(DrawnPolygon[0].Lat)} {F(DrawnPolygon[0].Lng)}");
+    await File.WriteAllLinesAsync(path, lines);
+    Status = $"Saved polygon with {DrawnPolygon.Count} vertices to {Path.GetFileName(path)}.";
+  }
+
+  private async Task LoadPolygonAsync(string path, bool append) {
+    var points = ParseCoordinateLines(await File.ReadAllLinesAsync(path));
+    RemoveClosingPoint(points);
+    if (!append) {
+      DrawnPolygon.Clear();
+    }
+    DrawnPolygon.AddRange(points.Select(point => new PointLatLngAlt(point.Lat, point.Lng, DefaultAlt)));
+    DrawnPolygonChanged?.Invoke();
+    Status = $"{(append ? "Appended" : "Loaded")} polygon with {points.Count} vertices from {Path.GetFileName(path)}.";
+  }
+
+  private async Task SaveLegacyFenceAsync(string path) {
+    var fenceRows = RowsForFile("Fence");
+    var returnPoint = fenceRows.FirstOrDefault(row =>
+        row.Command == (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT);
+    var polygon = fenceRows.Where(row =>
+        row.Command == (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION).ToList();
+    bool hasUnsupported = fenceRows.Any(row => row.Command is
+        (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_EXCLUSION or
+        (ushort)MAVLink.MAV_CMD.FENCE_CIRCLE_INCLUSION or
+        (ushort)MAVLink.MAV_CMD.FENCE_CIRCLE_EXCLUSION);
+    if (returnPoint == null || polygon.Count < 3) {
+      throw new InvalidOperationException("Legacy .fen needs a return point and an inclusion polygon.");
+    }
+    if (hasUnsupported) {
+      throw new InvalidOperationException(
+          "Legacy .fen cannot represent exclusion polygons or circles; use QGC .plan instead.");
+    }
+    var lines = new List<string> {
+      "# saved by MissionPlanner-Avalonia",
+      $"{F(returnPoint.Lat)} {F(returnPoint.Lng)}",
+    };
+    lines.AddRange(polygon.Select(point => $"{F(point.Lat)} {F(point.Lng)}"));
+    lines.Add($"{F(polygon[0].Lat)} {F(polygon[0].Lng)}");
+    await File.WriteAllLinesAsync(path, lines);
+    Status = $"Saved legacy fence to {Path.GetFileName(path)}.";
+  }
+
+  private async Task LoadLegacyFenceAsync(string path, bool append) {
+    var points = ParseCoordinateLines(await File.ReadAllLinesAsync(path));
+    if (points.Count < 4) {
+      throw new InvalidDataException("Legacy .fen needs a return point and at least 3 polygon vertices.");
+    }
+    var returnPoint = points[0];
+    points.RemoveAt(0);
+    RemoveClosingPoint(points);
+    if (MissionType != "Fence") {
+      MissionType = "Fence";
+    }
+    var rows = new List<WpRow>();
+    if (!append || !Waypoints.Any(row =>
+          row.Command == (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT)) {
+      rows.Add(NewFileRow(MAVLink.MAV_CMD.FENCE_RETURN_POINT, returnPoint.Lat, returnPoint.Lng, 0));
+    }
+    rows.AddRange(points.Select(point =>
+        NewFileRow(MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION, point.Lat, point.Lng, 0,
+            p1: points.Count)));
+    ReplaceOrAppend(rows, append);
+    Status = $"{(append ? "Appended" : "Loaded")} legacy fence from {Path.GetFileName(path)}.";
+  }
+
+  private async Task SaveLegacyRallyAsync(string path) {
+    var rally = RowsForFile("Rally")
+        .Where(row => row.Command == (ushort)MAVLink.MAV_CMD.RALLY_POINT).ToList();
+    if (rally.Count == 0) {
+      throw new InvalidOperationException("No rally points to save.");
+    }
+    var lines = new List<string> { "# saved by MissionPlanner-Avalonia" };
+    lines.AddRange(rally.Select(point => string.Join("\t", new[] {
+      "RALLY", F(point.Lat), F(point.Lng), F(point.Alt), F(point.P1), F(point.P2), F(point.P3),
+    })));
+    await File.WriteAllLinesAsync(path, lines);
+    Status = $"Saved {rally.Count} rally point(s) to {Path.GetFileName(path)}.";
+  }
+
+  private async Task LoadLegacyRallyAsync(string path, bool append) {
+    var rows = new List<WpRow>();
+    foreach (string line in await File.ReadAllLinesAsync(path)) {
+      string trimmed = line.Trim();
+      if (trimmed.Length == 0 || trimmed.StartsWith('#')) {
+        continue;
+      }
+      string[] fields = trimmed.Split(new[] { ' ', '\t', ',' }, StringSplitOptions.RemoveEmptyEntries);
+      if (fields.Length < 4 || !fields[0].Equals("RALLY", StringComparison.OrdinalIgnoreCase)) {
+        continue;
+      }
+      rows.Add(NewFileRow(MAVLink.MAV_CMD.RALLY_POINT, D(fields[1]), D(fields[2]), D(fields[3]),
+          p1: fields.Length > 4 ? D(fields[4]) : 0,
+          p2: fields.Length > 5 ? D(fields[5]) : 0,
+          p3: fields.Length > 6 ? D(fields[6]) : 0,
+          frame: (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT));
+    }
+    if (MissionType != "Rally") {
+      MissionType = "Rally";
+    }
+    ReplaceOrAppend(rows, append);
+    Status = $"{(append ? "Appended" : "Loaded")} {rows.Count} rally point(s) from {Path.GetFileName(path)}.";
+  }
+
+  private static List<(double Lat, double Lng)> ParseCoordinateLines(IEnumerable<string> lines) {
+    var points = new List<(double, double)>();
+    foreach (string line in lines) {
+      string trimmed = line.Trim();
+      if (trimmed.Length == 0 || trimmed.StartsWith('#')) {
+        continue;
+      }
+      string[] fields = trimmed.Split(new[] { ' ', '\t', ',' }, StringSplitOptions.RemoveEmptyEntries);
+      if (fields.Length >= 2
+          && double.TryParse(fields[0], NumberStyles.Any, CultureInfo.InvariantCulture, out double lat)
+          && double.TryParse(fields[1], NumberStyles.Any, CultureInfo.InvariantCulture, out double lng)) {
+        points.Add((lat, lng));
+      }
+    }
+    return points;
+  }
+
+  private static void RemoveClosingPoint(List<(double Lat, double Lng)> points) {
+    if (points.Count > 1
+        && Math.Abs(points[0].Lat - points[^1].Lat) < 1e-9
+        && Math.Abs(points[0].Lng - points[^1].Lng) < 1e-9) {
+      points.RemoveAt(points.Count - 1);
+    }
+  }
+
+  private static WpRow NewFileRow(MAVLink.MAV_CMD command, double lat, double lng, double alt,
+      double p1 = 0, double p2 = 0, double p3 = 0, double p4 = 0,
+      byte frame = (byte)MAVLink.MAV_FRAME.GLOBAL) =>
+      new() {
+        Command = (ushort)command,
+        Frame = frame,
+        Lat = lat,
+        Lng = lng,
+        Alt = alt,
+        P1 = p1,
+        P2 = p2,
+        P3 = p3,
+        P4 = p4,
+      };
+
+  private void ReplaceOrAppend(IEnumerable<WpRow> rows, bool append) {
+    if (!append) {
+      Replace(rows);
+      return;
+    }
+    foreach (var row in rows) {
+      Waypoints.Add(row);
+    }
+    Renumber();
+    WaypointsChanged?.Invoke();
   }
 
   [RelayCommand]
@@ -445,7 +932,8 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   public void AddWaypointAt(double lat, double lng) {
     switch (MissionType) {
       case "Fence":
-        AddCommandRow(MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION, lat, lng, 0);
+        AddCommandRow(MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION, lat, lng, 0,
+            frame: (byte)MAVLink.MAV_FRAME.GLOBAL);
         break;
       case "Rally":
         AddCommandRow(MAVLink.MAV_CMD.RALLY_POINT, lat, lng,
@@ -656,14 +1144,17 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     foreach (var r in existing) {
       Waypoints.Remove(r);
     }
-    AddCommandRow(MAVLink.MAV_CMD.FENCE_RETURN_POINT, lat, lng, 0);
+    AddCommandRow(MAVLink.MAV_CMD.FENCE_RETURN_POINT, lat, lng, 0,
+        frame: (byte)MAVLink.MAV_FRAME.GLOBAL);
   }
 
   private WpRow AddCommandRow(MAVLink.MAV_CMD cmd, double lat, double lng, double alt,
-      double p1 = 0, double p2 = 0, double p3 = 0, double p4 = 0) {
+      double p1 = 0, double p2 = 0, double p3 = 0, double p4 = 0,
+      byte frame = (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT) {
     var row = new WpRow {
       Seq = Waypoints.Count,
       Command = (ushort)cmd,
+      Frame = frame,
       Alt = alt,
       Lat = lat,
       Lng = lng,

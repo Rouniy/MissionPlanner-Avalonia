@@ -1,18 +1,28 @@
 using System;
+using System.IO;
 
 using Avalonia.Controls;
+using Avalonia.Threading;
 
 using LibVLCSharp.Avalonia;
 using LibVLCSharp.Shared;
+using MissionPlannerAvalonia.Services;
 
 namespace MissionPlannerAvalonia.Controls;
 
-public class VideoControl : UserControl {
+public class VideoControl : UserControl, IDisposable {
   private readonly VideoView _videoView;
   private LibVLCSharp.Shared.LibVLC? _libVlc;
   private MediaPlayer? _mediaPlayer;
+  private Media? _currentMedia;
+  private string? _temporarySourceFile;
+  private string? _resolvedMrl;
+  private FromType _resolvedFromType = FromType.FromLocation;
   private bool _isAvailable;
+  private bool _disposed;
   private string _status = "video not started";
+
+  public event EventHandler? StatusChanged;
 
   public VideoControl() {
     _videoView = new VideoView();
@@ -24,23 +34,39 @@ public class VideoControl : UserControl {
 
   public string Status => _status;
 
-  public void Play(string mrl) {
-    if (!_isAvailable || _libVlc is null || _mediaPlayer is null) {
-      return;
+  public bool Play(string mrl) {
+    if (_disposed || !_isAvailable || _libVlc is null || _mediaPlayer is null) {
+      return false;
     }
 
     if (string.IsNullOrWhiteSpace(mrl)) {
-      _status = "no source set";
-      return;
+      SetStatus("no source set");
+      return false;
     }
 
     try {
-      using var media = new Media(_libVlc, mrl, FromType.FromLocation);
-      _mediaPlayer.Play(media);
-      _currentMrl = mrl;
-      _status = $"playing: {mrl}";
+      ReleaseCurrentMedia();
+      var source = VideoSourceResolver.Resolve(mrl);
+      _temporarySourceFile = source.TemporaryFile;
+      _resolvedMrl = source.Mrl;
+      _resolvedFromType = source.FromType;
+      _currentMedia = new Media(_libVlc, source.Mrl, source.FromType);
+      if (source.FromType == FromType.FromLocation) {
+        _currentMedia.AddOption(":network-caching=250");
+      }
+      bool started = _mediaPlayer.Play(_currentMedia);
+      if (!started) {
+        SetStatus($"libVLC rejected source: {source.Mrl}");
+        ReleaseCurrentMedia();
+        return false;
+      }
+      _currentMrl = mrl.Trim();
+      SetStatus($"opening: {source.Mrl}");
+      return true;
     } catch (Exception ex) {
-      _status = $"play failed: {ex.Message}";
+      ReleaseCurrentMedia();
+      SetStatus($"play failed: {ex.Message}");
+      return false;
     }
   }
 
@@ -51,33 +77,38 @@ public class VideoControl : UserControl {
 
     try {
       _mediaPlayer.Stop();
-      _status = "stopped";
+      ReleaseCurrentMedia();
+      SetStatus("stopped");
     } catch (Exception ex) {
-      _status = $"stop failed: {ex.Message}";
+      SetStatus($"stop failed: {ex.Message}");
     }
   }
 
   public bool TryRecord(string outPath) {
-    if (!_isAvailable || _libVlc is null || _mediaPlayer is null) {
+    if (_disposed || !_isAvailable || _libVlc is null || _mediaPlayer is null) {
       return false;
     }
 
-    if (string.IsNullOrWhiteSpace(outPath) || string.IsNullOrWhiteSpace(_currentMrl)) {
-      _status = "record unavailable: no active source";
+    if (string.IsNullOrWhiteSpace(outPath) || string.IsNullOrWhiteSpace(_resolvedMrl)) {
+      SetStatus("record unavailable: no active source");
       return false;
     }
 
     try {
-      var sout = $":sout=#duplicate{{dst=display,dst=std{{access=file,mux=ts,dst={outPath}}}}}";
-      var media = new Media(_libVlc, _currentMrl, FromType.FromLocation);
-      media.AddOption(sout);
-      media.AddOption(":sout-keep");
-      _mediaPlayer.Play(media);
-      media.Dispose();
-      _status = $"recording: {outPath}";
-      return true;
+      string destination = Path.GetFullPath(outPath);
+      string soutDestination = destination.Replace("'", "\\'", StringComparison.Ordinal);
+      var sout = $":sout=#duplicate{{dst=display,dst=std{{access=file,mux=ts,dst='{soutDestination}'}}}}";
+      _mediaPlayer.Stop();
+      _currentMedia?.Dispose();
+      _currentMedia = null;
+      _currentMedia = new Media(_libVlc, _resolvedMrl, _resolvedFromType);
+      _currentMedia.AddOption(sout);
+      _currentMedia.AddOption(":sout-keep");
+      bool started = _mediaPlayer.Play(_currentMedia);
+      SetStatus(started ? $"recording: {destination}" : "record failed: libVLC rejected the source");
+      return started;
     } catch (Exception ex) {
-      _status = $"record failed: {ex.Message}";
+      SetStatus($"record failed: {ex.Message}");
       return false;
     }
   }
@@ -89,9 +120,9 @@ public class VideoControl : UserControl {
 
     try {
       _mediaPlayer.TakeSnapshot(0, outPath, 0, 0);
-      _status = $"snapshot: {outPath}";
+      SetStatus($"snapshot: {outPath}");
     } catch (Exception ex) {
-      _status = $"snapshot failed: {ex.Message}";
+      SetStatus($"snapshot failed: {ex.Message}");
     }
   }
 
@@ -100,15 +131,70 @@ public class VideoControl : UserControl {
   private void InitializeCore() {
 
     try {
-      LibVLCSharp.Shared.Core.Initialize();
-      _libVlc = new LibVLCSharp.Shared.LibVLC();
+      LibVlcBootstrap.Initialize();
+      _libVlc = new LibVLCSharp.Shared.LibVLC("--no-video-title-show", "--quiet");
       _mediaPlayer = new MediaPlayer(_libVlc);
+      _mediaPlayer.Opening += (_, _) => PostStatus("opening video stream…");
+      _mediaPlayer.Buffering += (_, args) => PostStatus($"buffering: {args.Cache:0}%");
+      _mediaPlayer.Playing += (_, _) => PostStatus($"playing: {_currentMrl}");
+      _mediaPlayer.EncounteredError += (_, _) =>
+          PostStatus("libVLC could not open the source. Check the URL, protocol, codec and network reachability.");
+      _mediaPlayer.EndReached += (_, _) => PostStatus("video stream ended");
       _videoView.MediaPlayer = _mediaPlayer;
       _isAvailable = true;
-      _status = "video ready";
+      SetStatus("video ready");
     } catch (Exception ex) {
       _isAvailable = false;
-      _status = $"video unavailable: libvlc not found ({ex.Message})";
+      SetStatus(
+          "video unavailable: libVLC could not be loaded (" + ex.Message
+          + "). Install the platform libVLC runtime and codec plugins.");
     }
+  }
+
+  private void PostStatus(string value) {
+    if (Dispatcher.UIThread.CheckAccess()) {
+      SetStatus(value);
+    } else {
+      Dispatcher.UIThread.Post(() => SetStatus(value));
+    }
+  }
+
+  private void SetStatus(string value) {
+    _status = value;
+    StatusChanged?.Invoke(this, EventArgs.Empty);
+  }
+
+  private void ReleaseCurrentMedia() {
+    _currentMedia?.Dispose();
+    _currentMedia = null;
+    _resolvedMrl = null;
+    _resolvedFromType = FromType.FromLocation;
+    if (!string.IsNullOrWhiteSpace(_temporarySourceFile)) {
+      try {
+        File.Delete(_temporarySourceFile);
+      } catch {
+        // The SDP may still be held briefly by libVLC; the OS temp cleaner will remove it.
+      }
+      _temporarySourceFile = null;
+    }
+  }
+
+  public void Dispose() {
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
+    try {
+      _mediaPlayer?.Stop();
+    } catch {
+      // Continue releasing native resources even if the playback backend is already gone.
+    }
+    ReleaseCurrentMedia();
+    _videoView.MediaPlayer = null;
+    _mediaPlayer?.Dispose();
+    _mediaPlayer = null;
+    _libVlc?.Dispose();
+    _libVlc = null;
+    _isAvailable = false;
   }
 }

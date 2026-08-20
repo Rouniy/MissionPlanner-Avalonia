@@ -134,6 +134,16 @@ public partial class FlightPlannerView : UserControl {
       menu.Items.Add(c);
     }
     AddFenceOnly(Item("Set Return Location", (vm, lat, lng) => vm.SetFenceReturn(lat, lng)));
+    var fenceGeometry = new MenuItem { Header = "Fence Geometry" };
+    fenceGeometry.Items.Add(Item("Inclusion Polygon from Drawn Polygon",
+        (vm, _, _) => vm.AddDrawnPolygonToFence(true)));
+    fenceGeometry.Items.Add(Item("Exclusion Polygon from Drawn Polygon",
+        (vm, _, _) => vm.AddDrawnPolygonToFence(false)));
+    fenceGeometry.Items.Add(Item("Inclusion Circle Here",
+        (vm, lat, lng) => _ = vm.AddFenceCircle(lat, lng, true)));
+    fenceGeometry.Items.Add(Item("Exclusion Circle Here",
+        (vm, lat, lng) => _ = vm.AddFenceCircle(lat, lng, false)));
+    AddFenceOnly(fenceGeometry);
     AddMissionOnly(new Separator());
     AddMissionOnly(Item("Insert at Current Position", (vm, _, _) => vm.InsertAtCurrentPosition()));
     AddMissionOnly(Item("Insert Spline WP", (vm, lat, lng) => vm.AddSplineWp(lat, lng)));
@@ -197,6 +207,12 @@ public partial class FlightPlannerView : UserControl {
     poly.Items.Add(Item("Clear", (vm, _, _) => vm.ClearPolygon()));
     poly.Items.Add(Item("From Current Waypoints", (vm, _, _) => vm.BuildPolygonFromWaypoints()));
     poly.Items.Add(Item("Area", (vm, _, _) => vm.PolygonArea()));
+    var loadPolygon = new MenuItem { Header = "Load .poly…" };
+    loadPolygon.Click += OnLoadPolygon;
+    poly.Items.Add(loadPolygon);
+    var savePolygon = new MenuItem { Header = "Save .poly…" };
+    savePolygon.Click += OnSavePolygon;
+    poly.Items.Add(savePolygon);
     menu.Items.Add(poly);
     return menu;
   }
@@ -250,8 +266,24 @@ public partial class FlightPlannerView : UserControl {
 
   private FlightPlannerViewModel? Vm => DataContext as FlightPlannerViewModel;
 
-  private static readonly FilePickerFileType _wpType = new("Waypoints") {
-    Patterns = new[] { "*.waypoints", "*.txt" },
+  private static readonly FilePickerFileType _wpType = new("Mission Planner files") {
+    Patterns = new[] { "*.waypoints", "*.txt", "*.mission", "*.plan", "*.fen", "*.ral", "*.poly" },
+  };
+
+  private static readonly FilePickerFileType _jsonMissionType = new("Mission/QGC JSON") {
+    Patterns = new[] { "*.mission", "*.plan" },
+  };
+
+  private static readonly FilePickerFileType _fenceType = new("Legacy fence") {
+    Patterns = new[] { "*.fen" },
+  };
+
+  private static readonly FilePickerFileType _rallyType = new("Legacy rally") {
+    Patterns = new[] { "*.ral" },
+  };
+
+  private static readonly FilePickerFileType _polygonType = new("Polygon") {
+    Patterns = new[] { "*.poly" },
   };
 
   private static readonly FilePickerFileType _kmlType = new("KML") {
@@ -330,6 +362,14 @@ public partial class FlightPlannerView : UserControl {
   }
 
   private async void OnLoadFile(object? sender, RoutedEventArgs e) {
+    await PickAndLoadFile(false);
+  }
+
+  private async void OnLoadAndAppendFile(object? sender, RoutedEventArgs e) {
+    await PickAndLoadFile(true);
+  }
+
+  private async Task PickAndLoadFile(bool append) {
     var top = TopLevel.GetTopLevel(this);
     if (top is null || Vm is null) {
       return;
@@ -337,14 +377,14 @@ public partial class FlightPlannerView : UserControl {
 
     var files = await top.StorageProvider.OpenFilePickerAsync(
         new FilePickerOpenOptions {
-          Title = "Load Mission",
+          Title = append ? "Load and append" : "Load Mission/Fence/Rally/Polygon",
           AllowMultiple = false,
           FileTypeFilter = new[] { _wpType },
         }
     );
     var file = files.FirstOrDefault();
     if (file?.TryGetLocalPath() is { } path) {
-      await Vm.LoadFileAsync(path);
+      await Vm.LoadFileAsync(path, append);
     }
   }
 
@@ -354,14 +394,51 @@ public partial class FlightPlannerView : UserControl {
       return;
     }
 
+    string defaultExtension = Vm.MissionType switch {
+      "Fence" => "fen",
+      "Rally" => "ral",
+      _ => "waypoints",
+    };
+    string suggestedName = Vm.MissionType.ToLowerInvariant() + "." + defaultExtension;
     var file = await top.StorageProvider.SaveFilePickerAsync(
         new FilePickerSaveOptions {
-          Title = "Save Mission",
-          DefaultExtension = "waypoints",
-          SuggestedFileName = "mission.waypoints",
-          FileTypeChoices = new[] { _wpType },
+          Title = "Save Mission/Fence/Rally/Polygon",
+          DefaultExtension = defaultExtension,
+          SuggestedFileName = suggestedName,
+          FileTypeChoices = new[] { _wpType, _jsonMissionType, _fenceType, _rallyType, _polygonType },
         }
     );
+    if (file?.TryGetLocalPath() is { } path) {
+      await Vm.SaveFileAsync(path);
+    }
+  }
+
+  private async void OnLoadPolygon(object? sender, RoutedEventArgs e) {
+    var top = TopLevel.GetTopLevel(this);
+    if (top is null || Vm is null) {
+      return;
+    }
+    var files = await top.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions {
+      Title = "Load Polygon",
+      AllowMultiple = false,
+      FileTypeFilter = new[] { _polygonType },
+    });
+    if (files.FirstOrDefault()?.TryGetLocalPath() is { } path) {
+      await Vm.LoadFileAsync(path);
+    }
+  }
+
+  private async void OnSavePolygon(object? sender, RoutedEventArgs e) {
+    var top = TopLevel.GetTopLevel(this);
+    if (top is null || Vm is null) {
+      return;
+    }
+    var file = await top.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions {
+      Title = "Save Polygon",
+      DefaultExtension = "poly",
+      SuggestedFileName = "polygon.poly",
+      FileTypeChoices = new[] { _polygonType },
+    });
     if (file?.TryGetLocalPath() is { } path) {
       await Vm.SaveFileAsync(path);
     }

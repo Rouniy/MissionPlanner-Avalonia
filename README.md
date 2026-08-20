@@ -48,6 +48,12 @@ Log out and back in after adding `dialout`. `libvlc` is needed for video and `sp
 for spoken warnings. Add `xvfb` for headless GUI smoke tests and `dotnet-sdk-aot-10.0` only when
 experimenting with NativeAOT.
 
+Video sources may be direct files or libVLC MRLs such as `rtsp://host/path`, `udp://@:5600`,
+`rtp://@:5600` and `v4l2:///dev/video0`. The input dialog also accepts an RTP GStreamer pipeline
+containing `udpsrc port=...`, `application/x-rtp` and H.264/H.265 depayloading; the port converts it
+to a temporary SDP file for libVLC. A bare non-RTP GStreamer pipeline is not interchangeable with a
+libVLC MRL and is rejected with an explanatory message.
+
 ## Build & run
 
 Mission Planner's reusable libraries come in as one top-level git submodule. Its historical nested

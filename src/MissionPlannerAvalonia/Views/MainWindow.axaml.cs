@@ -11,6 +11,7 @@ public partial class MainWindow : Window {
 
     Title = Services.AppVersion.Title;
     KeyDown += OnKeyDown;
+    Closed += (_, _) => (DataContext as System.IDisposable)?.Dispose();
   }
 
   private MainWindowViewModel? Vm => DataContext as MainWindowViewModel;

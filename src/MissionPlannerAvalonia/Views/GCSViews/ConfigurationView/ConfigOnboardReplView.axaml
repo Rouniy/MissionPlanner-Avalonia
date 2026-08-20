@@ -1,0 +1,60 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:cv="using:MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView"
+  mc:Ignorable="d"
+  d:DesignWidth="800"
+  d:DesignHeight="640"
+  x:Class="MissionPlannerAvalonia.Views.GCSViews.ConfigurationView.ConfigOnboardReplView"
+  x:DataType="cv:ConfigOnboardReplViewModel"
+  Background="{DynamicResource MpControlBg}"
+>
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16">
+    <DockPanel Grid.Row="0" Margin="0,0,0,8">
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8">
+        <Button Content="Start" Command="{Binding StartCommand}" />
+        <Button Content="Stop" Command="{Binding StopCommand}" />
+        <Button Content="Clear" Command="{Binding ClearCommand}" />
+      </StackPanel>
+      <TextBlock Classes="pagetitle" Text="Onboard Lua REPL" />
+    </DockPanel>
+
+    <TextBlock
+      Grid.Row="1"
+      Text="{Binding Status}"
+      Classes="fieldlbl"
+      TextWrapping="Wrap"
+      Margin="0,0,0,10"
+    />
+
+    <TextBox
+      Grid.Row="2"
+      Text="{Binding Output}"
+      IsReadOnly="True"
+      AcceptsReturn="True"
+      TextWrapping="NoWrap"
+      FontFamily="Consolas,Menlo,monospace"
+      Background="{DynamicResource MpBg}"
+      Foreground="#DDDDDD"
+      VerticalContentAlignment="Top"
+    />
+
+    <Grid Grid.Row="3" ColumnDefinitions="*,Auto" Margin="0,10,0,0">
+      <TextBox
+        Grid.Column="0"
+        Text="{Binding Input}"
+        Watermark="Enter an ArduPilot Lua expression…"
+        FontFamily="Consolas,Menlo,monospace"
+        Margin="0,0,8,0"
+        IsEnabled="{Binding Running}"
+      />
+      <Button
+        Grid.Column="1"
+        Content="Send"
+        Command="{Binding SendCommand}"
+      />
+    </Grid>
+  </Grid>
+</UserControl>
