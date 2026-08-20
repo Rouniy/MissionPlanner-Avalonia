@@ -235,7 +235,7 @@ public partial class ConfigGpsInjectViewModel : ViewModelBase, IDisposable {
           var cs = _comPort.MAV.cs;
           ntrip.lat = cs.lat;
           ntrip.lng = cs.lng;
-          ntrip.alt = cs.altasl;
+          ntrip.alt = cs.altasl / CurrentState.multiplieralt;
         }
         ntrip.Open(BuildUrl());
         comm = ntrip;
@@ -294,6 +294,8 @@ public partial class ConfigGpsInjectViewModel : ViewModelBase, IDisposable {
   }
 
   private string BuildUrl() {
+    // CommsNTRIP.Open percent-encodes the whole URL itself (including a literal % as %25),
+    // so credentials must be passed raw here; pre-escaping would double-encode them.
     var userinfo = "";
     if (!string.IsNullOrEmpty(Username)) {
       userinfo = Username;

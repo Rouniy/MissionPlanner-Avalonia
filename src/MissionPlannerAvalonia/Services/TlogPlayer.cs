@@ -64,11 +64,16 @@ public class TlogPlayer {
 
       while (stream.Position < stream.Length) {
         MAVLink.MAVLinkMessage? msg;
+        var before = stream.Position;
         try {
           msg = parse.ReadPacket(stream);
         } catch (EndOfStreamException) {
           break;
         } catch {
+          // Guarantee forward progress if the parser throws without consuming bytes.
+          if (stream.Position == before) {
+            stream.Position = before + 1;
+          }
           continue;
         }
 
@@ -204,11 +209,16 @@ public class TlogPlayer {
 
       while (stream.Position < stream.Length) {
         MAVLink.MAVLinkMessage? msg;
+        var before = stream.Position;
         try {
           msg = parse.ReadPacket(stream);
         } catch (EndOfStreamException) {
           break;
         } catch {
+          // Guarantee forward progress if the parser throws without consuming bytes.
+          if (stream.Position == before) {
+            stream.Position = before + 1;
+          }
           continue;
         }
 

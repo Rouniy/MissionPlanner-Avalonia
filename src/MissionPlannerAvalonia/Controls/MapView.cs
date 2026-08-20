@@ -77,7 +77,16 @@ public class MapView : MapControl {
 
     _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
     _timer.Tick += (_, _) => UpdateVehicle();
+  }
+
+  protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e) {
+    base.OnAttachedToVisualTree(e);
     _timer.Start();
+  }
+
+  protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e) {
+    _timer.Stop();
+    base.OnDetachedFromVisualTree(e);
   }
 
   public bool LiveVehicle { get; set; } = true;

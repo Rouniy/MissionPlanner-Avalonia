@@ -401,8 +401,16 @@ public partial class AntennaTrackerUIViewModel : ViewModelBase, IDisposable {
   }
 
   private void StopLoop() {
-    _loopCts?.Cancel();
+    var cts = _loopCts;
     _loopCts = null;
+    if (cts == null) {
+      return;
+    }
+    try {
+      cts.Cancel();
+    } catch (ObjectDisposedException) {
+    }
+    cts.Dispose();
   }
 
   private void LoadSettings() {

@@ -24,11 +24,70 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
     _currentScreen = FlightData;
 
     Simulation.RequestFlightData += () =>
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => Navigate("DATA"));
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = Navigate("DATA"));
+  }
+
+  private bool _passwordUnlocked;
+
+  internal static bool HasValidPasswordHash() {
+    var stored = MissionPlanner.Utilities.Settings.Instance["password"];
+    if (string.IsNullOrEmpty(stored)) {
+      return false;
+    }
+    try {
+      // Upstream Password stores a salted SHA-256 hash: exactly 32 bytes. Anything else can
+      // never match any entered password and must be treated as absent.
+      return System.Convert.FromBase64String(stored).Length == 32;
+    } catch (System.FormatException) {
+      return false;
+    }
+  }
+
+  private async System.Threading.Tasks.Task<bool> UnlockProtectedScreens() {
+    var settings = MissionPlanner.Utilities.Settings.Instance;
+    if (_passwordUnlocked || !settings.GetBoolean("password_protect", false)) {
+      return true;
+    }
+
+    // Migration: older builds stored the flag without ever creating a hash. Never lock the
+    // user out behind a password that does not exist — offer to set one now instead.
+    if (!HasValidPasswordHash()) {
+      var newPw = await Services.Dialogs.PasswordInputBox("Password Protect",
+          "Password protection is enabled but no password is stored.\n"
+          + "Enter a new password, or cancel to disable protection.");
+      if (string.IsNullOrEmpty(newPw)) {
+        settings["password_protect"] = false.ToString();
+        _passwordUnlocked = true;
+        return true;
+      }
+      MissionPlanner.Utilities.Password.EnterPassword(newPw);
+      _passwordUnlocked = true;
+      return true;
+    }
+
+    var pw = await Services.Dialogs.PasswordInputBox("Password", "Enter the settings password");
+    if (pw == null) {
+      return false;
+    }
+    bool valid;
+    try {
+      valid = MissionPlanner.Utilities.Password.ValidatePassword(pw);
+    } catch {
+      valid = false;
+    }
+    if (!valid) {
+      await Services.Dialogs.Alert("Password", "Incorrect password.");
+      return false;
+    }
+    _passwordUnlocked = true;
+    return true;
   }
 
   [RelayCommand]
-  private void Navigate(string target) {
+  private async System.Threading.Tasks.Task Navigate(string target) {
+    if ((target == "SETUP" || target == "CONFIG") && !await UnlockProtectedScreens()) {
+      return;
+    }
     ActiveTab = target;
     var nextScreen = target switch {
       "DATA" => FlightData,
@@ -70,6 +129,7 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
   }
 
   public void Dispose() {
+    Connection.Dispose();
     Setup.Dispose();
 #pragma warning disable CS0612 // The CONFIG screen remains part of the current application shell.
     Config.Dispose();

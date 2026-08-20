@@ -189,7 +189,7 @@
           <Button
             Content="Write Fast"
             HorizontalAlignment="Stretch"
-            Command="{Binding WriteWaypointsCommand}"
+            Command="{Binding WriteWaypointsFastCommand}"
           />
           <Separator />
           <TextBlock Text="Home Location" Foreground="{DynamicResource MpAccentBrush}" FontWeight="Bold" FontSize="12" />

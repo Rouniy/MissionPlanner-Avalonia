@@ -53,7 +53,10 @@ public class LuaScriptHost {
   }
 
   public void Abort() {
-    _cts?.Cancel();
+    try {
+      _cts?.Cancel();
+    } catch (ObjectDisposedException) {
+    }
   }
 
   private void RegisterGlobals(Script script, CancellationToken token) {

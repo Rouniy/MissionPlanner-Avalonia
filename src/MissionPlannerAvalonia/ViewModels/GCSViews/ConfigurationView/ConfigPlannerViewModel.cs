@@ -373,39 +373,124 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
     Settings.Instance["speech_armed_only"] = value.ToString();
   }
 
+  private static async System.Threading.Tasks.Task PromptTemplate(
+      string key, string title, string fallback) {
+    var current = Settings.Instance[key] ?? fallback;
+    var text = await Services.Dialogs.InputBox(title, "What do you want it to say?", current);
+    if (!string.IsNullOrEmpty(text)) {
+      Settings.Instance[key] = text;
+    } else if (Settings.Instance[key] == null) {
+      Settings.Instance[key] = fallback;
+    }
+  }
+
+  private static async System.Threading.Tasks.Task PromptNumber(
+      string key, string title, string prompt, string fallback) {
+    var current = Settings.Instance[key] ?? fallback;
+    var text = await Services.Dialogs.InputBox(title, prompt, current);
+    if (!string.IsNullOrEmpty(text) &&
+        double.TryParse(text, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out _)) {
+      Settings.Instance[key] = text;
+    } else if (Settings.Instance[key] == null) {
+      Settings.Instance[key] = fallback;
+    }
+  }
+
   partial void OnSpeechWaypointChanged(bool value) {
     if (_loading) return;
     Settings.Instance["speechwaypointenabled"] = value.ToString();
+    if (value) {
+      _ = PromptTemplate("speechwaypoint", "Waypoint", "Heading to Waypoint {wpn}");
+    }
   }
 
   partial void OnSpeechModeChanged(bool value) {
     if (_loading) return;
     Settings.Instance["speechmodeenabled"] = value.ToString();
+    if (value) {
+      _ = PromptTemplate("speechmode", "Mode", "Mode changed to {mode}");
+    }
   }
 
   partial void OnSpeechCustomChanged(bool value) {
     if (_loading) return;
     Settings.Instance["speechcustomenabled"] = value.ToString();
+    if (value) {
+      _ = PromptTemplate("speechcustom", "Custom",
+          "Heading to Waypoint {wpn}, altitude is {alt}, Ground speed is {gsp} ");
+    }
   }
 
   partial void OnSpeechBatteryChanged(bool value) {
     if (_loading) return;
     Settings.Instance["speechbatteryenabled"] = value.ToString();
+    if (value) {
+      _ = ConfigureBatterySpeechAsync();
+    }
+  }
+
+  private static async System.Threading.Tasks.Task ConfigureBatterySpeechAsync() {
+    await PromptTemplate("speechbattery", "Battery",
+        "WARNING, Battery at {batv} Volt, {batp} percent");
+    await PromptNumber("speechbatteryvolt", "Battery Level",
+        "What Voltage do you want to warn at?", "9.6");
+    await PromptNumber("speechbatterypercent", "Battery Level",
+        "What percentage do you want to warn at?", "20");
   }
 
   partial void OnSpeechAltWarningChanged(bool value) {
     if (_loading) return;
     Settings.Instance["speechaltenabled"] = value.ToString();
+    if (value) {
+      _ = ConfigureAltSpeechAsync();
+    }
+  }
+
+  private static async System.Threading.Tasks.Task ConfigureAltSpeechAsync() {
+    await PromptTemplate("speechalt", "Altitude Warning", "WARNING, low altitude {alt}");
+    // Stored in raw metres (matching upstream); the prompt shows and accepts display units.
+    var storedMetres = Settings.Instance.GetFloat("speechaltheight", 2f / CurrentState.multiplieralt);
+    var current = (storedMetres * CurrentState.multiplieralt)
+        .ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+    var text = await Services.Dialogs.InputBox("Altitude Warning",
+        $"What altitude do you want to warn at ({CurrentState.AltUnit})?", current);
+    if (!string.IsNullOrEmpty(text) &&
+        double.TryParse(text, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var alt)) {
+      Settings.Instance["speechaltheight"] = (alt / CurrentState.multiplieralt)
+          .ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
   }
 
   partial void OnSpeechArmDisarmChanged(bool value) {
     if (_loading) return;
     Settings.Instance["speecharmenabled"] = value.ToString();
+    if (value) {
+      _ = ConfigureArmSpeechAsync();
+    }
+  }
+
+  private static async System.Threading.Tasks.Task ConfigureArmSpeechAsync() {
+    await PromptTemplate("speecharm", "Arm", "Armed");
+    await PromptTemplate("speechdisarm", "Disarmed", "Disarmed");
   }
 
   partial void OnSpeechLowSpeedChanged(bool value) {
     if (_loading) return;
     Settings.Instance["speechlowspeedenabled"] = value.ToString();
+    if (value) {
+      _ = ConfigureLowSpeedSpeechAsync();
+    }
+  }
+
+  private static async System.Threading.Tasks.Task ConfigureLowSpeedSpeechAsync() {
+    await PromptTemplate("speechlowgroundspeed", "Ground Speed", "Low Ground Speed {gsp}");
+    await PromptNumber("speechlowgroundspeedtrigger", "Speed trigger",
+        "What speed do you want to warn at (m/s)?", "0");
+    await PromptTemplate("speechlowairspeed", "Air Speed", "Low Air Speed {asp}");
+    await PromptNumber("speechlowairspeedtrigger", "Speed trigger",
+        "What speed do you want to warn at (m/s)?", "0");
   }
 
   partial void OnEnableHudOverlayChanged(bool value) {
@@ -477,8 +562,21 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
 
   partial void OnPasswordProtectChanged(bool value) {
     if (_loading) return;
+    _ = ApplyPasswordProtectAsync(value);
+  }
 
-    // ponytail: upstream also prompts for the password via InputBox; only the flag is stored here.
+  private async System.Threading.Tasks.Task ApplyPasswordProtectAsync(bool value) {
+    if (value) {
+      var pw = await Services.Dialogs.PasswordInputBox("Password Protect",
+          "Enter a new password for the Setup and Config screens");
+      if (string.IsNullOrEmpty(pw)) {
+        _loading = true;
+        PasswordProtect = false;
+        _loading = false;
+        return;
+      }
+      Password.EnterPassword(pw);
+    }
     Settings.Instance["password_protect"] = value.ToString();
   }
 

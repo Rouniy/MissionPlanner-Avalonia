@@ -78,6 +78,8 @@ public partial class GeoRefViewModel : ViewModelBase {
     OutputLog = "";
     Status = "Geo tagging…";
     var results = new List<GeoTagResult>();
+    int tagged = 0;
+    int failed = 0;
 
     try {
       await Task.Run(() => {
@@ -89,7 +91,36 @@ public partial class GeoRefViewModel : ViewModelBase {
 
         WriteReports(pics);
 
+        // GeoRefImageBase swallows its own exceptions, so success is judged by whether the
+        // geotagged copy actually appeared on disk. A stale copy from a previous run must not
+        // count, so it is removed before each write.
+        var georef = new MissionPlanner.GeoRef.GeoRefImageBase();
         foreach (var p in pics) {
+          var output = Path.Combine(PhotoDir, "geotagged",
+              Path.GetFileNameWithoutExtension(p.Path) + "_geotag" + Path.GetExtension(p.Path));
+          bool staleBlocked = false;
+          try {
+            if (File.Exists(output)) {
+              File.Delete(output);
+            }
+          } catch (Exception ex) {
+            staleBlocked = true;
+            Append($"Could not remove stale {Path.GetFileName(output)}: {ex.Message}\n");
+          }
+          try {
+            georef.WriteCoordinatesToImage(p.Path, p.Lat, p.Lon, p.AltAMSL, PhotoDir, Append);
+          } catch (Exception ex) {
+            Append($"EXIF write failed for {Path.GetFileName(p.Path)}: {ex.Message}\n");
+          }
+          if (!staleBlocked && File.Exists(output)) {
+            tagged++;
+          } else {
+            failed++;
+            Append(staleBlocked
+                ? $"Cannot verify {Path.GetFileName(p.Path)}: a stale geotagged copy is in " +
+                  "the way and could not be removed.\n"
+                : $"No geotagged copy was produced for {Path.GetFileName(p.Path)}.\n");
+          }
           results.Add(new GeoTagResult {
             Photo = Path.GetFileName(p.Path),
             Lat = p.Lat,
@@ -99,15 +130,26 @@ public partial class GeoRefViewModel : ViewModelBase {
           });
         }
 
-        Append("NOTE: in-place JPEG EXIF GPS write is not available (MetadataExtractor is " +
-               "read-only). Wrote location.txt + location.kml instead.");
+        Append(failed == 0
+            ? $"GPS EXIF written for all {tagged} photo(s) in the 'geotagged' folder, " +
+              "plus location.txt and location.kml.\n"
+            : $"GPS EXIF written for {tagged} photo(s); {failed} failed — see messages above. " +
+              "location.txt and location.kml were still written.\n");
       });
 
       Results.Clear();
       foreach (var r in results) {
         Results.Add(r);
       }
-      Status = $"Geo tagging done — {results.Count} photos matched. Reports under 'geotagged'.";
+      if (results.Count == 0) {
+        Status = "Geo tagging found no photo/log matches — nothing was tagged.";
+      } else if (failed == 0) {
+        Status = $"Geo tagging done — {results.Count} photos matched, {tagged} tagged. " +
+                 "Reports under 'geotagged'.";
+      } else {
+        Status = $"Geo tagging finished with errors — {tagged} tagged, {failed} failed of " +
+                 $"{results.Count} matched. See the log above.";
+      }
     } catch (Exception ex) {
       Append("Error: " + ex);
       Status = "Geo tagging failed: " + ex.Message;

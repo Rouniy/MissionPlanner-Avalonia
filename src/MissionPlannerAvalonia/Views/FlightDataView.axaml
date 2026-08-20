@@ -80,7 +80,7 @@
           <ctl:HudControl.ContextMenu>
             <ContextMenu>
               <MenuItem Header="Video">
-                <MenuItem Header="Record Hud to AVI" Command="{Binding RecordVideoCommand}" />
+                <MenuItem Header="Record Video Stream" Command="{Binding RecordVideoCommand}" />
                 <MenuItem Header="Stop Record" Command="{Binding StopVideoCommand}" />
                 <MenuItem Header="Set MJPEG source" Command="{Binding SetVideoSourceCommand}"
                           CommandParameter="mjpeg" />
@@ -92,7 +92,6 @@
                           CommandParameter="herelink" />
                 <MenuItem Header="GStreamer Stop" Command="{Binding StopVideoCommand}" />
               </MenuItem>
-              <MenuItem Header="Set Aspect Ratio" Command="{Binding SetAspectRatioCommand}" />
               <MenuItem Header="User Items" Command="{Binding HudUserItemsCommand}" />
               <MenuItem Header="Russian Hud" ToggleType="CheckBox" IsChecked="{Binding HudRussian, Mode=TwoWay}" />
               <MenuItem Header="Swap With Map" Command="{Binding SwapHudMapCommand}" />

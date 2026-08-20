@@ -37,6 +37,13 @@
 
     <ScrollViewer Grid.Row="3">
       <StackPanel>
+        <TextBlock
+          Text="{Binding RawInput}"
+          Classes="fieldlbl"
+          FontFamily="monospace"
+          TextWrapping="Wrap"
+          Margin="0,0,0,10"
+        />
         <TextBlock Text="Axes" Classes="fieldlbl" FontWeight="Bold" Margin="0,0,0,4" />
         <Grid ColumnDefinitions="60,150,*,70,70,80" Margin="0,0,0,4">
           <TextBlock Grid.Column="0" Text="Channel" Classes="fieldlbl" />
@@ -60,8 +67,8 @@
                 />
                 <ProgressBar
                   Grid.Column="2"
-                  Minimum="1000"
-                  Maximum="2000"
+                  Minimum="{Binding $parent[ItemsControl].((cv:ConfigJoystickViewModel)DataContext).ValueMinimum}"
+                  Maximum="{Binding $parent[ItemsControl].((cv:ConfigJoystickViewModel)DataContext).ValueMaximum}"
                   Value="{Binding Value}"
                   Height="20"
                   Margin="8,0"

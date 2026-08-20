@@ -31,6 +31,24 @@ public partial class FlightPlannerView : UserControl {
     Map.ContextMenu = BuildMapMenu();
     DataContextChanged += (_, _) => WireViewModel();
     WireViewModel();
+    LoadAutoNoFly();
+  }
+
+  private async void LoadAutoNoFly() {
+    if (!MissionPlanner.Utilities.Settings.Instance.GetBoolean("ShowNoFly", false)) {
+      return;
+    }
+    try {
+      var layer = await Task.Run(() =>
+          Services.NoFlyOverlay.BuildLayerFromDirectory(Services.NoFlyOverlay.DefaultDirectory));
+      if (layer != null) {
+        Map.SetNoFlyLayer(layer);
+        if (Vm != null) {
+          Vm.Status = "NoFly overlay loaded from " + Services.NoFlyOverlay.DefaultDirectory;
+        }
+      }
+    } catch {
+    }
   }
 
   private void OnMapClicked(double lat, double lng) {

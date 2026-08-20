@@ -156,18 +156,19 @@ public partial class LogBrowseViewModel : ViewModelBase {
     }
     var refs = _fieldRef.Matches(expr).Select(m => m.Value).Distinct().ToList();
     if (refs.Count == 0) {
-      return null;
+      throw new InvalidOperationException($"No TYPE.FIELD references found in '{expr}'.");
     }
     var types = refs.Select(r => r.Split('.', 2)[0]).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     if (types.Count != 1) {
-      return null;
+      throw new InvalidOperationException(
+          "Expressions may reference only one message type (got " + string.Join(", ", types) + ").");
     }
     var series = new Dictionary<string, IReadOnlyList<(double time, double value)>>();
     foreach (var r in refs) {
       var parts = r.Split('.', 2);
       var s = DataFlashLog.ReadField(CurrentPath, parts[0], parts[1]);
       if (s.Count == 0) {
-        return null;
+        throw new InvalidOperationException($"No data for {r} in this log.");
       }
       series[r] = s;
     }
@@ -186,13 +187,17 @@ public partial class LogBrowseViewModel : ViewModelBase {
       }
 
     }
-    return xs.Count > 0 ? (xs, ys) : null;
+    if (xs.Count == 0) {
+      throw new InvalidOperationException($"'{expr}' produced no finite values.");
+    }
+    return (xs, ys);
   }
 
   public static double? EvalExpression(string expr, IReadOnlyList<string> refs,
       IReadOnlyDictionary<string, double> values) {
     string e = expr;
-    foreach (var r in refs) {
+    // Substitute longer references first so e.g. RCOU.C10 is not clobbered by RCOU.C1.
+    foreach (var r in refs.OrderByDescending(x => x.Length)) {
       e = e.Replace(r,
           "(" + values[r].ToString(System.Globalization.CultureInfo.InvariantCulture) + ")");
     }
@@ -239,9 +244,11 @@ public partial class LogBrowseViewModel : ViewModelBase {
     int n = Math.Min(maxRows, perField.Count > 0 ? perField.Min(s => s.Count) : 0);
     var rows = new List<IReadOnlyList<string>>(n);
     for (int i = 0; i < n; i++) {
-      var row = new List<string> { perField[0][i].time.ToString("0.000") };
+      var row = new List<string> {
+        perField[0][i].time.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)
+      };
       foreach (var s in perField) {
-        row.Add(s[i].value.ToString("0.###"));
+        row.Add(s[i].value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
       }
       rows.Add(row);
     }

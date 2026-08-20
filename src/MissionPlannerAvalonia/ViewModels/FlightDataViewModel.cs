@@ -1607,7 +1607,7 @@ public partial class FlightDataViewModel : ViewModelBase {
     var s = MissionPlanner.Utilities.srtm.getAltitude(lat, lng);
     float alt = s.currenttype == MissionPlanner.Utilities.srtm.tiletype.valid
         ? (float)s.alt
-        : _comPort.MAV.cs.altasl;
+        : _comPort.MAV.cs.altasl / MissionPlanner.CurrentState.multiplieralt;
     var go = new MAVLink.mavlink_set_gps_global_origin_t {
       latitude = (int)(lat * 1e7),
       longitude = (int)(lng * 1e7),
@@ -2004,10 +2004,6 @@ public partial class FlightDataViewModel : ViewModelBase {
     _videoWindow.UpdateStatus();
     Log(_videoWindow.Video.Status);
   }
-
-  [RelayCommand]
-  private void SetAspectRatio() =>
-      Log("Set Aspect Ratio: VideoControl stretches to fit the popup; no fixed aspect override.");
 
   [RelayCommand]
   private async Task HudUserItems() {

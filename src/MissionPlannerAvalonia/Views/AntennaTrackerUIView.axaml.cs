@@ -2,8 +2,8 @@ using Avalonia.Controls;
 
 namespace MissionPlannerAvalonia.Views;
 
-public partial class AntennaTrackerView : UserControl {
-  public AntennaTrackerView() {
+public partial class AntennaTrackerUIView : UserControl {
+  public AntennaTrackerUIView() {
     InitializeComponent();
   }
 }

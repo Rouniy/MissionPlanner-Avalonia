@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+using System.Collections.Concurrent;
 using MissionPlanner;
 using MissionPlanner.Comms;
 
@@ -13,13 +13,18 @@ public static class AppState {
 
   public static bool IsConnected => comPort.BaseStream?.IsOpen == true;
 
-  public static Dictionary<string, string> CommsSettings { get; } = new();
+  // Written from comms threads via the CommsBase.Settings callback.
+  public static ConcurrentDictionary<string, string> CommsSettings { get; } = new();
 
   public static Services.ProgressReporter? ActiveConnectReporter { get; set; }
 
   static AppState() {
 
     Services.AppPaths.Initialize();
+
+    // Replace upstream WinForms UI hooks before constructing or opening any shared
+    // MAVLink/communications component.
+    global::System.CustomMessageBox.ShowEvent += Services.Dialogs.ShowUpstreamMessage;
     comPort = new MAVLinkInterface();
 
     MAVLinkInterface.CreateIProgressReporterDialogue +=
@@ -33,8 +38,7 @@ public static class AppState {
       return CommsSettings.TryGetValue(name, out var v) ? v : "";
     };
 
-    CommsBase.InputBoxShow += (string title, string prompt, ref string text) =>
-        inputboxreturn.NotSet;
+    CommsBase.InputBoxShow += Services.Dialogs.ShowUpstreamInput;
 
     ApplyUnits();
   }

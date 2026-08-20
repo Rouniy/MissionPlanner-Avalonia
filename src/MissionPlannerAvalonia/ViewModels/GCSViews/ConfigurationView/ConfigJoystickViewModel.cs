@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -27,7 +28,10 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
 
   private readonly MAVLinkInterface _comPort = AppState.comPort;
   private readonly DispatcherTimer _timer;
+  private readonly SemaphoreSlim _detectionGate = new(1, 1);
   private JoystickBase? _joystick;
+  private CancellationTokenSource? _detectCts;
+  private string? _lastPumpError;
 
   public ObservableCollection<string> Devices { get; } = new();
   public ObservableCollection<JoyAxisRow> Axes { get; } = new();
@@ -57,13 +61,21 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private string _status = InitialStatus();
 
+  [ObservableProperty]
+  private string _rawInput = "Raw input appears here after the joystick is enabled.";
+
+  [ObservableProperty]
+  private bool _isDetecting;
+
   public bool IsEnabled => _joystick != null && _joystick.enabled;
+  public int ValueMinimum => ManualControl ? -1000 : 1000;
+  public int ValueMaximum => ManualControl ? 1000 : 2000;
 
   public ConfigJoystickViewModel() {
     RefreshDevices();
     LoadedConfig = "Loaded Config for " + _comPort.MAV.cs.firmware;
 
-    var temp = JoystickBase.Create(() => _comPort);
+    using var temp = JoystickProvider.Create(() => _comPort);
     for (int a = 1; a <= _maxAxis; a++) {
       var cfg = temp.getChannel(a);
       Axes.Add(new JoyAxisRow(a) {
@@ -72,8 +84,6 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
         Reverse = cfg.reverse,
       });
     }
-    temp.Dispose();
-
     _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
     _timer.Tick += (_, _) => Pump();
     _timer.Start();
@@ -84,7 +94,7 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
     var selected = SelectedDevice;
     Devices.Clear();
     try {
-      foreach (var d in JoystickBase.getDevices()) {
+      foreach (var d in JoystickProvider.GetDevices()) {
         Devices.Add(d);
       }
     } catch (Exception ex) {
@@ -124,6 +134,10 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
   [RelayCommand]
   private void ToggleEnable() {
     if (_joystick == null || !_joystick.enabled) {
+      if (!JoystickProvider.IsSupported) {
+        Status = "Joystick input is not yet supported on this platform.";
+        return;
+      }
       if (string.IsNullOrEmpty(SelectedDevice)) {
         Status = "Please select a joystick.";
         return;
@@ -133,8 +147,14 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
         _joystick?.UnAcquireJoyStick();
       } catch {
       }
+      try {
+        _joystick?.Dispose();
+      } catch {
+      }
+      _joystick = null;
 
-      var joy = JoystickBase.Create(() => _comPort);
+      var joy = JoystickProvider.Create(() => _comPort);
+      joy.LostAction = () => Dispatcher.UIThread.Post(() => HandleJoystickLost(joy));
       ApplyConfigTo(joy);
       joy.elevons = Elevons;
       joy.manual_control = ManualControl;
@@ -153,13 +173,19 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
 
       EnableLabel = "Disable";
       Status = "Joystick enabled: " + SelectedDevice;
+      RawInput = "Waiting for joystick input…";
     } else {
-      _joystick.enabled = false;
-      _joystick.clearRCOverride();
-      _joystick.Dispose();
+      var joystick = _joystick;
+      joystick.enabled = false;
+      try {
+        joystick.clearRCOverride();
+      } catch {
+      }
+      joystick.Dispose();
       _joystick = null;
       EnableLabel = "Enable";
       Status = "Joystick disabled.";
+      RawInput = "Raw input appears here after the joystick is enabled.";
     }
 
     OnPropertyChanged(nameof(IsEnabled));
@@ -263,7 +289,7 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
     }
 
     try {
-      var temp = JoystickBase.Create(() => _comPort);
+      using var temp = JoystickProvider.Create(() => _comPort);
       temp.ImportConfig(path);
       temp.loadconfig();
       for (int a = 1; a <= _maxAxis && a - 1 < Axes.Count; a++) {
@@ -273,7 +299,6 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
         Axes[rowidx].Expo = cfg.expo;
         Axes[rowidx].Reverse = cfg.reverse;
       }
-      temp.Dispose();
       LoadedConfig = "Loaded config: " + System.IO.Path.GetFileName(path);
       Status = "Imported. Re-enable the joystick for changes to take effect.";
     } catch (Exception ex) {
@@ -286,12 +311,52 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
     if (row == null || string.IsNullOrEmpty(SelectedDevice)) {
       return;
     }
+    if (!JoystickProvider.IsSupported) {
+      Status = "Joystick input is not yet supported on this platform.";
+      return;
+    }
+    if (!await _detectionGate.WaitAsync(0)) {
+      Status = "Another joystick detection is already running.";
+      return;
+    }
 
-    Status = "Move the axis you want assigned to RC " + row.ChannelNo + "...";
-    var axis = await Task.Run(() => JoystickBase.getMovingAxis(SelectedDevice, 16000));
-    row.Axis = axis.ToString();
-    ApplyAxisToJoystick(row);
-    Status = "RC " + row.ChannelNo + " mapped to " + row.Axis;
+    JoystickBase? detector = null;
+    var cts = new CancellationTokenSource();
+    _detectCts = cts;
+    IsDetecting = true;
+    try {
+      Status = "Opening joystick for axis detection…";
+      detector = JoystickProvider.Create(() => _comPort);
+      if (!await Task.Run(() => detector.AcquireJoystick(SelectedDevice), cts.Token)) {
+        Status = "Could not open the selected joystick for detection.";
+        return;
+      }
+
+      var baseline = detector.GetCurrentState();
+      Status = "Move the axis you want assigned to RC " + row.ChannelNo + "...";
+      var axis = await JoystickDetector.WaitForAxisAsync(detector, baseline, 8000,
+          TimeSpan.FromSeconds(10), cts.Token);
+      if (axis == joystickaxis.None) {
+        Status = "No joystick axis movement was detected.";
+        return;
+      }
+
+      row.Axis = axis.ToString();
+      ApplyAxisToJoystick(row);
+      Status = "RC " + row.ChannelNo + " mapped to " + row.Axis;
+    } catch (OperationCanceledException) {
+      Status = "Joystick axis detection cancelled.";
+    } catch (Exception ex) {
+      Status = "Joystick axis detection failed: " + ex.Message;
+    } finally {
+      detector?.Dispose();
+      if (ReferenceEquals(_detectCts, cts)) {
+        _detectCts = null;
+      }
+      cts.Dispose();
+      IsDetecting = false;
+      _detectionGate.Release();
+    }
   }
 
   [RelayCommand]
@@ -299,12 +364,52 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
     if (row == null || string.IsNullOrEmpty(SelectedDevice)) {
       return;
     }
+    if (!JoystickProvider.IsSupported) {
+      Status = "Joystick input is not yet supported on this platform.";
+      return;
+    }
+    if (!await _detectionGate.WaitAsync(0)) {
+      Status = "Another joystick detection is already running.";
+      return;
+    }
 
-    Status = "Press the button you want assigned...";
-    var no = await Task.Run(() => JoystickBase.getPressedButton(SelectedDevice));
-    row.ButtonNo = no;
-    ApplyButtonToJoystick(row);
-    Status = "Button assigned: " + no;
+    JoystickBase? detector = null;
+    var cts = new CancellationTokenSource();
+    _detectCts = cts;
+    IsDetecting = true;
+    try {
+      Status = "Opening joystick for button detection…";
+      detector = JoystickProvider.Create(() => _comPort);
+      if (!await Task.Run(() => detector.AcquireJoystick(SelectedDevice), cts.Token)) {
+        Status = "Could not open the selected joystick for detection.";
+        return;
+      }
+
+      var baseline = detector.GetCurrentState().GetButtons();
+      Status = "Press the button you want assigned…";
+      int no = await JoystickDetector.WaitForButtonAsync(detector, baseline,
+          TimeSpan.FromSeconds(10), cts.Token);
+      if (no < 0) {
+        Status = "No joystick button press was detected.";
+        return;
+      }
+
+      row.ButtonNo = no;
+      ApplyButtonToJoystick(row);
+      Status = "Button assigned: " + no;
+    } catch (OperationCanceledException) {
+      Status = "Joystick button detection cancelled.";
+    } catch (Exception ex) {
+      Status = "Joystick button detection failed: " + ex.Message;
+    } finally {
+      detector?.Dispose();
+      if (ReferenceEquals(_detectCts, cts)) {
+        _detectCts = null;
+      }
+      cts.Dispose();
+      IsDetecting = false;
+      _detectionGate.Release();
+    }
   }
 
   private void ApplyConfigTo(JoystickBase joy) {
@@ -367,11 +472,17 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
     if (_joystick == null || !_joystick.enabled) {
       return;
     }
+    if (!_joystick.IsJoystickValid()) {
+      HandleJoystickLost(_joystick);
+      return;
+    }
 
     _joystick.elevons = Elevons;
     _joystick.manual_control = ManualControl;
 
     try {
+      var state = _joystick.GetCurrentState();
+      RawInput = JoystickDetector.Describe(state, _joystick.getNumButtons());
       foreach (var row in Axes) {
         row.Value = _joystick.getValueForChannel(row.ChannelNo);
       }
@@ -379,9 +490,45 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
       foreach (var row in Buttons) {
         row.Pressed = _joystick.isButtonPressed(row.Index);
       }
-    } catch {
+      _lastPumpError = null;
+    } catch (Exception ex) {
+      if (!string.Equals(_lastPumpError, ex.Message, StringComparison.Ordinal)) {
+        _lastPumpError = ex.Message;
+        Status = "Joystick read failed: " + ex.Message;
+      }
     }
   }
+
+  private void HandleJoystickLost(JoystickBase joystick) {
+    if (!ReferenceEquals(_joystick, joystick)) {
+      return;
+    }
+
+    joystick.enabled = false;
+    try {
+      joystick.clearRCOverride();
+    } catch {
+    }
+    try {
+      joystick.Dispose();
+    } catch {
+    }
+    _joystick = null;
+    EnableLabel = "Enable";
+    RawInput = "Joystick disconnected.";
+    Status = "Joystick disconnected. Reconnect it, refresh the list, and enable it again.";
+    OnPropertyChanged(nameof(IsEnabled));
+  }
+
+  partial void OnManualControlChanged(bool value) {
+    OnPropertyChanged(nameof(ValueMinimum));
+    OnPropertyChanged(nameof(ValueMaximum));
+    foreach (var row in Axes) {
+      row.Value = value ? 0 : 1500;
+    }
+  }
+
+  partial void OnSelectedDeviceChanged(string value) => _detectCts?.Cancel();
 
   private static joystickaxis ParseAxis(string value) {
     if (Enum.TryParse(value, out joystickaxis axis)) {
@@ -590,6 +737,7 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
 
   public void Dispose() {
     _timer.Stop();
+    _detectCts?.Cancel();
     try {
       _joystick?.UnAcquireJoyStick();
     } catch {
@@ -619,7 +767,7 @@ public partial class JoyAxisRow : ObservableObject {
   private bool _reverse;
 
   [ObservableProperty]
-  private int _value;
+  private int _value = 1500;
 }
 
 public partial class JoyButtonRow : ObservableObject {

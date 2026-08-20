@@ -1,3 +1,4 @@
+using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
@@ -6,7 +7,12 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
+using MissionPlanner.Comms;
 using MissionPlanner.Utilities;
+using UpstreamDialogResult = System.CustomMessageBox.DialogResult;
+using UpstreamMessageBoxButtons = System.CustomMessageBox.MessageBoxButtons;
+using UpstreamMessageBoxIcon = System.CustomMessageBox.MessageBoxIcon;
 
 namespace MissionPlannerAvalonia.Services;
 
@@ -19,11 +25,70 @@ public static class Dialogs {
   public static Task<string?> InputBox(string title, string prompt, string value = "") =>
       ShowInput(title, prompt, value);
 
+  public static Task<string?> PasswordInputBox(string title, string prompt) =>
+      ShowInput(title, prompt, "", masked: true);
+
   public static Task<bool> Confirm(string title, string text) =>
       ShowButtons(title, text, ("Yes", true), ("No", false));
 
   public static Task Alert(string title, string text) =>
       ShowButtons(title, text, ("OK", true));
+
+  // Several portable upstream libraries report failures through this compatibility
+  // callback. The original Mission Planner wires it to a WinForms message box; leaving
+  // it unset makes an otherwise recoverable error throw "ShowEvent Not Set".
+  internal static UpstreamDialogResult ShowUpstreamMessage(string text, string caption,
+      UpstreamMessageBoxButtons buttons, UpstreamMessageBoxIcon icon,
+      string yesText, string noText) {
+    var fallback = DefaultUpstreamResult(buttons);
+    if (Owner == null) {
+      Console.Error.WriteLine($"{(string.IsNullOrWhiteSpace(caption) ? "Mission Planner" : caption)}: {text}");
+      return fallback;
+    }
+
+    if (Dispatcher.UIThread.CheckAccess()) {
+      // The upstream API is synchronous, but a modal Avalonia dialog cannot be waited from
+      // the UI thread itself. Current compiled callers are informational OK messages; post
+      // the dialog and return the conservative result for any future multi-button caller.
+      _ = ShowUpstreamMessageAsync(text, caption, buttons, yesText, noText);
+      return fallback;
+    }
+
+    try {
+      return Dispatcher.UIThread
+          .InvokeAsync(() => ShowUpstreamMessageAsync(text, caption, buttons, yesText, noText))
+          .GetAwaiter().GetResult();
+    } catch (Exception ex) {
+      Console.Error.WriteLine($"Unable to show upstream message: {ex.Message}\n{text}");
+      return fallback;
+    }
+  }
+
+  // Network transports and WinUSB use a ref-string input callback. Connection UI normally
+  // supplies these values before Open(), but retaining the callback keeps less common paths
+  // functional without pulling their original WinForms InputBox into the port.
+  internal static inputboxreturn ShowUpstreamInput(string title, string prompt, ref string text) {
+    if (Owner == null || Dispatcher.UIThread.CheckAccess()) {
+      return inputboxreturn.NotSet;
+    }
+
+    try {
+      var currentText = text;
+      var entered = Dispatcher.UIThread.InvokeAsync(() => InputBox(title, prompt, currentText))
+          .GetAwaiter().GetResult();
+      if (entered == null) {
+        return inputboxreturn.Cancel;
+      }
+      text = entered;
+      return inputboxreturn.OK;
+    } catch (Exception ex) {
+      Console.Error.WriteLine($"Unable to show upstream input dialog: {ex.Message}");
+      return inputboxreturn.NotSet;
+    }
+  }
+
+  internal static UpstreamDialogResult DefaultUpstreamResult(UpstreamMessageBoxButtons buttons) =>
+      buttons == UpstreamMessageBoxButtons.OK ? UpstreamDialogResult.OK : UpstreamDialogResult.Cancel;
 
   public static Task<string?> Choice(string title, string text, params string[] labels) {
     var panel = Shell(title);
@@ -62,18 +127,12 @@ public static class Dialogs {
   }
 
   public static void OpenUrl(string url) {
-    try {
-      Process.Start(url);
-    } catch {
-      if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
-        Process.Start(new ProcessStartInfo(url.Replace("&", "^&")) { UseShellExecute = true });
-      } else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) {
-        Process.Start("xdg-open", url);
-      } else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
-        Process.Start("open", url);
-      } else {
-        throw;
-      }
+    if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) {
+      Process.Start("xdg-open", url);
+    } else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
+      Process.Start("open", url);
+    } else {
+      Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
     }
   }
 
@@ -93,8 +152,12 @@ public static class Dialogs {
     Content = body,
   };
 
-  private static Task<string?> ShowInput(string title, string prompt, string value) {
+  private static Task<string?> ShowInput(string title, string prompt, string value,
+      bool masked = false) {
     var box = new TextBox { Text = value };
+    if (masked) {
+      box.PasswordChar = '●';
+    }
     var panel = Shell(title);
     panel.Children.Add(new TextBlock { Text = prompt });
     panel.Children.Add(box);
@@ -136,6 +199,10 @@ public static class Dialogs {
   }
 
   private static Task<bool> ShowButtons(string title, string text, params (string label, bool result)[] btns) {
+    return ShowButtons<bool>(title, text, btns);
+  }
+
+  private static Task<T> ShowButtons<T>(string title, string text, params (string label, T result)[] btns) {
     var panel = Shell(title);
     panel.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap });
     var row = new StackPanel {
@@ -146,12 +213,39 @@ public static class Dialogs {
     };
     var w = Frame(title, panel);
     foreach (var (label, result) in btns) {
-      var b = new Button { Content = label, MinWidth = 80, IsDefault = result };
+      var b = new Button {
+        Content = label,
+        MinWidth = 80,
+        IsDefault = System.Collections.Generic.EqualityComparer<T>.Default.Equals(result, btns[0].result),
+      };
       b.Click += (_, _) => w.Close(result);
       row.Children.Add(b);
     }
     panel.Children.Add(row);
-    return ShowOwned<bool>(w);
+    return ShowOwned<T>(w);
+  }
+
+  private static Task<UpstreamDialogResult> ShowUpstreamMessageAsync(string text, string caption,
+      UpstreamMessageBoxButtons buttons, string yesText, string noText) {
+    var title = string.IsNullOrWhiteSpace(caption) ? "Mission Planner" : caption;
+    return buttons switch {
+      UpstreamMessageBoxButtons.OK =>
+          ShowButtons(title, text, ("OK", UpstreamDialogResult.OK)),
+      UpstreamMessageBoxButtons.OKCancel =>
+          ShowButtons(title, text, ("OK", UpstreamDialogResult.OK), ("Cancel", UpstreamDialogResult.Cancel)),
+      UpstreamMessageBoxButtons.AbortRetryIgnore =>
+          ShowButtons(title, text, ("Abort", UpstreamDialogResult.Abort), ("Retry", UpstreamDialogResult.Retry),
+              ("Ignore", UpstreamDialogResult.Ignore)),
+      UpstreamMessageBoxButtons.YesNoCancel =>
+          ShowButtons(title, text, (yesText, UpstreamDialogResult.Yes), (noText, UpstreamDialogResult.No),
+              ("Cancel", UpstreamDialogResult.Cancel)),
+      UpstreamMessageBoxButtons.YesNo =>
+          ShowButtons(title, text, (yesText, UpstreamDialogResult.Yes), (noText, UpstreamDialogResult.No)),
+      UpstreamMessageBoxButtons.RetryCancel =>
+          ShowButtons(title, text, ("Retry", UpstreamDialogResult.Retry),
+              ("Cancel", UpstreamDialogResult.Cancel)),
+      _ => ShowButtons(title, text, ("OK", UpstreamDialogResult.OK)),
+    };
   }
 
   private static async Task<(bool ok, bool dontShow)> ShowShowAgain(string title, string text) {
@@ -184,6 +278,14 @@ public static class Dialogs {
 
   private static Task<T> ShowOwned<T>(Window w) {
     var owner = Owner;
-    return owner != null ? w.ShowDialog<T>(owner) : w.ShowDialog<T>(w);
+    if (owner != null) {
+      return w.ShowDialog<T>(owner);
+    }
+    // No main window to own a modal dialog (early startup or shutdown): show standalone.
+    // The dialog result cannot be observed this way, so callers see a cancelled dialog.
+    var tcs = new TaskCompletionSource<T>();
+    w.Closed += (_, _) => tcs.TrySetResult(default!);
+    w.Show();
+    return tcs.Task;
   }
 }

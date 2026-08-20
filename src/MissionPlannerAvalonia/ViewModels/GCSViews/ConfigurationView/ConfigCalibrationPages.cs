@@ -111,8 +111,8 @@ public partial class ConfigAccelCalibrationViewModel : ViewModelBase, IDisposabl
           .TrimEnd('\0');
       UpdateUserMessage(message);
 
-      if (message.ToLower().Contains("calibration successful")
-          || message.ToLower().Contains("calibration failed")) {
+      if (message.Contains("calibration successful", StringComparison.OrdinalIgnoreCase)
+          || message.Contains("calibration failed", StringComparison.OrdinalIgnoreCase)) {
         Dispatcher.UIThread.Post(() => {
           AccelButtonText = "Done";
           AccelButtonEnabled = false;
@@ -133,7 +133,8 @@ public partial class ConfigAccelCalibrationViewModel : ViewModelBase, IDisposabl
   }
 
   private void UpdateUserMessage(string message) {
-    if (message.ToLower().Contains("place vehicle") || message.ToLower().Contains("calibration")) {
+    if (message.Contains("place vehicle", StringComparison.OrdinalIgnoreCase)
+        || message.Contains("calibration", StringComparison.OrdinalIgnoreCase)) {
       Dispatcher.UIThread.Post(() => {
         UserMessage = message;
         AppendLog(message);
@@ -285,9 +286,15 @@ public partial class ConfigCompassViewModel : ParamPageBase, IDisposable {
     }
 
     try {
-      await Task.Run(() => comPort.setParam(
+      bool ok = await Task.Run(() => comPort.setParam(
           (byte)comPort.sysidcurrent, (byte)comPort.compidcurrent, p.Name, value ? 1 : 0));
-    } catch {
+      if (!ok) {
+        LoadCompassFlags();
+        await Dialogs.Alert("Error", $"Failed to write {p.Name}.");
+      }
+    } catch (Exception ex) {
+      LoadCompassFlags();
+      await Dialogs.Alert("Error", $"Failed to write {p.Name}: {ex.Message}");
     }
   }
 

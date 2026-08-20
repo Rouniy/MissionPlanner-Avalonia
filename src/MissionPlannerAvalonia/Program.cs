@@ -13,6 +13,10 @@ sealed class Program {
     Services.AppPaths.Initialize();
 
     AppDomain.CurrentDomain.UnhandledException += (_, e) => LogCrash(e.ExceptionObject as Exception);
+    System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) => {
+      LogCrash(e.Exception);
+      e.SetObserved();
+    };
 
     IconProvider.Current.Register<FontAwesomeIconProvider>();
     try {

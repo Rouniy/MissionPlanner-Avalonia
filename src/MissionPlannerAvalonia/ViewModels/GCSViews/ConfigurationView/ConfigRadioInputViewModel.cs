@@ -141,11 +141,18 @@ public partial class ConfigRadioInputViewModel : ViewModelBase, IDisposable {
   }
 
   [Obsolete]
-  private void WriteParam(string name, double value) {
+  private async void WriteParam(string name, double value) {
     if (_startup || !IsConnected || !Has(name)) {
       return;
     }
-    _ = Task.Run(() => _comPort.setParam(name, value));
+    try {
+      bool ok = await Task.Run(() => _comPort.setParam(name, value));
+      if (!ok) {
+        Status = $"Failed to write {name}.";
+      }
+    } catch (Exception ex) {
+      Status = $"Failed to write {name}: {ex.Message}";
+    }
   }
 
   [RelayCommand]

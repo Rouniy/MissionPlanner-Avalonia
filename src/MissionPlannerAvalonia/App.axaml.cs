@@ -16,18 +16,30 @@ public partial class App : Application {
     Services.AppPaths.Initialize();
     Services.ThemeService.ApplySaved();
     Services.Speech.Enabled = MissionPlanner.Utilities.Settings.Instance.GetBoolean("speechenable", false);
+    // Upstream CurrentState/MAVLinkInterface speak mode, waypoint and severe-status messages
+    // once these adapters are assigned.
+    MissionPlanner.CurrentState.Speech = Services.Speech.Adapter;
+    MissionPlanner.MAVLinkInterface.Speech = Services.Speech.Adapter;
     CustomWarning.defaultsrc = AppState.comPort.MAV.cs;
     WarningEngine.WarningMessage -= OnWarningMessage;
     WarningEngine.WarningMessage += OnWarningMessage;
     WarningEngine.Start(Services.Speech.Adapter);
+    Services.SpeechAnnouncer.Start();
 
     if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop) {
       desktop.MainWindow = new MainWindow { DataContext = new MainWindowViewModel() };
 
       desktop.Exit += (_, _) => {
+        Services.SpeechAnnouncer.Stop();
         WarningEngine.Stop();
         Services.Speech.Stop();
         Services.SitlLauncher.StopAll();
+        try {
+          if (AppState.comPort.BaseStream?.IsOpen == true) {
+            AppState.comPort.Close();
+          }
+        } catch {
+        }
         try {
           MissionPlanner.Utilities.Settings.Instance.Save();
         } catch {

@@ -20,6 +20,26 @@ public static class NoFlyOverlay {
     return rings.Count == 0 ? null : BuildLayer(rings, name);
   }
 
+  public static string DefaultDirectory => Path.Combine(AppPaths.DataRoot, "NoFly");
+
+  public static ILayer? BuildLayerFromDirectory(string dir, string name = "NoFly") {
+    if (!Directory.Exists(dir)) {
+      return null;
+    }
+    var rings = new List<IReadOnlyList<(double Lat, double Lng)>>();
+    foreach (var file in Directory.EnumerateFiles(dir)
+                 .Where(f => f.EndsWith(".kml", StringComparison.OrdinalIgnoreCase)
+                             || f.EndsWith(".kmz", StringComparison.OrdinalIgnoreCase))
+                 .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)) {
+      try {
+        rings.AddRange(LoadPolygons(file));
+      } catch {
+        // Skip unreadable overlay files; the rest still load.
+      }
+    }
+    return rings.Count == 0 ? null : BuildLayer(rings, name);
+  }
+
   public static ILayer BuildLayer(IReadOnlyList<IReadOnlyList<(double Lat, double Lng)>> rings,
       string name = "NoFly") {
     var layer = new WritableLayer { Name = name };

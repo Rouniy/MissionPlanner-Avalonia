@@ -59,7 +59,8 @@ public partial class MavFTPUIViewModel : ViewModelBase {
 
   internal List<MAVFtp.FtpFileInfo> ListDir(string path) {
     lock (_mavftp) {
-      return _mavftp.kCmdListDirectory(path, new CancellationTokenSource());
+      using var cancel = new CancellationTokenSource();
+      return _mavftp.kCmdListDirectory(path, cancel);
     }
   }
 
@@ -135,7 +136,7 @@ public partial class MavFTPUIViewModel : ViewModelBase {
 
     IsBusy = true;
     Status = "Download " + entry.Name;
-    var cancel = new CancellationTokenSource();
+    using var cancel = new CancellationTokenSource();
     try {
       await Task.Run(() => {
         var ms = _mavftp.GetFile(entry.FullName, cancel, false);
@@ -165,7 +166,7 @@ public partial class MavFTPUIViewModel : ViewModelBase {
     IsBusy = true;
     var remote = Combine(dir.FullPath, Path.GetFileName(localFile));
     Status = "Upload " + Path.GetFileName(localFile);
-    var cancel = new CancellationTokenSource();
+    using var cancel = new CancellationTokenSource();
     try {
       bool crcOk = true;
       await Task.Run(() => {
@@ -195,7 +196,7 @@ public partial class MavFTPUIViewModel : ViewModelBase {
 
     IsBusy = true;
     var path = Combine(dir.FullPath, NewFolderName.Trim());
-    var cancel = new CancellationTokenSource();
+    using var cancel = new CancellationTokenSource();
     bool ok = false;
     try {
       await Task.Run(() => ok = _mavftp.kCmdCreateDirectory(path, cancel));
@@ -222,7 +223,7 @@ public partial class MavFTPUIViewModel : ViewModelBase {
 
     IsBusy = true;
     Status = "Delete " + entry.Name;
-    var cancel = new CancellationTokenSource();
+    using var cancel = new CancellationTokenSource();
     bool ok = false;
     try {
       await Task.Run(() => {

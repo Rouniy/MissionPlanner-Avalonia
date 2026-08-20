@@ -17,7 +17,7 @@ There are two ways to get a SITL, depending on the OS.
 
 The app can download and launch ArduPilot SITL itself.
 
-1. Install & launch the release: unzip `MissionPlannerAvalonia-2026.6.4-win-x64.zip`, run
+1. Install & launch the release: unzip `MissionPlannerAvalonia-2026.8.0-win-x64.zip`, run
    `MissionPlannerAvalonia.exe`. (If SmartScreen warns: *More info → Run anyway* — it's unsigned.)
 2. Click the **SIMULATION** tab in the top toolbar.
 3. Pick the vehicle: **Plane**, **Copter**, **Rover**, or **Heli**.

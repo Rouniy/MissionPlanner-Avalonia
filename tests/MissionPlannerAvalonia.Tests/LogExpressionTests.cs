@@ -32,4 +32,33 @@ public class LogExpressionTests {
     var values = new Dictionary<string, double> { ["X.a"] = 1.0, ["X.b"] = 0.0 };
     Assert.Null(LogBrowseViewModel.EvalExpression("X.a/X.b", refs, values));
   }
+
+  [Fact]
+  public void EvalExpression_handles_prefix_colliding_field_names() {
+    var refs = new[] { "RCOU.C1", "RCOU.C10" };
+    var values = new Dictionary<string, double> { ["RCOU.C1"] = 1500, ["RCOU.C10"] = 1200 };
+
+    var result = LogBrowseViewModel.EvalExpression("RCOU.C1 - RCOU.C10", refs, values);
+
+    Assert.NotNull(result);
+    Assert.Equal(300.0, result!.Value, 6);
+  }
+
+  [Fact]
+  public void EvalExpression_is_culture_invariant() {
+    var original = System.Globalization.CultureInfo.CurrentCulture;
+    try {
+      System.Globalization.CultureInfo.CurrentCulture =
+          new System.Globalization.CultureInfo("ru-RU");
+      var refs = new[] { "BAT.Volt" };
+      var values = new Dictionary<string, double> { ["BAT.Volt"] = 22.25 };
+
+      var result = LogBrowseViewModel.EvalExpression("BAT.Volt*2", refs, values);
+
+      Assert.NotNull(result);
+      Assert.Equal(44.5, result!.Value, 6);
+    } finally {
+      System.Globalization.CultureInfo.CurrentCulture = original;
+    }
+  }
 }

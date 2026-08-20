@@ -139,8 +139,10 @@ public partial class LogBrowseView : UserControl {
           Plot.SetAxisLabels("Time (s)", "Value", "DataFlash");
           vm.Status = $"Plotted {c.xs.Count} points of {expr}.";
         } else {
-          vm.Status = $"Could not evaluate '{expr}' (single message type only).";
+          vm.Status = $"Could not evaluate '{expr}'.";
         }
+      } catch (Exception ex) {
+        vm.Status = $"Could not evaluate '{expr}': {ex.Message}";
       } finally {
         vm.Busy = false;
       }
@@ -194,13 +196,18 @@ public partial class LogBrowseView : UserControl {
     int plotted = 0, skipped = 0;
     foreach (var curve in preset.Curves) {
 
-      var data = await Task.Run(() => {
-        if (LogBrowseViewModel.IsExpression(curve.Expression)) {
-          return vm.ReadExpressionCurve(curve.Expression);
-        }
-        var parts = curve.Expression.Split('.');
-        return parts.Length == 2 ? vm.ReadCurve(parts[0], parts[1]) : null;
-      });
+      (IReadOnlyList<double> xs, IReadOnlyList<double> ys)? data;
+      try {
+        data = await Task.Run(() => {
+          if (LogBrowseViewModel.IsExpression(curve.Expression)) {
+            return vm.ReadExpressionCurve(curve.Expression);
+          }
+          var parts = curve.Expression.Split('.');
+          return parts.Length == 2 ? vm.ReadCurve(parts[0], parts[1]) : null;
+        });
+      } catch (Exception) {
+        data = null;
+      }
       if (data is { } d) {
         Plot.SetSeries($"{curve.Expression}{(curve.Axis == 2 ? " (R)" : "")}", d.xs, d.ys,
             rightAxis: curve.Axis == 2);

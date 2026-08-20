@@ -316,6 +316,10 @@ public partial class InstallFirmwareViewModel : ViewModelBase {
       Uploader? found = null;
 
       foreach (var port in ports) {
+        if (ProbeStillRunning(port)) {
+          AppendLog($"{port}: reboot probe still holds this port - skipping for now");
+          continue;
+        }
         Uploader up;
         try {
           up = new Uploader(port, 115200);
@@ -346,6 +350,7 @@ public partial class InstallFirmwareViewModel : ViewModelBase {
       }
 
       if (found == null) {
+        System.Threading.Thread.Sleep(250);
         continue;
       }
 
@@ -396,46 +401,84 @@ public partial class InstallFirmwareViewModel : ViewModelBase {
     SetStatus("ERROR: No response from board.");
   }
 
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<bool>>
+      _probeTasks = new();
+
+  private bool ProbeStillRunning(string port) =>
+      _probeTasks.TryGetValue(port, out var t) && !t.IsCompleted;
+
   private void AttemptRebootToBootloader() {
     var ports = SerialPort.GetPortNames();
     var tasks = new List<Task<bool>>();
 
     foreach (var port in ports) {
-      try {
-        var task = Task.Run(() => {
+      var task = Task.Run(() => {
+        try {
           using var up = new Uploader(port, 115200);
           up.identify();
           return true;
-        });
-        tasks.Add(task);
-      } catch {
-      }
-    }
-
-    foreach (var task in tasks) {
-      try {
-        if (task.Wait(TimeSpan.FromSeconds(3)) && task.GetAwaiter().GetResult()) {
-          return;
+        } catch {
+          return false;
         }
-      } catch {
-      }
+      });
+      _probeTasks[port] = task;
+      tasks.Add(task);
     }
 
-    if (_comPort.BaseStream is SerialPort) {
+    // Wait for every probe to finish (bounded). Any probe that outlives the wait stays
+    // registered in _probeTasks, and the bootloader scan skips its port until it completes.
+    try {
+      if (!Task.WaitAll(tasks.ToArray(), TimeSpan.FromSeconds(15))) {
+        AppendLog("Some serial probes are still busy; their ports are skipped until released.");
+      }
+    } catch {
+    }
+    if (tasks.Any(t => t.IsCompletedSuccessfully && t.Result)) {
+      return;
+    }
+
+    if (_comPort.BaseStream is SerialPort mavSerial) {
       try {
+        // Do not reopen the MAVLink port while its probe still holds it.
+        if (_probeTasks.TryGetValue(mavSerial.PortName, out var probe) && !probe.IsCompleted) {
+          try {
+            if (!probe.Wait(TimeSpan.FromSeconds(10))) {
+              AppendLog($"{mavSerial.PortName}: reboot probe is still using the MAVLink port; " +
+                        "heartbeat reopen deferred.");
+              SetStatus("Waiting for the serial port to become available…");
+              return;
+            }
+          } catch {
+            return;
+          }
+        }
         SetStatus("Looking for heartbeat…");
-        var task = Task.Run(() => {
-          _comPort.BaseStream.Open();
-          _comPort.giveComport = true;
-          if (_comPort.getHeartBeat().Length > 0) {
+        var heartbeatTask = Task.Run(() => {
+          try {
+            _comPort.BaseStream.Open();
+            _comPort.giveComport = true;
+            if (_comPort.getHeartBeat().Length == 0) {
+              throw new Exception("No heartbeat found");
+            }
             _comPort.doReboot(true, false);
             _comPort.Close();
-          } else {
-            _comPort.BaseStream.Close();
-            throw new Exception("No heartbeat found");
+            return true;
+          } catch (Exception ex) {
+            AppendLog(ex.Message);
+            try {
+              _comPort.BaseStream.Close();
+            } catch {
+            }
+            return false;
+          } finally {
+            _comPort.giveComport = false;
           }
         });
-        if (task.Wait(TimeSpan.FromSeconds(5))) {
+        // A timed-out heartbeat attempt remains registered, so the following bootloader scan
+        // cannot open the same port until the task has actually released it.
+        _probeTasks[mavSerial.PortName] = heartbeatTask;
+        if (heartbeatTask.Wait(TimeSpan.FromSeconds(5)) &&
+            heartbeatTask.GetAwaiter().GetResult()) {
           SetStatus("Rebooting to bootloader…");
         } else {
           SetStatus("Please unplug the board and plug it back in.");

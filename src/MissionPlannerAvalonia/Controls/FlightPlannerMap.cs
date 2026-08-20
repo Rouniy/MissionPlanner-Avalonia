@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Avalonia;
 using Avalonia.Threading;
 using BruTile.Predefined;
 using BruTile.Web;
@@ -93,7 +94,16 @@ public class FlightPlannerMap : MapControl {
 
     _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
     _timer.Tick += (_, _) => UpdateVehicle();
+  }
+
+  protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e) {
+    base.OnAttachedToVisualTree(e);
     _timer.Start();
+  }
+
+  protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e) {
+    _timer.Stop();
+    base.OnDetachedFromVisualTree(e);
   }
 
   public void SetWaypoints(

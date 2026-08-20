@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
@@ -351,20 +352,8 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       Status = "No waypoints to write.";
       return;
     }
-    if (type == MAVLink.MAV_MISSION_TYPE.MISSION) {
-      for (int a = 0; a < rows.Count; a++) {
-        var cmd = (MAVLink.MAV_CMD)rows[a].Command;
-        if (rows[a].Command < (ushort)MAVLink.MAV_CMD.LAST
-            && cmd != MAVLink.MAV_CMD.TAKEOFF && cmd != MAVLink.MAV_CMD.LAND
-            && cmd != MAVLink.MAV_CMD.RETURN_TO_LAUNCH
-            && rows[a].Alt < AltWarn) {
-          await Services.Dialogs.Alert("Low alt",
-              "Low alt on WP#" + (a + 1)
-              + "\nPlease reduce the alt warning, or increase the altitude");
-          Status = "Write aborted: low alt on WP#" + (a + 1);
-          return;
-        }
-      }
+    if (type == MAVLink.MAV_MISSION_TYPE.MISSION && !await ConfirmAltitudesAsync(rows)) {
+      return;
     }
     Status = $"Writing {rows.Count} {MissionType.ToLowerInvariant()} point(s)…";
     try {
@@ -393,6 +382,228 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       Status = $"Wrote {rows.Count} {MissionType.ToLowerInvariant()} point(s).";
     } catch (Exception ex) {
       Status = "Write failed: " + ex.Message;
+    }
+  }
+
+  private async Task<bool> ConfirmAltitudesAsync(List<WpRow> rows) {
+    for (int a = 0; a < rows.Count; a++) {
+      var cmd = (MAVLink.MAV_CMD)rows[a].Command;
+      if (rows[a].Command < (ushort)MAVLink.MAV_CMD.LAST
+          && cmd != MAVLink.MAV_CMD.TAKEOFF && cmd != MAVLink.MAV_CMD.LAND
+          && cmd != MAVLink.MAV_CMD.RETURN_TO_LAUNCH
+          && rows[a].Alt < AltWarn) {
+        await Services.Dialogs.Alert("Low alt",
+            "Low alt on WP#" + (a + 1)
+            + "\nPlease reduce the alt warning, or increase the altitude");
+        Status = "Write aborted: low alt on WP#" + (a + 1);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  [RelayCommand]
+  [Obsolete]
+  private async Task WriteWaypointsFast() {
+    if (!IsConnected) {
+      Status = "Not connected — cannot write.";
+      return;
+    }
+    if (CurrentMissionType != MAVLink.MAV_MISSION_TYPE.MISSION) {
+      // The pipelined path only covers the mission store; fence/rally use the normal upload.
+      await WriteWaypoints();
+      return;
+    }
+    var rows = Waypoints.ToList();
+    if (rows.Count == 0) {
+      Status = "No waypoints to write.";
+      return;
+    }
+    if (!await ConfirmAltitudesAsync(rows)) {
+      return;
+    }
+    Status = $"Writing {rows.Count} waypoint(s) (fast)…";
+    try {
+      await Task.Run(() => SaveWpsFast(rows));
+      Status = $"Wrote {rows.Count} waypoint(s) (fast).";
+    } catch (Exception ex) {
+      Status = "Write failed: " + ex.Message;
+    }
+  }
+
+  // Port of upstream FlightPlanner.saveWPsFast: stream MISSION_ITEM_INT packets in batches of
+  // ten, resynchronizing on the autopilot's MISSION_REQUEST/MISSION_ACK feedback, then wait for
+  // the final MISSION_ACK that confirms the whole mission.
+  [Obsolete]
+  private void SaveWpsFast(List<WpRow> rows) {
+    var total = (ushort)(rows.Count + 1);
+    int reqno = 0;
+    int latestResult = (int)MAVLink.MAV_MISSION_RESULT.MAV_MISSION_ACCEPTED;
+    // Preserve every ACK, not only its count: two ACKs can arrive before the upload thread runs,
+    // and the later value must not overwrite an earlier ACCEPTED completion.
+    var ackResults = new ConcurrentQueue<MAVLink.MAV_MISSION_RESULT>();
+    byte sysid = (byte)_comPort.sysidcurrent;
+    byte compid = (byte)_comPort.compidcurrent;
+
+    bool ForOtherGcs(byte targetSystem, byte targetComponent) =>
+        targetSystem != MAVLinkInterface.gcssysid ||
+        targetComponent != (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_MISSIONPLANNER;
+
+    var sub1 = _comPort.SubscribeToPacketType(MAVLink.MAVLINK_MSG_ID.MISSION_ACK, message => {
+      var data = (MAVLink.mavlink_mission_ack_t)message.data;
+      if (!ForOtherGcs(data.target_system, data.target_component)) {
+        var ack = (MAVLink.MAV_MISSION_RESULT)data.type;
+        System.Threading.Volatile.Write(ref latestResult, (int)ack);
+        ackResults.Enqueue(ack);
+      }
+      return true;
+    }, sysid, compid);
+    var sub2 = _comPort.SubscribeToPacketType(MAVLink.MAVLINK_MSG_ID.MISSION_REQUEST, message => {
+      var data = (MAVLink.mavlink_mission_request_t)message.data;
+      if (!ForOtherGcs(data.target_system, data.target_component)) {
+        System.Threading.Volatile.Write(ref reqno, data.seq);
+      }
+      return true;
+    }, sysid, compid);
+    var sub3 = _comPort.SubscribeToPacketType(MAVLink.MAVLINK_MSG_ID.MISSION_REQUEST_INT,
+        message => {
+          var data = (MAVLink.mavlink_mission_request_int_t)message.data;
+          if (!ForOtherGcs(data.target_system, data.target_component)) {
+            System.Threading.Volatile.Write(ref reqno, data.seq);
+          }
+          return true;
+        }, sysid, compid);
+
+    try {
+      WriteRadiusParams();
+      _comPort.setWPTotal(total);
+
+      var home = new WpRow {
+        Command = (ushort)MAVLink.MAV_CMD.WAYPOINT,
+        Frame = (byte)MAVLink.MAV_FRAME.GLOBAL,
+        Lat = HomeLat,
+        Lng = HomeLng,
+        Alt = HomeAlt,
+      };
+      var commandlist = new List<Locationwp> { home.ToLocationwp() };
+      var frames = new List<MAVLink.MAV_FRAME> { MAVLink.MAV_FRAME.GLOBAL };
+      foreach (var r in rows) {
+        commandlist.Add(r.ToLocationwp());
+        frames.Add((MAVLink.MAV_FRAME)r.Frame);
+      }
+
+      void SendItem(int a) {
+        var loc = commandlist[a];
+        var req = new MAVLink.mavlink_mission_item_int_t {
+          target_system = _comPort.MAV.sysid,
+          target_component = _comPort.MAV.compid,
+          command = loc.id,
+          current = 0,
+          autocontinue = 1,
+          frame = (byte)frames[a],
+          z = (float)loc.alt,
+          param1 = loc.p1,
+          param2 = loc.p2,
+          param3 = loc.p3,
+          param4 = loc.p4,
+          seq = (ushort)a,
+        };
+        if (loc.id == (ushort)MAVLink.MAV_CMD.DO_DIGICAM_CONTROL ||
+            loc.id == (ushort)MAVLink.MAV_CMD.DO_DIGICAM_CONFIGURE) {
+          req.x = (int)loc.lat;
+          req.y = (int)loc.lng;
+        } else {
+          req.x = (int)(loc.lat * 1.0e7);
+          req.y = (int)(loc.lng * 1.0e7);
+        }
+
+        _comPort.sendPacket(req, _comPort.MAV.sysid, _comPort.MAV.compid);
+      }
+
+      void ThrowOnTerminalResult(int a, MAVLink.MAV_MISSION_RESULT result) {
+        if (result == MAVLink.MAV_MISSION_RESULT.MAV_MISSION_NO_SPACE) {
+          throw new Exception("Upload failed, please reduce the number of wp's");
+        }
+        if (result == MAVLink.MAV_MISSION_RESULT.MAV_MISSION_INVALID) {
+          throw new Exception($"Upload failed, the MAV rejected item wp# {a} ({result})");
+        }
+        if (result != MAVLink.MAV_MISSION_RESULT.MAV_MISSION_ACCEPTED &&
+            result != MAVLink.MAV_MISSION_RESULT.MAV_MISSION_ERROR &&
+            result != MAVLink.MAV_MISSION_RESULT.MAV_MISSION_INVALID_SEQUENCE) {
+          throw new Exception($"Upload wps failed at " +
+                              $"{System.Threading.Volatile.Read(ref reqno)} ({result})");
+        }
+      }
+
+      for (int a = 0; a < commandlist.Count; a++) {
+        if (a % 10 == 0 && a != 0) {
+          var start = DateTime.Now;
+          while (true) {
+            int requested = System.Threading.Volatile.Read(ref reqno);
+            if (requested == a) {
+              break;
+            }
+            if (start.AddSeconds(1.1) < DateTime.Now) {
+              a = requested;
+              break;
+            }
+            var result = (MAVLink.MAV_MISSION_RESULT)
+                System.Threading.Volatile.Read(ref latestResult);
+            if (result == MAVLink.MAV_MISSION_RESULT.MAV_MISSION_INVALID_SEQUENCE) {
+              System.Threading.Thread.Sleep(500);
+            }
+            if (result == MAVLink.MAV_MISSION_RESULT.MAV_MISSION_ERROR) {
+              requested = System.Threading.Volatile.Read(ref reqno);
+              _comPort.setWPPartialUpdate((ushort)requested, total);
+              a = requested;
+              break;
+            }
+            ThrowOnTerminalResult(a, result);
+            System.Threading.Thread.Sleep(10);
+          }
+        }
+
+        SendItem(a);
+      }
+
+      // The autopilot confirms the whole mission with a final MISSION_ACK; keep answering any
+      // MISSION_REQUEST for items lost in flight (a short mission never enters the batch
+      // resynchronization above, so this is the only completion check it gets).
+      int lastSeq = commandlist.Count - 1;
+      var deadline = DateTime.UtcNow.AddSeconds(5);
+      var lastResend = DateTime.MinValue;
+      while (true) {
+        bool accepted = false;
+        while (ackResults.TryDequeue(out var r)) {
+          if (r == MAVLink.MAV_MISSION_RESULT.MAV_MISSION_ACCEPTED) {
+            accepted = true;
+            break;
+          }
+          if (r != MAVLink.MAV_MISSION_RESULT.MAV_MISSION_INVALID_SEQUENCE &&
+              r != MAVLink.MAV_MISSION_RESULT.MAV_MISSION_ERROR) {
+            ThrowOnTerminalResult(lastSeq, r);
+            throw new Exception($"Mission upload rejected ({r})");
+          }
+          // Transient: the autopilot re-requests the item it needs; keep serving it.
+        }
+        if (accepted) {
+          break;
+        }
+        if (DateTime.UtcNow > deadline) {
+          throw new Exception("No MISSION_ACK received after upload.");
+        }
+        if ((DateTime.UtcNow - lastResend).TotalMilliseconds > 250) {
+          SendItem(Math.Clamp(System.Threading.Volatile.Read(ref reqno), 0, lastSeq));
+          lastResend = DateTime.UtcNow;
+        }
+        System.Threading.Thread.Sleep(10);
+      }
+
+      _comPort.setWPACK();
+    } finally {
+      _comPort.UnSubscribeToPacketType(sub1);
+      _comPort.UnSubscribeToPacketType(sub2);
+      _comPort.UnSubscribeToPacketType(sub3);
     }
   }
 
@@ -1109,16 +1320,17 @@ public partial class FlightPlannerViewModel : ViewModelBase {
 
   private static void AddSample(List<double> dist, List<double> terr, List<double> plan, double x,
       double lat, double lng, double alt, byte frame, double homeTerr, double m) {
+    // alt, terrain and homeTerr are raw metres; m converts to display units for the graph only.
     var t = srtm.getAltitude(lat, lng);
-    double terrain = t.currenttype == srtm.tiletype.invalid ? 0 : t.alt * m;
+    double terrain = t.currenttype == srtm.tiletype.invalid ? 0 : t.alt;
     double planned = (MAVLink.MAV_FRAME)frame switch {
       MAVLink.MAV_FRAME.GLOBAL => alt,
       MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT => alt + terrain,
       _ => alt + homeTerr,
     };
     dist.Add(x);
-    terr.Add(terrain);
-    plan.Add(planned);
+    terr.Add(terrain * m);
+    plan.Add(planned * m);
   }
 
   private PointLatLngAlt? _measureStart;
@@ -1297,7 +1509,8 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     var cs = _comPort.MAV.cs;
     HomeLat = cs.lat;
     HomeLng = cs.lng;
-    HomeAlt = cs.altasl;
+    // cs.altasl is in display units; the waypoint model stores raw metres.
+    HomeAlt = cs.altasl / CurrentState.multiplieralt;
     Status = "Home set from vehicle position.";
   }
 
@@ -1306,7 +1519,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     HomeLng = lng;
     var t = srtm.getAltitude(lat, lng);
     if (t.currenttype != srtm.tiletype.invalid) {
-      HomeAlt = Math.Round(t.alt * CurrentState.multiplieralt, 2);
+      HomeAlt = Math.Round(t.alt, 2);
     }
     Status = "Home set to clicked location.";
   }
@@ -1319,7 +1532,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     if (t.currenttype == srtm.tiletype.invalid) {
       return baseAlt;
     }
-    double terr = t.alt * CurrentState.multiplieralt;
+    double terr = t.alt;
     return (MAVLink.MAV_FRAME)frame switch {
       MAVLink.MAV_FRAME.GLOBAL => terr + baseAlt,
       MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT => baseAlt,
@@ -1329,7 +1542,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
 
   private double HomeTerrainAlt() {
     var h = srtm.getAltitude(HomeLat, HomeLng);
-    return h.currenttype == srtm.tiletype.invalid ? 0 : h.alt * CurrentState.multiplieralt;
+    return h.currenttype == srtm.tiletype.invalid ? 0 : h.alt;
   }
 
   public void MoveWaypoint(int seq, double lat, double lng) {
@@ -1344,8 +1557,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       var newT = srtm.getAltitude(lat, lng);
       if (oldT.currenttype != srtm.tiletype.invalid
           && newT.currenttype != srtm.tiletype.invalid) {
-        double m = CurrentState.multiplieralt;
-        row.Alt = row.Alt + newT.alt * m - oldT.alt * m;
+        row.Alt = row.Alt + newT.alt - oldT.alt;
       }
     }
 

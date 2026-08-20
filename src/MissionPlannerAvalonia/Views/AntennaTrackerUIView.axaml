@@ -7,7 +7,7 @@
   mc:Ignorable="d"
   d:DesignWidth="780"
   d:DesignHeight="640"
-  x:Class="MissionPlannerAvalonia.Views.AntennaTrackerView"
+  x:Class="MissionPlannerAvalonia.Views.AntennaTrackerUIView"
   x:DataType="vm:AntennaTrackerUIViewModel"
   Background="{DynamicResource MpControlBg}"
 >

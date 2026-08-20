@@ -168,7 +168,8 @@ public partial class SerialOutputNMEAViewModel : ViewModelBase, IDisposable {
 
         line = string.Format(CultureInfo.InvariantCulture,
             "$GP{0},{1},{2},{3},{4}", "VTG",
-            cs.groundcourse.ToString("000"), cs.yaw.ToString("000"),
+            cs.groundcourse.ToString("000", CultureInfo.InvariantCulture),
+            cs.yaw.ToString("000", CultureInfo.InvariantCulture),
             (cs.groundspeed * 1.943844).ToString("00.0", CultureInfo.InvariantCulture),
             (cs.groundspeed * 3.6).ToString("00.0", CultureInfo.InvariantCulture));
         Send(line);

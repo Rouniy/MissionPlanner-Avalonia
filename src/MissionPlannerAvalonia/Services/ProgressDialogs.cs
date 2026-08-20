@@ -1,6 +1,5 @@
 using System;
 using System.Threading;
-using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -56,6 +55,7 @@ public class ProgressReporter : Window {
     CanResize = false;
     WindowStartupLocation = WindowStartupLocation.CenterOwner;
     Background = new SolidColorBrush(Color.Parse("#262728"));
+    Closed += (_, _) => _cts.Dispose();
     var cancel = new Button {
       Content = "Cancel",
       MinWidth = 80,
@@ -93,17 +93,21 @@ public class ForwardingProgressReporter : IProgressReporterDialogue {
 
   public ForwardingProgressReporter(ProgressReporter? target) {
     _target = target;
-    _target?.Token.Register(() => doWorkArgs.CancelRequested = true);
+    try {
+      _target?.Token.Register(() => doWorkArgs.CancelRequested = true);
+    } catch (ObjectDisposedException) {
+    }
   }
 
-  public void RunBackgroundOperationAsync() =>
-      Task.Run(() => {
-        try {
-          DoWork?.Invoke(this);
-        } catch (Exception e) {
-          doWorkArgs.ErrorMessage = e.Message;
-        }
-      }).Wait();
+  // The upstream contract is synchronous: callers expect DoWork to be finished on return, so
+  // the delegate runs inline on the calling thread. Call sites must not be on the UI thread.
+  public void RunBackgroundOperationAsync() {
+    try {
+      DoWork?.Invoke(this);
+    } catch (Exception e) {
+      doWorkArgs.ErrorMessage = e.Message;
+    }
+  }
 
   public void UpdateProgressAndStatus(int progress, string status) =>
       _target?.Set(progress < 0 ? 0 : progress, status);

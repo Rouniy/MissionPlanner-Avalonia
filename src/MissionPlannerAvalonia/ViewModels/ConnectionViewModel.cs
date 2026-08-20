@@ -15,7 +15,7 @@ using MissionPlannerAvalonia.Views;
 
 namespace MissionPlannerAvalonia.ViewModels;
 
-public partial class ConnectionViewModel : ViewModelBase {
+public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   private readonly MAVLinkInterface _comPort = AppState.comPort;
 
   public ObservableCollection<string> Ports { get; } = new();
@@ -52,7 +52,9 @@ public partial class ConnectionViewModel : ViewModelBase {
 
   private Services.ProgressReporter? _connectDialog;
 
+  private readonly object _readerSync = new();
   private CancellationTokenSource? _readerCts;
+  private int _readerGeneration;
 
   private void StartReader() {
     StopReader();
@@ -67,8 +69,15 @@ public partial class ConnectionViewModel : ViewModelBase {
     RequestStreams();
 
     var cts = new CancellationTokenSource();
-    _readerCts = cts;
-    _ = Task.Run(() => SerialReaderLoop(cts));
+    // Capture the token now: a fast disconnect can cancel+dispose the CTS before the task
+    // body ever runs, and cts.Token on a disposed source throws.
+    var token = cts.Token;
+    int generation;
+    lock (_readerSync) {
+      generation = ++_readerGeneration;
+      _readerCts = cts;
+    }
+    _ = Task.Run(() => SerialReaderLoop(cts, token, generation));
   }
 
   private void RequestStreams() {
@@ -88,18 +97,47 @@ public partial class ConnectionViewModel : ViewModelBase {
   }
 
   private void StopReader() {
-    _readerCts?.Cancel();
-    _readerCts = null;
+    CancellationTokenSource? cts;
+    lock (_readerSync) {
+      _readerGeneration++;
+      cts = _readerCts;
+      _readerCts = null;
+    }
+    if (cts == null) {
+      return;
+    }
+    try {
+      cts.Cancel();
+    } catch (ObjectDisposedException) {
+    }
+    cts.Dispose();
   }
 
-  private async Task SerialReaderLoop(CancellationTokenSource cts) {
-    var ct = cts.Token;
+  public void Shutdown() {
+    StopReader();
+    try {
+      if (_comPort.BaseStream?.IsOpen == true) {
+        _comPort.Close();
+      }
+    } catch {
+
+    }
+    CloseLogs();
+  }
+
+  public void Dispose() {
+    _comPort.Progress -= OnProgress;
+    Shutdown();
+  }
+
+  private async Task SerialReaderLoop(CancellationTokenSource self, CancellationToken ct,
+      int generation) {
     var lastHeartbeat = DateTime.MinValue;
     int consecutiveErrors = 0;
     while (!ct.IsCancellationRequested) {
 
       if (_comPort.BaseStream?.IsOpen != true) {
-        HandleLinkLost(cts);
+        HandleLinkLost(self, generation);
         break;
       }
 
@@ -130,7 +168,7 @@ public partial class ConnectionViewModel : ViewModelBase {
       } catch {
 
         if (++consecutiveErrors >= 5) {
-          HandleLinkLost(cts);
+          HandleLinkLost(self, generation);
           break;
         }
         try {
@@ -158,19 +196,30 @@ public partial class ConnectionViewModel : ViewModelBase {
     }
   }
 
-  private void HandleLinkLost(CancellationTokenSource self) {
-    try {
-      _comPort.Close();
-    } catch {
-
-    }
-
-    Avalonia.Threading.Dispatcher.UIThread.Post(() => {
-      if (_readerCts != self) {
+  private void HandleLinkLost(CancellationTokenSource self, int generation) {
+    lock (_readerSync) {
+      if (_readerCts != self || _readerGeneration != generation) {
+        // StopReader or a newer reader already owns the shared MAVLink interface. In particular,
+        // an old reader must never close a newly-opened connection.
         return;
       }
 
       _readerCts = null;
+      try {
+        _comPort.Close();
+      } catch {
+      }
+    }
+    self.Dispose();
+
+    Avalonia.Threading.Dispatcher.UIThread.Post(() => {
+      lock (_readerSync) {
+        // A reconnect or an explicit disconnect may have happened while this notification was
+        // queued on the UI thread.
+        if (_readerGeneration != generation || _readerCts != null) {
+          return;
+        }
+      }
       IsConnected = false;
       ConnectText = "CONNECT";
       Status = "Connection lost.";
@@ -220,7 +269,7 @@ public partial class ConnectionViewModel : ViewModelBase {
       string tlog = Settings.Instance.LogDir + Path.DirectorySeparatorChar + dt + ".tlog";
       string rlog = Settings.Instance.LogDir + Path.DirectorySeparatorChar + dt + ".rlog";
       int a = 1;
-      while (File.Exists(tlog)) {
+      while (File.Exists(tlog) || File.Exists(rlog)) {
         dt = DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss") + "-" + a++;
         tlog = Settings.Instance.LogDir + Path.DirectorySeparatorChar + dt + ".tlog";
         rlog = Settings.Instance.LogDir + Path.DirectorySeparatorChar + dt + ".rlog";
@@ -229,8 +278,9 @@ public partial class ConnectionViewModel : ViewModelBase {
           new BufferedStream(File.Open(tlog, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None));
       _comPort.rawlogfile =
           new BufferedStream(File.Open(rlog, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None));
-    } catch {
-
+    } catch (Exception ex) {
+      CloseLogs();
+      Status = "Telemetry logging disabled: " + ex.Message;
     }
   }
 

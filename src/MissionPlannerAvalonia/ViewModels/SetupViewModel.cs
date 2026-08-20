@@ -14,7 +14,7 @@ public class SetupViewModel : BackstageViewModel {
     Add("Install Firmware", () => new InstallFirmwareViewModel());
     Add("Install Firmware Legacy", () => new ConfigFirmwareLegacyViewModel(), badge: "DEPRECATED");
     Add("Secure", () => new ConfigSecureApViewModel());
-    Add("Secure (MAVLink Keys)", () => new ConfigSecureViewModel(), requiresConnection: true);
+    Add("Secure (Bootloader Keys)", () => new ConfigSecureViewModel(), requiresConnection: true);
 
     Add(
         ">> Mandatory Hardware",

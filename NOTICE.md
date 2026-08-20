@@ -10,7 +10,7 @@ interface of **ArduPilot Mission Planner**.
 - Mission Planner is licensed under the **GNU General Public License v3.0** (see `LICENSE`).
 - This project links Mission Planner's library code (`ExtLibs/…`: Mavlink, Comms, Core,
   Utilities, ArduPilot, MissionPlanner.Drawing, …) **unmodified**, included as a git submodule
-  pinned to upstream commit `14840eb0cd56b6ad824e05475383484d3213678f`.
+  pinned to upstream commit `67a3c4f22bd1b38ac499f9756902e04fa4ed8444`.
 
 ## What this project changes
 
@@ -18,7 +18,7 @@ interface of **ArduPilot Mission Planner**.
   app runs natively on macOS (Apple Silicon), Linux and Windows.
 - All flight/protocol/log/param/mission **logic is reused unchanged** from Mission Planner's libraries
   via project reference — only the presentation layer (Views + ViewModels) is new.
-- See `MissionPlannerAvalonia/PORT_STATUS.md` for the page-by-page port state.
+- See `docs/PORT_STATUS.md` for the page-by-page port state.
 
 ## License of this project
 
