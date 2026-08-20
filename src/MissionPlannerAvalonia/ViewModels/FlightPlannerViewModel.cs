@@ -338,6 +338,15 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     }
   }
 
+  internal async Task ReadMissionOnConnectAsync() {
+    if (MissionType != "Mission") {
+      MissionType = "Mission";
+    }
+#pragma warning disable CS0612 // ReadWaypoints wraps legacy upstream mission APIs.
+    await ReadWaypoints();
+#pragma warning restore CS0612
+  }
+
   [RelayCommand]
   [Obsolete]
   private async Task WriteWaypoints() {
@@ -1635,6 +1644,33 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     RecomputeGrid();
     WaypointsChanged?.Invoke();
     return $"Survey grid added {grid.Count} waypoint(s).";
+  }
+
+  public string AppendSurveyPlan(SurveyMissionPlan plan) {
+    if (plan.Commands.Count == 0) {
+      return "Grid produced no mission commands.";
+    }
+
+    foreach (var item in plan.Commands) {
+      Waypoints.Add(new WpRow {
+        Seq = Waypoints.Count,
+        Command = (ushort)item.Command,
+        Frame = item.Frame,
+        Lat = item.Lat,
+        Lng = item.Lng,
+        Alt = item.Alt,
+        P1 = item.P1,
+        P2 = item.P2,
+        P3 = item.P3,
+        P4 = item.P4,
+      });
+    }
+
+    Renumber();
+    RecomputeGrid();
+    WaypointsChanged?.Invoke();
+    return $"Survey added {plan.NavigationCount} navigation point(s) and " +
+           $"{plan.CameraCommandCount} camera command(s).";
   }
 
   private void OnWaypointsCollectionChanged(object? sender,

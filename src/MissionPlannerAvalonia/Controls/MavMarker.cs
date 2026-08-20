@@ -11,4 +11,20 @@ public static class MavMarker {
     SymbolRotation = headingDeg,
     RotateWithMap = true,
   };
+
+  public static SymbolStyle Traffic(double headingDeg, bool threat) => new() {
+    SymbolType = SymbolType.Triangle,
+    Fill = new Brush(threat ? Color.Red : new Color(255, 180, 0)),
+    Outline = new Pen(Color.White, 1),
+    SymbolScale = 0.65,
+    SymbolRotation = headingDeg,
+    RotateWithMap = true,
+  };
+
+  public static SymbolStyle Camera(bool belowMinimumInterval) => new() {
+    SymbolType = SymbolType.Ellipse,
+    Fill = new Brush(belowMinimumInterval ? Color.Red : new Color(40, 210, 90)),
+    Outline = new Pen(Color.White, 1),
+    SymbolScale = 0.5,
+  };
 }

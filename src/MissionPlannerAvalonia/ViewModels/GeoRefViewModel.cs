@@ -46,6 +46,8 @@ public partial class GeoRefViewModel : ViewModelBase {
 
   [ObservableProperty] private bool _useCamMessages = true;
 
+  [ObservableProperty] private bool _useTrigMessages;
+
   [ObservableProperty] private bool _useGps2;
   [ObservableProperty] private bool _busy;
   [ObservableProperty] private string _status = "Pick a log and a photo folder, then Geo Tag.";
@@ -83,7 +85,11 @@ public partial class GeoRefViewModel : ViewModelBase {
 
     try {
       await Task.Run(() => {
-        var pics = UseCamMessages ? DoWorkCam() : DoWorkGpsOffset();
+        var pics = UseCamMessages
+            ? DoWorkCam()
+            : UseTrigMessages
+                ? DoWorkTrig()
+                : DoWorkGpsOffset();
         if (pics.Count == 0) {
           Append("No valid matches. Aborting.");
           return;
@@ -237,6 +243,40 @@ public partial class GeoRefViewModel : ViewModelBase {
     return outp;
   }
 
+  private List<PictureInfo> DoWorkTrig() {
+    Append("Reading log for TRIG messages…");
+    var triggers = ReadTrigMsgInLog(LogPath);
+    Append($"TRIG messages found: {triggers.Count}");
+
+    var files = ListPhotos();
+    Append($"Photos found: {files.Count}");
+    if (files.Count != triggers.Count) {
+      Append($"TRIG/photo count mismatch — photos: {files.Count} vs TRIG: {triggers.Count}. " +
+             "The order-only TRIG mode cannot safely guess missing captures, so it stopped.");
+      return new List<PictureInfo>();
+    }
+
+    var triggerList = triggers.OrderBy(kv => kv.Key).Select(kv => kv.Value).ToList();
+    var output = new List<PictureInfo>(files.Count);
+    for (int i = 0; i < files.Count; i++) {
+      var trigger = triggerList[i];
+      output.Add(new PictureInfo {
+        Path = files[i],
+        Time = trigger.Time,
+        Lat = trigger.Lat,
+        Lon = trigger.Lon,
+        AltAMSL = trigger.AltAMSL,
+        RelAlt = trigger.RelAlt,
+        GPSAlt = trigger.GPSAlt,
+        Roll = trigger.Roll,
+        Pitch = trigger.Pitch,
+        Yaw = trigger.Yaw,
+      });
+      Append($"Photo {Path.GetFileNameWithoutExtension(files[i])} matched to TRIG msg.");
+    }
+    return output;
+  }
+
   private List<PictureInfo> DoWorkGpsOffset() {
     Append($"Reading log for {GpsMsg} messages…");
     var gps = ReadGpsMsgInLog(LogPath, GpsMsg);
@@ -367,6 +407,51 @@ public partial class GeoRefViewModel : ViewModelBase {
       p.Yaw = ParseF(item["Yaw"] ?? item["Y"], 0);
 
       list[ToMillis(p.Time)] = p;
+    }
+    return list;
+  }
+
+  private static Dictionary<long, VehicleLoc> ReadTrigMsgInLog(string fn) {
+    var list = new Dictionary<long, VehicleLoc>();
+
+    using var sr = new DFLogBuffer(fn);
+    foreach (var item in sr.GetEnumeratorType(new[] { "TRIG" })) {
+      if (!TryD(item["Lat"], out var lat) || !TryD(item["Lng"], out var lng) ||
+          (lat == 0 && lng == 0)) {
+        continue;
+      }
+
+      DateTime time;
+      if (int.TryParse(item["GPSWeek"], NumberStyles.Integer, CultureInfo.InvariantCulture,
+              out var week) &&
+          int.TryParse(item["GPSTime"], NumberStyles.Integer, CultureInfo.InvariantCulture,
+              out var gpsTime)) {
+        time = GetTimeFromGps(week, gpsTime);
+      } else {
+        time = item.time.ToUniversalTime();
+      }
+      if (time == DateTime.MinValue) {
+        continue;
+      }
+
+      var point = new VehicleLoc {
+        Time = time,
+        Lat = lat,
+        Lon = lng,
+        Roll = ParseF(item["Roll"] ?? item["R"], 0),
+        Pitch = ParseF(item["Pitch"] ?? item["P"], 0),
+        Yaw = ParseF(item["Yaw"] ?? item["Y"], 0),
+      };
+      if (TryD(item["Alt"], out var alt)) {
+        point.AltAMSL = alt;
+      }
+      if (TryD(item["RelAlt"], out var relativeAltitude)) {
+        point.RelAlt = relativeAltitude;
+      }
+      if (TryD(item["GPSAlt"], out var gpsAltitude)) {
+        point.GPSAlt = gpsAltitude;
+      }
+      list[ToMillis(point.Time)] = point;
     }
     return list;
   }

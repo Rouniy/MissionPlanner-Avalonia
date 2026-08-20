@@ -8,6 +8,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using MissionPlannerAvalonia.ViewModels;
 using SharpKml.Dom;
 using SharpKml.Engine;
@@ -17,6 +18,7 @@ namespace MissionPlannerAvalonia.Views;
 public partial class FlightPlannerView : UserControl {
   private FlightPlannerViewModel? _wired;
   private bool _polygonDrawMode;
+  private int _noFlyLoadVersion;
 
   private const int _pColIndex = 2;
 
@@ -32,17 +34,27 @@ public partial class FlightPlannerView : UserControl {
     DataContextChanged += (_, _) => WireViewModel();
     WireViewModel();
     LoadAutoNoFly();
+    AttachedToVisualTree += (_, _) =>
+        Services.NoFlyOverlay.VisibilityChanged += OnNoFlyVisibilityChanged;
+    DetachedFromVisualTree += (_, _) =>
+        Services.NoFlyOverlay.VisibilityChanged -= OnNoFlyVisibilityChanged;
   }
 
   private async void LoadAutoNoFly() {
+    int version = ++_noFlyLoadVersion;
     if (!MissionPlanner.Utilities.Settings.Instance.GetBoolean("ShowNoFly", false)) {
+      Map.SetNoFlyLayer(null);
       return;
     }
     try {
       var layer = await Task.Run(() =>
           Services.NoFlyOverlay.BuildLayerFromDirectory(Services.NoFlyOverlay.DefaultDirectory));
+      if (version != _noFlyLoadVersion ||
+          !MissionPlanner.Utilities.Settings.Instance.GetBoolean("ShowNoFly", false)) {
+        return;
+      }
+      Map.SetNoFlyLayer(layer);
       if (layer != null) {
-        Map.SetNoFlyLayer(layer);
         if (Vm != null) {
           Vm.Status = "NoFly overlay loaded from " + Services.NoFlyOverlay.DefaultDirectory;
         }
@@ -50,6 +62,8 @@ public partial class FlightPlannerView : UserControl {
     } catch {
     }
   }
+
+  private void OnNoFlyVisibilityChanged() => Dispatcher.UIThread.Post(LoadAutoNoFly);
 
   private void OnMapClicked(double lat, double lng) {
     if (Vm == null) {
@@ -554,7 +568,7 @@ public partial class FlightPlannerView : UserControl {
     }
 
     GridUIWindow.OpenForPolygon(area.polygon, area.home,
-        grid => Vm.Status = Vm.AppendSurveyGrid(grid));
+        plan => Vm.Status = Vm.AppendSurveyPlan(plan));
   }
 
   private Window? OwnerWindow => TopLevel.GetTopLevel(this) as Window;

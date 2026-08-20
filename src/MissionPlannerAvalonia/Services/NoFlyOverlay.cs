@@ -15,6 +15,10 @@ namespace MissionPlannerAvalonia.Services;
 public static class NoFlyOverlay {
   private static readonly Color _noFlyRed = new(220, 0, 0, 255);
 
+  public static event Action? VisibilityChanged;
+
+  public static void NotifyVisibilityChanged() => VisibilityChanged?.Invoke();
+
   public static ILayer? BuildLayer(string path, string name = "NoFly") {
     var rings = LoadPolygons(path);
     return rings.Count == 0 ? null : BuildLayer(rings, name);

@@ -113,6 +113,7 @@ public abstract partial class BatteryMonitorPageBase : ViewModelBase, IDisposabl
   partial void OnAlertOnLowBatteryChanged(bool value) {
     Settings.Instance[_alertEnabledKey] = value.ToString();
     Settings.Instance[_speechEnabledKey] = true.ToString();
+    Services.Speech.Enabled = true;
     if (value) {
       Settings.Instance["speechbattery"] ??= "WARNING, Battery at {batv} Volt, {batp} percent";
       Settings.Instance["speechbatteryvolt"] ??= "9.6";

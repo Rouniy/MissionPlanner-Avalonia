@@ -27,12 +27,17 @@ public partial class App : Application {
     Services.SpeechAnnouncer.Start();
 
     if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop) {
-      desktop.MainWindow = new MainWindow { DataContext = new MainWindowViewModel() };
+      var mainViewModel = new MainWindowViewModel();
+      desktop.MainWindow = new MainWindow { DataContext = mainViewModel };
+      Avalonia.Threading.Dispatcher.UIThread.Post(
+          () => _ = mainViewModel.Connection.TryAutoConnectAsync());
 
       desktop.Exit += (_, _) => {
         Services.SpeechAnnouncer.Stop();
         WarningEngine.Stop();
         Services.Speech.Stop();
+        AppState.JoystickControl.Dispose();
+        AppState.Traffic.Dispose();
         Services.SitlLauncher.StopAll();
         try {
           if (AppState.comPort.BaseStream?.IsOpen == true) {

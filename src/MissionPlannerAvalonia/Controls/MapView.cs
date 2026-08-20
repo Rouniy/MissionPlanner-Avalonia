@@ -19,11 +19,22 @@ namespace MissionPlannerAvalonia.Controls;
 
 public class MapView : MapControl {
   private readonly WritableLayer _track = new() { Name = "Track" };
+  private readonly WritableLayer _photoMarkers = new() { Name = "Camera feedback" };
+  private readonly WritableLayer _photoFootprints = new() { Name = "Camera footprints" };
   private readonly WritableLayer _vehicle = new() { Name = "Vehicle" };
+  private readonly WritableLayer _traffic = new() { Name = "ADS-B traffic" };
   private readonly DispatcherTimer _timer;
   private bool _centered;
   private MPoint? _lastTrackPt;
-  private readonly List<Coordinate> _trackPts = new();
+  private readonly Queue<Coordinate> _trackPts = new();
+  private bool _trafficWasVisible;
+  private long _trafficRevision = -1;
+  private bool _followingHeading;
+  private int _lastPhotoCount = -1;
+  private ulong _lastPhotoTime;
+  private double _lastPhotoHfov = double.NaN;
+  private double _lastPhotoVfov = double.NaN;
+  private double _lastPhotoMinimumInterval = double.NaN;
 
   public (double Lat, double Lng) LastClickLatLng { get; private set; }
 
@@ -69,6 +80,9 @@ public class MapView : MapControl {
     map.Layers.Add(new TileLayer(esri) { Name = "Satellite" });
 
     map.Layers.Add(_track);
+    map.Layers.Add(_photoFootprints);
+    map.Layers.Add(_photoMarkers);
+    map.Layers.Add(_traffic);
     _vehicle.Style = MavMarker.Vehicle(0);
     map.Layers.Add(_vehicle);
 
@@ -76,7 +90,11 @@ public class MapView : MapControl {
     Map = map;
 
     _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
-    _timer.Tick += (_, _) => UpdateVehicle();
+    _timer.Tick += (_, _) => {
+      UpdateVehicle();
+      UpdateCameraFeedback();
+      UpdateTraffic();
+    };
   }
 
   protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e) {
@@ -109,6 +127,8 @@ public class MapView : MapControl {
     DrawBearingOverlays(cs, pt);
     _vehicle.DataHasChanged();
 
+    UpdateMapRotation(cs);
+
     AppendTrack(pt);
 
     if (!_centered) {
@@ -118,6 +138,164 @@ public class MapView : MapControl {
     } else if (AutoPan) {
       Map.Navigator.CenterOn(pt);
     }
+  }
+
+  private void UpdateMapRotation(MissionPlanner.CurrentState cs) {
+    var settings = MissionPlanner.Utilities.Settings.Instance;
+    bool follow = settings.GetBoolean("CHK_maprotation", false);
+    if (follow && AppState.comPort.MAVlist.Count > 1) {
+      // As in upstream, heading-up is ambiguous with multiple vehicles.
+      settings["CHK_maprotation"] = false.ToString();
+      follow = false;
+    }
+
+    if (follow) {
+      Map.Navigator.RotateTo((cs.yaw + 360.0) % 360.0);
+      _followingHeading = true;
+    } else if (_followingHeading) {
+      Map.Navigator.RotateTo(0);
+      _followingHeading = false;
+    }
+  }
+
+  private void UpdateTraffic() {
+    bool visible = MissionPlanner.Utilities.Settings.Instance.GetBoolean("enableadsb", false);
+    if (!visible) {
+      if (_trafficWasVisible) {
+        _traffic.Clear();
+        _traffic.DataHasChanged();
+        _trafficWasVisible = false;
+        _trafficRevision = -1;
+      }
+      return;
+    }
+
+    var snapshot = AppState.Traffic.SnapshotWithRevision();
+    if (_trafficWasVisible && snapshot.Revision == _trafficRevision) {
+      return;
+    }
+    _traffic.Clear();
+    foreach (var target in snapshot.Targets) {
+      var (x, y) = SphericalMercator.FromLonLat(target.Lng, target.Lat);
+      var feature = new PointFeature(new MPoint(x, y));
+      feature.Styles.Add(MavMarker.Traffic(target.Heading,
+          target.ThreatLevel != MAVLink.MAV_COLLISION_THREAT_LEVEL.NONE));
+      string label = string.IsNullOrWhiteSpace(target.CallSign) ? target.Id : target.CallSign;
+      feature.Styles.Add(new LabelStyle {
+        Text = $"{label}  {target.Alt:0} m",
+        ForeColor = Color.White,
+        BackColor = new Brush(new Color(0, 0, 0, 150)),
+        Font = new Font { Size = 10 },
+        Offset = new Offset(0, 13),
+      });
+      _traffic.Add(feature);
+    }
+    _traffic.DataHasChanged();
+    _trafficWasVisible = true;
+    _trafficRevision = snapshot.Revision;
+  }
+
+  private void UpdateCameraFeedback() {
+    MAVLink.mavlink_camera_feedback_t[] points;
+    try {
+      points = AppState.comPort.MAV.camerapoints.ToArray();
+    } catch {
+      // The shared reader can append while List<T>.ToArray copies. Retry on the next map tick.
+      return;
+    }
+
+    var settings = MissionPlanner.Utilities.Settings.Instance;
+    double hfov = Math.Clamp(settings.GetDouble("camera_fovh", 63), 1, 179);
+    double vfov = Math.Clamp(settings.GetDouble("camera_fovv", 43), 1, 179);
+    double minimumInterval = 0;
+    try {
+      if (AppState.comPort.MAV.param.ContainsKey("CAM_MIN_INTERVAL")) {
+        minimumInterval = AppState.comPort.MAV.param["CAM_MIN_INTERVAL"].Value / 1000.0;
+      }
+    } catch {
+      // Parameter access is best-effort while a background parameter load is in progress.
+    }
+    ulong newest = points.Length == 0 ? 0 : points[^1].time_usec;
+    if (points.Length == _lastPhotoCount && newest == _lastPhotoTime &&
+        hfov.Equals(_lastPhotoHfov) && vfov.Equals(_lastPhotoVfov) &&
+        minimumInterval.Equals(_lastPhotoMinimumInterval)) {
+      return;
+    }
+
+    bool canAppendMarkers = minimumInterval.Equals(_lastPhotoMinimumInterval) &&
+                            _lastPhotoCount > 0 && points.Length >= _lastPhotoCount &&
+                            points[_lastPhotoCount - 1].time_usec == _lastPhotoTime;
+    int firstNewMarker = canAppendMarkers ? _lastPhotoCount : 0;
+    if (!canAppendMarkers) {
+      _photoMarkers.Clear();
+    }
+    _photoFootprints.Clear();
+
+    double previousSeconds = firstNewMarker > 0
+        ? points[firstNewMarker - 1].time_usec / 1_000_000.0
+        : double.MinValue;
+    for (int i = firstNewMarker; i < points.Length; i++) {
+      var point = points[i];
+      double lat = point.lat / 1e7;
+      double lng = point.lng / 1e7;
+      if (!double.IsFinite(lat) || !double.IsFinite(lng) ||
+          lat is < -90 or > 90 || lng is < -180 or > 180 || (lat == 0 && lng == 0)) {
+        continue;
+      }
+
+      double seconds = point.time_usec / 1_000_000.0;
+      bool tooSoon = minimumInterval > 0 && previousSeconds != double.MinValue &&
+                     seconds - previousSeconds < minimumInterval;
+      previousSeconds = seconds;
+
+      var (x, y) = SphericalMercator.FromLonLat(lng, lat);
+      var marker = new PointFeature(new MPoint(x, y));
+      marker.Styles.Add(MavMarker.Camera(tooSoon));
+      marker.Styles.Add(new LabelStyle {
+        Text = point.img_idx.ToString(),
+        ForeColor = Color.White,
+        BackColor = new Brush(new Color(0, 0, 0, 150)),
+        Font = new Font { Size = 9 },
+        Offset = new Offset(0, 11),
+      });
+      _photoMarkers.Add(marker);
+    }
+
+    int firstFootprint = Math.Max(0, points.Length - 4);
+    for (int i = firstFootprint; i < points.Length; i++) {
+      var point = points[i];
+      double lat = point.lat / 1e7;
+      double lng = point.lng / 1e7;
+      if (!double.IsFinite(lat) || !double.IsFinite(lng) ||
+          lat is < -90 or > 90 || lng is < -180 or > 180 || (lat == 0 && lng == 0)) {
+        continue;
+      }
+      var footprint = CameraFeedbackProjection.Project(point, hfov, vfov);
+      if (footprint.Count < 3) {
+        continue;
+      }
+      var coordinates = new List<Coordinate>(footprint.Count + 1);
+      foreach (var corner in footprint) {
+        var projected = SphericalMercator.FromLonLat(corner.Lng, corner.Lat);
+        coordinates.Add(new Coordinate(projected.x, projected.y));
+      }
+      coordinates.Add(coordinates[0]);
+      var polygon = new GeometryFeature {
+        Geometry = new Polygon(new LinearRing(coordinates.ToArray())),
+      };
+      polygon.Styles.Add(new VectorStyle {
+        Fill = new Brush(new Color(220, 20, 60, 24)),
+        Line = new Pen(new Color(220, 20, 60), 1.5),
+      });
+      _photoFootprints.Add(polygon);
+    }
+    _lastPhotoCount = points.Length;
+    _lastPhotoTime = newest;
+    _lastPhotoHfov = hfov;
+    _lastPhotoVfov = vfov;
+    _lastPhotoMinimumInterval = minimumInterval;
+    _photoMarkers.DataHasChanged();
+    _photoFootprints.DataHasChanged();
   }
 
   private static readonly VectorStyle _trackStyle = new() {
@@ -215,9 +393,11 @@ public class MapView : MapControl {
       }
     }
     _lastTrackPt = pt;
-    _trackPts.Add(new Coordinate(pt.X, pt.Y));
-    if (_trackPts.Count > 5000) {
-      _trackPts.RemoveAt(0);
+    _trackPts.Enqueue(new Coordinate(pt.X, pt.Y));
+    int maximumTrackPoints = Math.Clamp(
+        MissionPlanner.Utilities.Settings.Instance.GetInt32("NUM_tracklength", 200), 100, 50000);
+    while (_trackPts.Count > maximumTrackPoints) {
+      _trackPts.Dequeue();
     }
     if (_trackPts.Count < 2) {
       return;
@@ -242,7 +422,7 @@ public class MapView : MapControl {
         continue;
       }
       var (x, y) = SphericalMercator.FromLonLat(lng, lat);
-      _trackPts.Add(new Coordinate(x, y));
+      _trackPts.Enqueue(new Coordinate(x, y));
     }
     if (_trackPts.Count >= 2) {
       var line = new GeometryFeature { Geometry = new LineString(_trackPts.ToArray()) };
@@ -252,7 +432,8 @@ public class MapView : MapControl {
     _track.DataHasChanged();
     if (_trackPts.Count > 0) {
       double res = 156543.03392804097 / Math.Pow(2, 15);
-      Map.Navigator.CenterOnAndZoomTo(new MPoint(_trackPts[0].X, _trackPts[0].Y), res);
+      var first = _trackPts.Peek();
+      Map.Navigator.CenterOnAndZoomTo(new MPoint(first.X, first.Y), res);
       _centered = true;
     }
   }
@@ -275,6 +456,16 @@ public class MapView : MapControl {
     _trackPts.Clear();
     _lastTrackPt = null;
     _track.DataHasChanged();
+    try {
+      AppState.comPort.MAV.camerapoints.Clear();
+    } catch {
+    }
+    _photoMarkers.Clear();
+    _photoMarkers.DataHasChanged();
+    _photoFootprints.Clear();
+    _photoFootprints.DataHasChanged();
+    _lastPhotoCount = 0;
+    _lastPhotoTime = 0;
   }
 
   private (double Lat, double Lng) ToLatLng(Avalonia.Point screen) {
@@ -309,5 +500,36 @@ public class MapView : MapControl {
   public void CenterOn(double lat, double lng) {
     var (x, y) = SphericalMercator.FromLonLat(lng, lat);
     Map.Navigator.CenterOn(new MPoint(x, y));
+  }
+}
+
+internal static class CameraFeedbackProjection {
+  internal static IReadOnlyList<(double Lat, double Lng)> Project(
+      MAVLink.mavlink_camera_feedback_t point, double hfov, double vfov) {
+    if (point.alt_msl <= 0 || !float.IsFinite(point.alt_msl) ||
+        !double.IsFinite(hfov) || !double.IsFinite(vfov) ||
+        hfov is <= 0 or >= 180 || vfov is <= 0 or >= 180) {
+      return Array.Empty<(double, double)>();
+    }
+
+    try {
+      var location = new MissionPlanner.Utilities.PointLatLngAlt(
+          point.lat / 1e7, point.lng / 1e7, point.alt_msl);
+      var projected = MissionPlanner.Utilities.ImageProjection.calc(
+          location, point.roll, point.pitch, point.yaw, hfov, vfov);
+      var result = new List<(double Lat, double Lng)>(projected.Count);
+      foreach (var corner in projected) {
+        if (double.IsFinite(corner.Lat) && double.IsFinite(corner.Lng) &&
+            corner.Lat is >= -90 and <= 90 && corner.Lng is >= -180 and <= 180 &&
+            !result.Exists(existing => Math.Abs(existing.Lat - corner.Lat) < 1e-9 &&
+                                       Math.Abs(existing.Lng - corner.Lng) < 1e-9)) {
+          result.Add((corner.Lat, corner.Lng));
+        }
+      }
+      return result.Count >= 3 ? result : Array.Empty<(double, double)>();
+    } catch {
+      // Bad camera attitude or unavailable terrain data must not break the live map timer.
+      return Array.Empty<(double, double)>();
+    }
   }
 }

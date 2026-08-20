@@ -10,7 +10,7 @@ public partial class ConnectionOptionsViewModel : ViewModelBase {
 
   private const string _baudKey = "baudrate";
   private const string _heartbeatKey = "CHK_GCSheartbeat";
-  private const string _gcsSysidKey = "GCS_sysid";
+  private const string _gcsSysidKey = "gcsid";
 
   public ObservableCollection<int> Bauds { get; } =
       new() { 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600 };
@@ -30,7 +30,9 @@ public partial class ConnectionOptionsViewModel : ViewModelBase {
   public ConnectionOptionsViewModel() {
     SelectedBaud = Settings.Instance.GetInt32(_baudKey, 115200);
     SendGcsHeartbeat = Settings.Instance.GetBoolean(_heartbeatKey, true);
-    GcsSysid = Settings.Instance.GetInt32(_gcsSysidKey, MAVLinkInterface.gcssysid);
+    GcsSysid = Settings.Instance.ContainsKey(_gcsSysidKey)
+        ? Settings.Instance.GetInt32(_gcsSysidKey, MAVLinkInterface.gcssysid)
+        : Settings.Instance.GetInt32("GCS_sysid", MAVLinkInterface.gcssysid);
   }
 
   [RelayCommand]

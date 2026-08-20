@@ -17,7 +17,7 @@ using MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView;
 
 namespace MissionPlannerAvalonia.ViewModels;
 
-public partial class FlightDataViewModel : ViewModelBase {
+public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   private readonly MAVLinkInterface _comPort = AppState.comPort;
   private readonly DispatcherTimer _timer;
   private readonly TlogPlayer _tlog = new();
@@ -53,6 +53,12 @@ public partial class FlightDataViewModel : ViewModelBase {
 
   [ObservableProperty]
   private double _distToHome;
+
+  [ObservableProperty]
+  private bool _showDistanceToHome = true;
+
+  [ObservableProperty]
+  private bool _hudOverlayEnabled = true;
 
   [ObservableProperty]
   private double _batteryVoltage;
@@ -155,6 +161,22 @@ public partial class FlightDataViewModel : ViewModelBase {
     _tlog.Packet += OnTlogPacket;
     _tlog.Progress += OnTlogProgress;
     _lua.Output += OnLuaOutput;
+    MissionPlanner.Warnings.WarningEngine.QuickPanelColoring += OnQuickPanelColoring;
+  }
+
+  private void OnQuickPanelColoring(string field, string color) =>
+      Dispatcher.UIThread.Post(() => {
+        foreach (var item in QuickItems.Where(item => item.Field == field)) {
+          item.ApplyWarningColor(color);
+        }
+      });
+
+  public void Dispose() {
+    MissionPlanner.Warnings.WarningEngine.QuickPanelColoring -= OnQuickPanelColoring;
+    _timer.Stop();
+    _tlog.Close();
+    _videoWindow?.Close();
+    _video?.Dispose();
   }
 
   private void Pump() {
@@ -173,6 +195,22 @@ public partial class FlightDataViewModel : ViewModelBase {
     WpNo = (int)cs.wpno;
     VerticalSpeed = cs.verticalspeed;
     DistToHome = cs.DistToHome;
+    var settings = Settings.Instance;
+    ShowDistanceToHome = settings.GetBoolean("CHK_disttohomeflightdata", true);
+    HudOverlayEnabled = settings.GetBoolean("CHK_hudshow", true);
+    var desiredInterval = settings.GetBoolean("SlowMachine", false)
+        ? TimeSpan.FromMilliseconds(250)
+        : TimeSpan.FromMilliseconds(100);
+    if (_timer.Interval != desiredInterval) {
+      _timer.Interval = desiredInterval;
+    }
+    XpdrMaintReq = cs.xpdr_maint_req;
+    XpdrGpsUnavailable = cs.xpdr_gps_unavail;
+    XpdrGpsNoFix = cs.xpdr_gps_no_fix;
+    XpdrTxSystemFailure = cs.xpdr_adsb_tx_sys_fail;
+    XpdrAirborne = cs.xpdr_airborne_status;
+    XpdrNic = TransponderAccuracy.Nic(cs.xpdr_nic);
+    XpdrNacp = TransponderAccuracy.Nacp(cs.xpdr_nacp);
     BatteryVoltage = cs.battery_voltage;
     BatteryRemaining = (int)Math.Round(EstimateBatteryPercent(
         cs.battery_voltage, cs.current, cs.battery_usedmah, ParamValue("BATT_CAPACITY"),
@@ -433,6 +471,9 @@ public partial class FlightDataViewModel : ViewModelBase {
   public void SetQuickField(QuickItem item, string field) {
     item.Field = field;
     item.Desc = DescFor(_comPort.MAV?.cs, field);
+    // A WarningEngine colour belongs to the previous field. Keep neither its background nor its
+    // contrasting text colour when the operator assigns a different CurrentState value.
+    item.ApplyWarningColor("NoColor");
     int idx = QuickItems.IndexOf(item);
     if (idx >= 0) {
       Settings.Instance[$"quickView{idx + 1}"] = field;
@@ -1414,7 +1455,14 @@ public partial class FlightDataViewModel : ViewModelBase {
   }
 
   [RelayCommand]
-  private void Joystick() => Log("Joystick mapping is under Setup > Joystick.");
+  private void Joystick() {
+    if (AppState.JoystickControl.Active is { } joystick) {
+      AppState.JoystickControl.Stop(joystick, "Joystick disabled from Flight Data.");
+      Log("Joystick disabled and RC overrides released.");
+    } else {
+      Log("Joystick is not enabled. Configure it under Setup > Joystick.");
+    }
+  }
 
   [RelayCommand]
   private async Task ShowMessage() {
@@ -2116,6 +2164,27 @@ public partial class FlightDataViewModel : ViewModelBase {
   [ObservableProperty]
   private string _transponderStatus = "Not connected";
 
+  [ObservableProperty]
+  private bool _xpdrMaintReq;
+
+  [ObservableProperty]
+  private bool _xpdrGpsUnavailable;
+
+  [ObservableProperty]
+  private bool _xpdrGpsNoFix;
+
+  [ObservableProperty]
+  private bool _xpdrTxSystemFailure;
+
+  [ObservableProperty]
+  private bool _xpdrAirborne;
+
+  [ObservableProperty]
+  private string _xpdrNic = "UNKNOWN";
+
+  [ObservableProperty]
+  private string _xpdrNacp = "UNKNOWN";
+
   private void SendTransponder(byte extraState) {
     if (!Connected) {
       TransponderStatus = "Not connected";
@@ -2177,10 +2246,27 @@ public partial class FlightDataViewModel : ViewModelBase {
 
 }
 
+internal static class TransponderAccuracy {
+  private static readonly string[] _nic = {
+    "UNKNOWN", "<20.0 NM", "<8.0 NM", "<4.0 NM", "<2.0 NM", "<1.0 NM",
+    "<0.3 NM", "<0.2 NM", "<0.1 NM", "<75 m", "<25 m", "<7.5 m",
+  };
+
+  private static readonly string[] _nacp = {
+    "UNKNOWN", "<10.0 NM", "<4.0 NM", "<2.0 NM", "<1.0 NM", "<0.5 NM",
+    "<0.3 NM", "<0.1 NM", "<0.05 NM", "<30 m", "<10 m", "<3 m",
+  };
+
+  internal static string Nic(byte value) => value < _nic.Length ? _nic[value] : "UNKNOWN";
+
+  internal static string Nacp(byte value) => value < _nacp.Length ? _nacp[value] : "UNKNOWN";
+}
+
 public partial class QuickItem : ObservableObject {
   public QuickItem(string field, string color) {
     _field = field;
     Color = color;
+    _brush = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse(color));
   }
 
   [ObservableProperty]
@@ -2194,8 +2280,42 @@ public partial class QuickItem : ObservableObject {
 
   public string Color { get; }
 
-  public Avalonia.Media.IBrush Brush =>
-      new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse(Color));
+  [ObservableProperty]
+  private Avalonia.Media.IBrush _brush;
+
+  [ObservableProperty]
+  private Avalonia.Media.IBrush _backgroundBrush = Avalonia.Media.Brushes.Transparent;
+
+  [ObservableProperty]
+  private Avalonia.Media.IBrush _labelBrush = Avalonia.Media.Brushes.White;
+
+  internal void ApplyWarningColor(string color) {
+    var configured = Avalonia.Media.Color.Parse(Color);
+    var style = QuickWarningStyle.Resolve(color, configured);
+    if (style.Background == null) {
+      BackgroundBrush = Avalonia.Media.Brushes.Transparent;
+      Brush = new Avalonia.Media.SolidColorBrush(style.Foreground);
+      LabelBrush = Avalonia.Media.Brushes.White;
+      return;
+    }
+
+    BackgroundBrush = new Avalonia.Media.SolidColorBrush(style.Background.Value);
+    Brush = new Avalonia.Media.SolidColorBrush(style.Foreground);
+    LabelBrush = new Avalonia.Media.SolidColorBrush(style.Foreground);
+  }
+}
+
+internal static class QuickWarningStyle {
+  internal static (Avalonia.Media.Color? Background, Avalonia.Media.Color Foreground) Resolve(
+      string warningColor, Avalonia.Media.Color configuredForeground) {
+    if (string.Equals(warningColor, "NoColor", StringComparison.OrdinalIgnoreCase) ||
+        !Avalonia.Media.Color.TryParse(warningColor, out var parsed)) {
+      return (null, configuredForeground);
+    }
+
+    int brightness = (parsed.R + parsed.G + parsed.B) / 3;
+    return (parsed, brightness > 128 ? Avalonia.Media.Colors.Black : Avalonia.Media.Colors.White);
+  }
 }
 
 public record AuxRow(int Channel, ParamField Field);

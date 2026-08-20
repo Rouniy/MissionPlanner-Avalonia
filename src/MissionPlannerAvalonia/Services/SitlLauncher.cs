@@ -49,6 +49,7 @@ public class SitlLauncher {
   private UdpClient? _rcSend;
 
   private static readonly System.Collections.Generic.List<SitlLauncher> _live = new();
+  private static SitlLauncher? _primaryConnection;
 
   public static void StopAll() {
     SitlLauncher[] all;
@@ -176,34 +177,50 @@ public class SitlLauncher {
     }
   }
 
-  public void SendRcInput() {
-    var send = _rcSend;
-    var cs = MissionPlannerAvalonia.AppState.comPort.MAV?.cs;
-    if (send == null || cs == null) {
-      return;
+  internal static bool TrySendRcInput(JoystickOutputSnapshot snapshot) {
+    SitlLauncher? launcher;
+    lock (_live) {
+      launcher = _primaryConnection;
     }
+    return launcher?.TrySendRcInput(JoystickControlPackets.BuildSitlDatagram(snapshot)) == true;
+  }
 
+  internal void SetAsPrimaryConnection(bool connected) {
+    lock (_live) {
+      if (connected) {
+        _primaryConnection = this;
+      } else if (ReferenceEquals(_primaryConnection, this)) {
+        _primaryConnection = null;
+      }
+    }
+  }
+
+  internal static void ClearPrimaryConnection() {
+    lock (_live) {
+      _primaryConnection = null;
+    }
+  }
+
+  private bool TrySendRcInput(byte[] packet) {
     try {
-      var buf = new byte[2 * 8];
-      void Put(int i, int v) =>
-          Array.ConstrainedCopy(BitConverter.GetBytes((ushort)v), 0, buf, i * 2, 2);
-      Put(0, cs.rcoverridech1);
-      Put(1, cs.rcoverridech2);
-      Put(2, cs.rcoverridech3);
-      Put(3, cs.rcoverridech4);
-      Put(4, cs.rcoverridech5);
-      Put(5, cs.rcoverridech6);
-      Put(6, cs.rcoverridech7);
-      Put(7, cs.rcoverridech8);
-      send.Send(buf, buf.Length);
-    } catch {
+      var send = _rcSend;
+      if (send == null || !IsRunning) {
+        return false;
+      }
 
+      send.Send(packet, packet.Length);
+      return true;
+    } catch {
+      return false;
     }
   }
 
   public void Stop() {
     lock (_live) {
       _live.Remove(this);
+      if (ReferenceEquals(_primaryConnection, this)) {
+        _primaryConnection = null;
+      }
     }
     try {
       _rcSend?.Dispose();

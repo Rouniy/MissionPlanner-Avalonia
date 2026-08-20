@@ -13,12 +13,13 @@ There are two ways to get a SITL, depending on the OS.
 
 ---
 
-## A. Windows — built-in SITL (your friend's machine, easiest)
+## A. Windows / Linux — built-in SITL (easiest)
 
 The app can download and launch ArduPilot SITL itself.
 
-1. Install & launch the release: unzip `MissionPlannerAvalonia-2026.8.0-win-x64.zip`, run
-   `MissionPlannerAvalonia.exe`. (If SmartScreen warns: *More info → Run anyway* — it's unsigned.)
+1. Launch the unpacked release (`MissionPlannerAvalonia.exe` on Windows or
+   `./MissionPlannerAvalonia` on Linux). If Windows SmartScreen warns, use
+   *More info → Run anyway*; the development build is unsigned.
 2. Click the **SIMULATION** tab in the top toolbar.
 3. Pick the vehicle: **Plane**, **Copter**, **Rover**, or **Heli**.
 4. **Model**: leave blank to use the vehicle default (fine for a first test).
@@ -36,9 +37,10 @@ quarantining the binary, or a busy port — Stop, retry, or pick a different cha
 
 ---
 
-## B. macOS / Linux — external SITL (this repo's host machine)
+## B. macOS, or an externally managed Linux SITL
 
-The built-in launcher has **no prebuilt binary on macOS**, so start SITL yourself and connect over UDP.
+The built-in launcher has **no prebuilt binary on macOS**. This method is also useful on Linux when
+you want to build a particular ArduPilot branch yourself; start SITL externally and connect over UDP.
 
 **Get SITL** (any one):
 - Linux / WSL2 / macOS with the ArduPilot dev env:
@@ -75,7 +77,14 @@ relies on them. Tick what behaves; report what doesn't.
 
 **Mission**
 - [ ] PLAN tab: draw a few waypoints, **Write** to vehicle, **Read** back — they match.
+- [ ] Survey (Grid): enable camera/speed/takeoff/finish options, accept, and inspect the generated
+  `DO_*` plus navigation commands before writing them.
 - [ ] Auto mode flies the mission in SITL.
+
+**Joystick**
+- [ ] Setup → Joystick: enable the device, map roll/pitch/throttle/yaw, and verify raw values move.
+- [ ] Leave Setup: control remains active in Flight Data and moves SITL RC inputs at 20 Hz.
+- [ ] Press **Disable Joystick** in Flight Data: control stops and all RC overrides are released.
 
 **Config pages reworked in this release (the point of the validation)**
 - [ ] **Radio Calibration**: bars move with SITL RC; reverse checkboxes write `RCn_REVERSED`.

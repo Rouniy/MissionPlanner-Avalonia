@@ -16,11 +16,14 @@ public class QuickView : Control {
       AvaloniaProperty.Register<QuickView, string>(nameof(NumberFormat), "0.00");
   public static readonly StyledProperty<IBrush> NumberColorProperty =
       AvaloniaProperty.Register<QuickView, IBrush>(nameof(NumberColor), Brushes.White);
+  public static readonly StyledProperty<IBrush> DescriptionColorProperty =
+      AvaloniaProperty.Register<QuickView, IBrush>(nameof(DescriptionColor), Brushes.White);
 
   public event Action<QuickView>? DoubleClicked;
 
   static QuickView() {
-    AffectsRender<QuickView>(NumberProperty, DescProperty, NumberFormatProperty, NumberColorProperty);
+    AffectsRender<QuickView>(NumberProperty, DescProperty, NumberFormatProperty, NumberColorProperty,
+        DescriptionColorProperty);
   }
 
   public double Number { get => GetValue(NumberProperty); set => SetValue(NumberProperty, value); }
@@ -33,6 +36,10 @@ public class QuickView : Control {
     get => GetValue(NumberColorProperty);
     set => SetValue(NumberColorProperty, value);
   }
+  public IBrush DescriptionColor {
+    get => GetValue(DescriptionColorProperty);
+    set => SetValue(DescriptionColorProperty, value);
+  }
 
   public override void Render(DrawingContext ctx) {
     double w = Bounds.Width, h = Bounds.Height;
@@ -42,7 +49,7 @@ public class QuickView : Control {
 
     double descSize = Math.Max(9, h * 0.16);
     var descFt = new FormattedText(Desc, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
-        Typeface.Default, descSize, Brushes.White);
+        Typeface.Default, descSize, DescriptionColor);
     ctx.DrawText(descFt, new Point(w / 2 - descFt.Width / 2, 4));
     double y = descFt.Height + 6;
 

@@ -157,6 +157,37 @@ public partial class RawParamsViewModel : ViewModelBase {
   }
 
   [RelayCommand]
+  private async Task ResetToDefaults() {
+    if (!IsConnected) {
+      await Services.Dialogs.Alert("Reset parameters", "Not connected — cannot reset parameters.");
+      return;
+    }
+
+    if (!await Services.Dialogs.Confirm(
+            "Reset all parameters",
+            "Reset every vehicle parameter to its firmware default and reboot the autopilot?\n\n" +
+            "This cannot be undone unless you have saved a parameter file.")) {
+      return;
+    }
+
+    try {
+      await Task.Run(() => {
+        // ArduPilot generations use one of these format-version parameters. The upstream
+        // Mission Planner intentionally attempts both names for compatibility.
+        _comPort.setParam(new[] { "FORMAT_VERSION", "SYSID_SW_MREV" }, 0);
+        System.Threading.Thread.Sleep(1000);
+        _comPort.doReboot(false, true);
+        _comPort.BaseStream.Close();
+      });
+      Status = "Parameters reset; the autopilot is rebooting. Reconnect to reload defaults.";
+      await Services.Dialogs.Alert("Reset parameters",
+          "The autopilot is rebooting with default parameters. Reconnect after it starts.");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Reset failed", ex.Message);
+    }
+  }
+
+  [RelayCommand]
   private void LoadDemo() {
     LoadFrom(
         new[]

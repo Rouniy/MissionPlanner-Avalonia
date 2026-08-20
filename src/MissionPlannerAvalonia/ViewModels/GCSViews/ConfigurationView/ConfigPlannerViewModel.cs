@@ -276,7 +276,9 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
 
     TrackLength = s.GetInt32("NUM_tracklength", TrackLength);
     LineLength = s.GetInt32("GMapMarkerBase_Length", LineLength);
-    GcsId = s.GetInt32("gcsid", MAVLinkInterface.gcssysid);
+    GcsId = s.ContainsKey("gcsid")
+        ? s.GetInt32("gcsid", MAVLinkInterface.gcssysid)
+        : s.GetInt32("GCS_sysid", MAVLinkInterface.gcssysid);
 
     _loading = false;
   }
@@ -587,8 +589,6 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
 
   partial void OnEnableAdsbChanged(bool value) {
     if (_loading) return;
-
-    // ponytail: upstream prompts for the ADSB server/port via InputBox; only the flag is stored here.
     Settings.Instance["enableadsb"] = value.ToString();
   }
 
@@ -610,6 +610,7 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
   partial void OnShowNoFlyChanged(bool value) {
     if (_loading) return;
     Settings.Instance["ShowNoFly"] = value.ToString();
+    Services.NoFlyOverlay.NotifyVisibilityChanged();
 
     if (value) MapFollowPlane = false;
   }

@@ -159,6 +159,8 @@
             PlaceholderText="serial port"
           />
           <ComboBox Width="90" ItemsSource="{Binding Bauds}" SelectedItem="{Binding SelectedBaud}" />
+          <CheckBox Content="Auto" IsChecked="{Binding AutoConnect}" VerticalAlignment="Center"
+                    ToolTip.Tip="Connect to the saved endpoint when the application starts" />
           <Button Content="⟳" Command="{Binding RefreshPortsCommand}" ToolTip.Tip="Refresh ports" />
           <Button Content="{Binding ConnectText}" Command="{Binding ToggleConnectCommand}" MinWidth="110" />
         </StackPanel>

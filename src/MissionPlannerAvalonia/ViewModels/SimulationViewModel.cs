@@ -15,6 +15,7 @@ namespace MissionPlannerAvalonia.ViewModels;
 public partial class SimulationViewModel : ViewModelBase {
   private readonly SitlLauncher _sitl = new();
   private readonly MAVLinkInterface _comPort = AppState.comPort;
+  private readonly ConnectionViewModel _connection;
 
   public event Action? RequestFlightData;
 
@@ -85,7 +86,8 @@ public partial class SimulationViewModel : ViewModelBase {
     "Latest (Dev)", "Beta", "Stable", "Skip Download",
   };
 
-  public SimulationViewModel() {
+  internal SimulationViewModel(ConnectionViewModel connection) {
+    _connection = connection;
     _sitl.Log += OnLog;
 
     try {
@@ -150,8 +152,8 @@ public partial class SimulationViewModel : ViewModelBase {
   [RelayCommand(CanExecute = nameof(CanStartStop))]
   private async Task StartStop() {
     if (IsRunning) {
-      _sitl.Stop();
       await DisconnectAsync();
+      _sitl.Stop();
       IsRunning = false;
       StartStopText = "Start";
       Status = "SITL stopped.";
@@ -186,6 +188,7 @@ public partial class SimulationViewModel : ViewModelBase {
 
       Status = $"Connecting to {_sitl.TcpEndpoint} …";
       bool connected = await ConnectAsync();
+      _sitl.SetAsPrimaryConnection(connected);
       IsRunning = true;
       StartStopText = "Stop";
       Status = connected
@@ -207,29 +210,23 @@ public partial class SimulationViewModel : ViewModelBase {
 
   private async Task<bool> ConnectAsync() {
     if (_comPort.BaseStream?.IsOpen == true) {
-      return true;
+      OnLog("Another vehicle connection is already active; SITL was not made the primary link.");
+      return false;
     }
 
     AppState.CommsSettings["TCP_host"] = "127.0.0.1";
     AppState.CommsSettings["TCP_port"] = "5760";
-    _comPort.BaseStream = new TcpSerial();
-    try {
-      await Task.Run(() => _comPort.Open(getparams: true, skipconnectedcheck: true, showui: false));
-      bool open = _comPort.BaseStream.IsOpen;
-      if (open) {
-        AppState.RaiseConnectionChanged();
-      }
-      return open;
-    } catch (Exception ex) {
-      OnLog("Connect error: " + ex.Message);
-      return false;
+    var result = await _connection.ConnectPreparedStreamAsync(
+        new TcpSerial(), "SITL", getParams: true);
+    if (!result.Connected) {
+      OnLog("Connect error: " + result.Error);
     }
+    return result.Connected;
   }
 
   private async Task DisconnectAsync() {
     if (_comPort.BaseStream?.IsOpen == true) {
-      await Task.Run(() => _comPort.Close());
-      AppState.RaiseConnectionChanged();
+      await _connection.DisconnectAsync("SITL disconnected.");
     }
   }
 }

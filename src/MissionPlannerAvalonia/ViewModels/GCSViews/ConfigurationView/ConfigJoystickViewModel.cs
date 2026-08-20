@@ -27,6 +27,7 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
   private const int _maxAxis = 16;
 
   private readonly MAVLinkInterface _comPort = AppState.comPort;
+  private readonly JoystickControlService _control = AppState.JoystickControl;
   private readonly DispatcherTimer _timer;
   private readonly SemaphoreSlim _detectionGate = new(1, 1);
   private JoystickBase? _joystick;
@@ -72,17 +73,37 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
   public int ValueMaximum => ManualControl ? 1000 : 2000;
 
   public ConfigJoystickViewModel() {
+    _control.Stopped += OnJoystickStopped;
+    _control.SendError += OnJoystickSendError;
     RefreshDevices();
     LoadedConfig = "Loaded Config for " + _comPort.MAV.cs.firmware;
 
-    using var temp = JoystickProvider.Create(() => _comPort);
-    for (int a = 1; a <= _maxAxis; a++) {
-      var cfg = temp.getChannel(a);
-      Axes.Add(new JoyAxisRow(a) {
-        Axis = (cfg.axis).ToString(),
-        Expo = cfg.expo,
-        Reverse = cfg.reverse,
-      });
+    var source = _control.Active;
+    bool disposeSource = source == null;
+    source ??= JoystickProvider.Create(() => _comPort);
+    try {
+      for (int a = 1; a <= _maxAxis; a++) {
+        var cfg = source.getChannel(a);
+        Axes.Add(new JoyAxisRow(a) {
+          Axis = (cfg.axis).ToString(),
+          Expo = cfg.expo,
+          Reverse = cfg.reverse,
+        });
+      }
+    } finally {
+      if (disposeSource) {
+        source.Dispose();
+      }
+    }
+
+    if (_control.Active is { } active) {
+      _joystick = active;
+      SelectedDevice = active.name;
+      Elevons = active.elevons;
+      ManualControl = active.manual_control;
+      EnableLabel = "Disable";
+      Status = "Joystick enabled: " + active.name;
+      BuildButtonRows();
     }
     _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
     _timer.Tick += (_, _) => Pump();
@@ -92,6 +113,9 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
   [RelayCommand]
   private void RefreshDevices() {
     var selected = SelectedDevice;
+    if (string.IsNullOrEmpty(selected)) {
+      selected = Settings.Instance["joystick_name"] ?? "";
+    }
     Devices.Clear();
     try {
       foreach (var d in JoystickProvider.GetDevices()) {
@@ -168,6 +192,9 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
       joy.name = SelectedDevice;
       joy.enabled = true;
       _joystick = joy;
+      _control.Start(joy);
+
+      Settings.Instance["joystick_name"] = SelectedDevice;
 
       BuildButtonRows();
 
@@ -176,16 +203,7 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
       RawInput = "Waiting for joystick input…";
     } else {
       var joystick = _joystick;
-      joystick.enabled = false;
-      try {
-        joystick.clearRCOverride();
-      } catch {
-      }
-      joystick.Dispose();
-      _joystick = null;
-      EnableLabel = "Enable";
-      Status = "Joystick disabled.";
-      RawInput = "Raw input appears here after the joystick is enabled.";
+      _control.Stop(joystick, "Joystick disabled.");
     }
 
     OnPropertyChanged(nameof(IsEnabled));
@@ -503,22 +521,33 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
     if (!ReferenceEquals(_joystick, joystick)) {
       return;
     }
-
-    joystick.enabled = false;
-    try {
-      joystick.clearRCOverride();
-    } catch {
-    }
-    try {
-      joystick.Dispose();
-    } catch {
-    }
-    _joystick = null;
-    EnableLabel = "Enable";
-    RawInput = "Joystick disconnected.";
-    Status = "Joystick disconnected. Reconnect it, refresh the list, and enable it again.";
-    OnPropertyChanged(nameof(IsEnabled));
+    _control.Stop(joystick,
+        "Joystick disconnected. Reconnect it, refresh the list, and enable it again.");
   }
+
+  private void OnJoystickStopped(JoystickBase joystick, string reason) {
+    void Update() {
+      if (!ReferenceEquals(_joystick, joystick)) {
+        return;
+      }
+      _joystick = null;
+      EnableLabel = "Enable";
+      RawInput = reason.StartsWith("Joystick disconnected", StringComparison.Ordinal)
+          ? "Joystick disconnected."
+          : "Raw input appears here after the joystick is enabled.";
+      Status = reason;
+      OnPropertyChanged(nameof(IsEnabled));
+    }
+
+    if (Dispatcher.UIThread.CheckAccess()) {
+      Update();
+    } else {
+      Dispatcher.UIThread.Post(Update);
+    }
+  }
+
+  private void OnJoystickSendError(string message) =>
+      Dispatcher.UIThread.Post(() => Status = message);
 
   partial void OnManualControlChanged(bool value) {
     OnPropertyChanged(nameof(ValueMinimum));
@@ -738,12 +767,10 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
   public void Dispose() {
     _timer.Stop();
     _detectCts?.Cancel();
-    try {
-      _joystick?.UnAcquireJoyStick();
-    } catch {
-    }
-
-    _joystick?.Dispose();
+    _control.Stopped -= OnJoystickStopped;
+    _control.SendError -= OnJoystickSendError;
+    // The global service owns an enabled joystick. Closing the setup page must not stop control;
+    // Mission Planner keeps joystick output active while the operator returns to Flight Data.
     _joystick = null;
   }
 }

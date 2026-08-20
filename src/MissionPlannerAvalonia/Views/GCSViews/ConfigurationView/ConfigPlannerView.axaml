@@ -146,7 +146,8 @@
         <CheckBox Content="Show Airports" IsChecked="{Binding ShowAirports, Mode=TwoWay}" Margin="0,0,12,0" />
         <CheckBox Content="Show No-Fly Zones" IsChecked="{Binding ShowNoFly, Mode=TwoWay}" Margin="0,0,12,0" />
         <CheckBox Content="Show TFR" IsChecked="{Binding ShowTfr, Mode=TwoWay}" Margin="0,0,12,0" />
-        <CheckBox Content="Enable ADSB" IsChecked="{Binding EnableAdsb, Mode=TwoWay}" Margin="0,0,12,0" />
+        <CheckBox Content="Show ADS-B traffic" IsChecked="{Binding EnableAdsb, Mode=TwoWay}"
+                  ToolTip.Tip="Render ADSB_VEHICLE traffic received over MAVLink" Margin="0,0,12,0" />
       </WrapPanel>
 
       <TextBlock Classes="grp" Text="Logs" />
@@ -158,13 +159,18 @@
 
       <TextBlock Classes="grp" Text="Advanced" />
       <WrapPanel>
-        <CheckBox Content="Beta Updates" IsChecked="{Binding BetaUpdates, Mode=TwoWay}" Margin="0,0,12,0" />
+        <CheckBox Content="Beta Updates" IsChecked="{Binding BetaUpdates, Mode=TwoWay}"
+                  IsEnabled="False" ToolTip.Tip="No separate signed beta manifest is published yet"
+                  Margin="0,0,12,0" />
         <CheckBox Content="Password Protect" IsChecked="{Binding PasswordProtect, Mode=TwoWay}" Margin="0,0,12,0" />
         <CheckBox Content="Auto Param Commit" IsChecked="{Binding AutoParamCommit, Mode=TwoWay}" Margin="0,0,12,0" />
         <CheckBox Content="Params Background Load" IsChecked="{Binding ParamsBg, Mode=TwoWay}" Margin="0,0,12,0" />
         <CheckBox Content="Slow Machine" IsChecked="{Binding SlowMachine, Mode=TwoWay}" Margin="0,0,12,0" />
-        <CheckBox Content="Use GDI+ (restart)" IsChecked="{Binding GdiPlus, Mode=TwoWay}" Margin="0,0,12,0" />
-        <CheckBox Content="Analytics Opt-Out" IsChecked="{Binding AnalyticsOptOut, Mode=TwoWay}" Margin="0,0,12,0" />
+        <CheckBox Content="Use GDI+ (WinForms only)" IsChecked="{Binding GdiPlus, Mode=TwoWay}"
+                  IsEnabled="False" ToolTip.Tip="Avalonia uses Skia on every supported platform"
+                  Margin="0,0,12,0" />
+        <TextBlock Text="Analytics: disabled" Classes="lbl" VerticalAlignment="Center"
+                   ToolTip.Tip="This port does not collect or transmit analytics" Margin="0,0,12,0" />
       </WrapPanel>
     </StackPanel>
   </ScrollViewer>

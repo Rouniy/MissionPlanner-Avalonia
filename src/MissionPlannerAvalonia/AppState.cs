@@ -7,6 +7,10 @@ namespace MissionPlannerAvalonia;
 public static class AppState {
   public static MAVLinkInterface comPort { get; }
 
+  internal static Services.JoystickControlService JoystickControl { get; }
+
+  internal static Services.TrafficService Traffic { get; }
+
   public static event System.Action? ConnectionChanged;
 
   public static void RaiseConnectionChanged() => ConnectionChanged?.Invoke();
@@ -26,6 +30,8 @@ public static class AppState {
     // MAVLink/communications component.
     global::System.CustomMessageBox.ShowEvent += Services.Dialogs.ShowUpstreamMessage;
     comPort = new MAVLinkInterface();
+    JoystickControl = new Services.JoystickControlService(comPort);
+    Traffic = new Services.TrafficService();
 
     MAVLinkInterface.CreateIProgressReporterDialogue +=
         _ => new Services.ForwardingProgressReporter(ActiveConnectReporter);
@@ -39,6 +45,14 @@ public static class AppState {
     };
 
     CommsBase.InputBoxShow += Services.Dialogs.ShowUpstreamInput;
+
+    ConnectionChanged += () => {
+      var connected = IsConnected;
+      JoystickControl.HandleConnectionChanged(connected);
+      if (!connected) {
+        Services.SitlLauncher.ClearPrimaryConnection();
+      }
+    };
 
     ApplyUnits();
   }

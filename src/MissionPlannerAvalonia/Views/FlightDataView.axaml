@@ -39,6 +39,7 @@
           Mode="{Binding Mode}"
           BatteryVoltage="{Binding BatteryVoltage}"
           BatteryRemaining="{Binding BatteryRemaining}"
+          OverlayEnabled="{Binding HudOverlayEnabled}"
           ShowIcons="{Binding HudShowIcons}"
           Russian="{Binding HudRussian}"
           BatteryCells="{Binding HudBatteryCells}"
@@ -145,11 +146,12 @@
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="vm:QuickItem">
-                <Border Classes="qv">
+                <Border Classes="qv" Background="{Binding BackgroundBrush}">
                   <ctl:QuickView
                     Number="{Binding Number}"
                     Desc="{Binding Desc}"
                     NumberColor="{Binding Brush}"
+                    DescriptionColor="{Binding LabelBrush}"
                   />
                 </Border>
               </DataTemplate>
@@ -266,7 +268,8 @@
               <Button Content="Raw Sensor View" Command="{Binding RawSensorViewCommand}" />
               <Button Content="Clear Track" Command="{Binding ClearTrackCommand}" />
               <Button Content="Message" Command="{Binding ShowMessageCommand}" />
-              <Button Content="Joystick" Command="{Binding JoystickCommand}" />
+              <Button Content="Disable Joystick" Command="{Binding JoystickCommand}"
+                      ToolTip.Tip="Release active joystick control; configure it under Setup > Joystick" />
 
               <Panel Width="382">
                 <Grid ColumnDefinitions="*,64,54,48,54" ColumnSpacing="3">
@@ -566,16 +569,16 @@
               </StackPanel>
               <StackPanel Grid.Column="1" Spacing="2">
                 <TextBlock Text="Faults" FontWeight="Bold" />
-                <CheckBox Content="Maint. Req." IsEnabled="False" />
-                <CheckBox Content="GPS Unavail." IsEnabled="False" />
-                <CheckBox Content="GPS No Fix" IsEnabled="False" />
-                <CheckBox Content="TX Sys. Fail." IsEnabled="False" />
-                <CheckBox Content="On Ground" IsEnabled="False" />
+                <CheckBox Content="Maint. Req." IsChecked="{Binding XpdrMaintReq}" IsHitTestVisible="False" />
+                <CheckBox Content="GPS Unavail." IsChecked="{Binding XpdrGpsUnavailable}" IsHitTestVisible="False" />
+                <CheckBox Content="GPS No Fix" IsChecked="{Binding XpdrGpsNoFix}" IsHitTestVisible="False" />
+                <CheckBox Content="TX Sys. Fail." IsChecked="{Binding XpdrTxSystemFailure}" IsHitTestVisible="False" />
+                <CheckBox Content="Airborne" IsChecked="{Binding XpdrAirborne}" IsHitTestVisible="False" />
               </StackPanel>
             </Grid>
             <StackPanel Orientation="Horizontal" Spacing="16">
-              <TextBlock Text="NIC: 0" />
-              <TextBlock Text="NACp: 0" />
+              <TextBlock Text="{Binding XpdrNic, StringFormat='NIC: {0}'}" />
+              <TextBlock Text="{Binding XpdrNacp, StringFormat='NACp: {0}'}" />
             </StackPanel>
           </StackPanel>
         </TabItem>
@@ -626,7 +629,8 @@
             <StackPanel Orientation="Horizontal" Spacing="12">
               <TextBlock Foreground="White" Text="{Binding SatCount, StringFormat='Sats: {0}'}" />
               <TextBlock Foreground="White" Text="{Binding GpsHdop, StringFormat='hdop: {0:0.0}'}" />
-              <TextBlock Foreground="White" Text="{Binding DistToHome, StringFormat='Home: {0:0} m'}" />
+              <TextBlock Foreground="White" IsVisible="{Binding ShowDistanceToHome}"
+                         Text="{Binding DistToHome, StringFormat='Home: {0:0} m'}" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="12">
               <TextBlock Foreground="White" Text="{Binding GroundSpeed, StringFormat='GS: {0:0.0} m/s'}" />

@@ -45,6 +45,87 @@
           </ScrollViewer>
         </TabItem>
 
+        <TabItem Header="Mission">
+          <ScrollViewer>
+            <StackPanel Margin="8" Spacing="10">
+              <CheckBox Content="Add DO_CHANGE_SPEED at survey start"
+                        IsChecked="{Binding UseSpeed}" />
+
+              <Grid ColumnDefinitions="170,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                    RowSpacing="8">
+                <TextBlock Grid.Row="0" Grid.Column="0" Classes="fieldlbl" Text="Camera trigger"
+                           VerticalAlignment="Center" />
+                <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding TriggerModes}"
+                          SelectedItem="{Binding TriggerMode}" />
+
+                <CheckBox Grid.Row="1" Grid.Column="1"
+                          Content="Start/stop trigger at strip boundaries"
+                          IsChecked="{Binding StopTriggerAtStripEnds}" />
+
+                <CheckBox Grid.Row="2" Grid.Column="1" Content="Add takeoff command"
+                          IsChecked="{Binding AddTakeoff}" />
+
+                <TextBlock Grid.Row="3" Grid.Column="0" Classes="fieldlbl" Text="Takeoff altitude (m)"
+                           VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="3" Grid.Column="1" Minimum="0" Maximum="10000"
+                               Value="{Binding TakeoffAltitude}" />
+
+                <TextBlock Grid.Row="4" Grid.Column="0" Classes="fieldlbl" Text="Finish with"
+                           VerticalAlignment="Center" />
+                <ComboBox Grid.Row="4" Grid.Column="1" ItemsSource="{Binding FinishActions}"
+                          SelectedItem="{Binding FinishAction}" />
+
+                <CheckBox Grid.Row="5" Grid.Column="1" Content="Spline strip starts"
+                          IsChecked="{Binding UseSplineWaypoints}" />
+
+                <StackPanel Grid.Row="6" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                  <CheckBox Content="Hold heading" IsChecked="{Binding HoldHeading}"
+                            VerticalAlignment="Center" />
+                  <NumericUpDown Width="100" Minimum="0" Maximum="359" Increment="1"
+                                 Value="{Binding Heading}" />
+                  <TextBlock Text="deg" VerticalAlignment="Center" />
+                </StackPanel>
+
+                <TextBlock Grid.Row="7" Grid.Column="0" Classes="fieldlbl" Text="Waypoint delay (s)"
+                           VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="7" Grid.Column="1" Minimum="0" Maximum="3600"
+                               Increment="0.1" Value="{Binding WaypointDelay}" />
+              </Grid>
+
+              <Border Background="{DynamicResource MpInputBg}" CornerRadius="4" Padding="10">
+                <StackPanel Spacing="8">
+                  <TextBlock Classes="fieldlbl" Text="Servo trigger settings" />
+                  <Grid ColumnDefinitions="170,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="8">
+                    <TextBlock Grid.Row="0" Grid.Column="0" Classes="fieldlbl" Text="Servo number"
+                               VerticalAlignment="Center" />
+                    <NumericUpDown Grid.Row="0" Grid.Column="1" Minimum="1" Maximum="16"
+                                   Value="{Binding ServoNumber}" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Classes="fieldlbl" Text="Repeat PWM / seconds"
+                               VerticalAlignment="Center" />
+                    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                      <NumericUpDown Width="100" Minimum="800" Maximum="2200"
+                                     Value="{Binding ServoPwm}" />
+                      <NumericUpDown Width="100" Minimum="0" Maximum="60" Increment="0.1"
+                                     Value="{Binding ServoRepeatSeconds}" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="2" Grid.Column="0" Classes="fieldlbl" Text="Strip start PWM"
+                               VerticalAlignment="Center" />
+                    <NumericUpDown Grid.Row="2" Grid.Column="1" Minimum="800" Maximum="2200"
+                                   Value="{Binding ServoLowPwm}" />
+                    <TextBlock Grid.Row="3" Grid.Column="0" Classes="fieldlbl" Text="Strip end PWM"
+                               VerticalAlignment="Center" />
+                    <NumericUpDown Grid.Row="3" Grid.Column="1" Minimum="800" Maximum="2200"
+                                   Value="{Binding ServoHighPwm}" />
+                  </Grid>
+                </StackPanel>
+              </Border>
+
+              <TextBlock Classes="hint" TextWrapping="Wrap"
+                         Text="Distance uses the photo spacing from the Camera/Grid calculation. Digicam and Repeat servo create a command at every photo point unless strip start/stop is selected. Set servo switches PWM at strip boundaries. A waypoint delay uses normal waypoints instead of spline commands." />
+            </StackPanel>
+          </ScrollViewer>
+        </TabItem>
+
         <TabItem Header="Grid Options">
           <ScrollViewer>
             <StackPanel Margin="8" Spacing="8">

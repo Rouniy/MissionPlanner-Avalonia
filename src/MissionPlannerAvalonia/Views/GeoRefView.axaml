@@ -28,6 +28,8 @@
     <WrapPanel Grid.Row="2" Orientation="Horizontal" ItemSpacing="14" LineSpacing="6" Margin="0,0,0,6">
       <RadioButton GroupName="mode" Content="CAM message sync" IsChecked="{Binding UseCamMessages}"
                    Foreground="#DDD" />
+      <RadioButton GroupName="mode" Content="TRIG message sync" IsChecked="{Binding UseTrigMessages}"
+                   Foreground="#DDD" />
       <RadioButton GroupName="mode" Content="Time offset" Foreground="#DDD" />
       <StackPanel Orientation="Horizontal" Spacing="4">
         <TextBlock Text="Offset (s):" Foreground="#DDD" VerticalAlignment="Center" />

@@ -66,6 +66,8 @@ public class HudControl : Control {
 
   public static readonly StyledProperty<bool> ShowIconsProperty =
       AvaloniaProperty.Register<HudControl, bool>(nameof(ShowIcons), true);
+  public static readonly StyledProperty<bool> OverlayEnabledProperty =
+      AvaloniaProperty.Register<HudControl, bool>(nameof(OverlayEnabled), true);
   public static readonly StyledProperty<bool> RussianProperty =
       AvaloniaProperty.Register<HudControl, bool>(nameof(Russian));
   public static readonly StyledProperty<int> BatteryCellsProperty =
@@ -196,6 +198,10 @@ public class HudControl : Control {
   public bool ShowIcons {
     get => GetValue(ShowIconsProperty);
     set => SetValue(ShowIconsProperty, value);
+  }
+  public bool OverlayEnabled {
+    get => GetValue(OverlayEnabledProperty);
+    set => SetValue(OverlayEnabledProperty, value);
   }
   public bool Russian {
     get => GetValue(RussianProperty);
@@ -464,6 +470,7 @@ public class HudControl : Control {
         ModeProperty,
         BatteryVoltageProperty,
         BatteryRemainingProperty,
+        OverlayEnabledProperty,
         ShowIconsProperty,
         RussianProperty,
         BatteryCellsProperty,
@@ -524,6 +531,9 @@ public class HudControl : Control {
     }
 
     context.FillRectangle(Brushes.Black, new Rect(0, 0, w, h));
+    if (!OverlayEnabled) {
+      return;
+    }
 
     double unit = Math.Min(w, h);
     double fontsize = Math.Clamp(unit / 28.0, 9, 30);

@@ -27,12 +27,16 @@ public partial class GridUIViewModel : ViewModelBase {
     nameof(GrndResText), nameof(DistBetweenLinesText), nameof(FootprintText), nameof(TurnRadText),
     nameof(PhotoCount), nameof(StripCount), nameof(WaypointCount), nameof(FlightTimeText),
     nameof(PhotoEveryText), nameof(MinShutterText), nameof(FovH), nameof(FovV), nameof(CmPixel),
-    nameof(Result),
+    nameof(Result), nameof(UseSpeed), nameof(TriggerMode), nameof(StopTriggerAtStripEnds),
+    nameof(AddTakeoff), nameof(TakeoffAltitude), nameof(FinishAction),
+    nameof(UseSplineWaypoints), nameof(HoldHeading), nameof(Heading), nameof(WaypointDelay),
+    nameof(ServoNumber), nameof(ServoPwm), nameof(ServoRepeatSeconds),
+    nameof(ServoLowPwm), nameof(ServoHighPwm),
   };
 
   public List<PointLatLngAlt> Result { get; private set; } = new();
 
-  public event Action<List<PointLatLngAlt>>? GridAccepted;
+  public event Action<SurveyMissionPlan>? GridAccepted;
 
   public event Action? CloseRequested;
 
@@ -40,6 +44,22 @@ public partial class GridUIViewModel : ViewModelBase {
 
   public ObservableCollection<string> StartPositions { get; } =
       new(Enum.GetNames(typeof(Grid.StartPosition)));
+
+  public ObservableCollection<string> TriggerModes { get; } =
+      new(new[] {
+        SurveyMissionBuilder.TriggerNone,
+        SurveyMissionBuilder.TriggerDistance,
+        SurveyMissionBuilder.TriggerDigicam,
+        SurveyMissionBuilder.TriggerRepeatServo,
+        SurveyMissionBuilder.TriggerSetServo,
+      });
+
+  public ObservableCollection<string> FinishActions { get; } =
+      new(new[] {
+        SurveyMissionBuilder.FinishNone,
+        SurveyMissionBuilder.FinishRtl,
+        SurveyMissionBuilder.FinishLand,
+      });
 
   [ObservableProperty]
   private double _altitude = 100;
@@ -49,6 +69,51 @@ public partial class GridUIViewModel : ViewModelBase {
 
   [ObservableProperty]
   private double _flyingSpeed = 5;
+
+  [ObservableProperty]
+  private bool _useSpeed;
+
+  [ObservableProperty]
+  private string _triggerMode = SurveyMissionBuilder.TriggerNone;
+
+  [ObservableProperty]
+  private bool _stopTriggerAtStripEnds;
+
+  [ObservableProperty]
+  private bool _addTakeoff;
+
+  [ObservableProperty]
+  private double _takeoffAltitude = 30;
+
+  [ObservableProperty]
+  private string _finishAction = SurveyMissionBuilder.FinishNone;
+
+  [ObservableProperty]
+  private bool _useSplineWaypoints;
+
+  [ObservableProperty]
+  private bool _holdHeading;
+
+  [ObservableProperty]
+  private double _heading;
+
+  [ObservableProperty]
+  private double _waypointDelay;
+
+  [ObservableProperty]
+  private int _servoNumber = 9;
+
+  [ObservableProperty]
+  private int _servoPwm = 1900;
+
+  [ObservableProperty]
+  private double _servoRepeatSeconds = 1;
+
+  [ObservableProperty]
+  private int _servoLowPwm = 1100;
+
+  [ObservableProperty]
+  private int _servoHighPwm = 1900;
 
   [ObservableProperty]
   private string _selectedCamera = "";
@@ -223,7 +288,11 @@ public partial class GridUIViewModel : ViewModelBase {
 
   [RelayCommand]
   private void Accept() {
-    GridAccepted?.Invoke(new List<PointLatLngAlt>(Result));
+    var options = new SurveyMissionOptions(UseSpeed, FlyingSpeed, TriggerMode, Spacing,
+        StopTriggerAtStripEnds, AddTakeoff, TakeoffAltitude, FinishAction,
+        UseSplineWaypoints, HoldHeading, Heading, WaypointDelay, ServoNumber, ServoPwm,
+        ServoRepeatSeconds, ServoLowPwm, ServoHighPwm);
+    GridAccepted?.Invoke(SurveyMissionBuilder.Build(Result, _home, options));
     CloseRequested?.Invoke();
   }
 
@@ -526,6 +595,21 @@ public partial class GridUIViewModel : ViewModelBase {
     Set("grid_alt", Altitude);
     Set("grid_angle", Angle);
     Set("grid_speed", FlyingSpeed);
+    Set("grid_use_speed", UseSpeed);
+    Set("grid_trigger_mode", TriggerMode);
+    Set("grid_stop_trigger", StopTriggerAtStripEnds);
+    Set("grid_add_takeoff", AddTakeoff);
+    Set("grid_takeoff_alt", TakeoffAltitude);
+    Set("grid_finish_action", FinishAction);
+    Set("grid_spline", UseSplineWaypoints);
+    Set("grid_hold_heading", HoldHeading);
+    Set("grid_heading", Heading);
+    Set("grid_delay", WaypointDelay);
+    Set("grid_servo_number", ServoNumber);
+    Set("grid_servo_pwm", ServoPwm);
+    Set("grid_servo_repeat", ServoRepeatSeconds);
+    Set("grid_servo_low", ServoLowPwm);
+    Set("grid_servo_high", ServoHighPwm);
     Set("grid_camera", SelectedCamera);
     Set("grid_camdir", CamDirection);
     Set("grid_dist", Distance);
@@ -551,6 +635,21 @@ public partial class GridUIViewModel : ViewModelBase {
     Altitude = GetD("grid_alt", Altitude);
     Angle = GetD("grid_angle", Angle);
     FlyingSpeed = GetD("grid_speed", FlyingSpeed);
+    UseSpeed = GetB("grid_use_speed", UseSpeed);
+    TriggerMode = GetChoice("grid_trigger_mode", TriggerMode, TriggerModes);
+    StopTriggerAtStripEnds = GetB("grid_stop_trigger", StopTriggerAtStripEnds);
+    AddTakeoff = GetB("grid_add_takeoff", AddTakeoff);
+    TakeoffAltitude = GetD("grid_takeoff_alt", TakeoffAltitude);
+    FinishAction = GetChoice("grid_finish_action", FinishAction, FinishActions);
+    UseSplineWaypoints = GetB("grid_spline", UseSplineWaypoints);
+    HoldHeading = GetB("grid_hold_heading", HoldHeading);
+    Heading = GetD("grid_heading", Heading);
+    WaypointDelay = GetD("grid_delay", WaypointDelay);
+    ServoNumber = (int)GetD("grid_servo_number", ServoNumber);
+    ServoPwm = (int)GetD("grid_servo_pwm", ServoPwm);
+    ServoRepeatSeconds = GetD("grid_servo_repeat", ServoRepeatSeconds);
+    ServoLowPwm = (int)GetD("grid_servo_low", ServoLowPwm);
+    ServoHighPwm = (int)GetD("grid_servo_high", ServoHighPwm);
     CamDirection = GetB("grid_camdir", CamDirection);
     Distance = GetD("grid_dist", Distance);
     Spacing = GetD("grid_spacing", Spacing);
@@ -595,6 +694,11 @@ public partial class GridUIViewModel : ViewModelBase {
   private static string GetS(string key, string fallback) =>
       Settings.Instance.ContainsKey(key) && Settings.Instance[key] != null ? Settings.Instance[key]
                                                                            : fallback;
+
+  private static string GetChoice(string key, string fallback, IEnumerable<string> choices) {
+    string value = GetS(key, fallback);
+    return choices.Contains(value, StringComparer.Ordinal) ? value : fallback;
+  }
 
   private sealed class CameraInfo {
     public string Name = "";

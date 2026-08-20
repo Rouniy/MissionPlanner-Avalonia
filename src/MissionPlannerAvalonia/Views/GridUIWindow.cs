@@ -28,7 +28,7 @@ public class GridUIWindow : Window {
   }
 
   public static GridUIViewModel OpenForPolygon(List<PointLatLngAlt> polygon, PointLatLngAlt home,
-      Action<List<PointLatLngAlt>> onAccept) {
+      Action<SurveyMissionPlan> onAccept) {
     var vm = new GridUIViewModel(polygon, home);
     if (onAccept != null) {
       vm.GridAccepted += onAccept;

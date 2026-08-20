@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 104 tests verified; final package verification is recorded below |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 128 tests verified; the existing packages predate the latest feature round |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -53,6 +53,44 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 - Upstream-compatible custom flight actions and HUD drawing extension points.
 - Linux joystick input uses a port-native joydev reader with deterministic lifecycle, raw input
   preview and Avalonia-safe axis/button detection; Windows continues to use upstream DirectInput.
+  An application-level 20 Hz sender now mirrors upstream RC override/manual-control behaviour,
+  including the native UDP RC path for the built-in SITL and safe release on disable/link loss. It
+  remains active after leaving Setup and can be released immediately from Flight Data.
+- Persisted serial, TCP, UDP client/listener and WebSocket endpoints can auto-connect at normal app
+  startup without reopening the endpoint prompt.
+- Survey Grid now generates upstream-style mission commands: optional takeoff, speed, heading hold,
+  spline starts, waypoint delay, RTL/land, distance/digicam/repeat-servo/set-servo camera control and
+  per-strip trigger start/stop.
+- The integrated DroneCAN parameter page now has search, favourites, modified-only filtering and
+  `.param` import/export; failed writes remain visibly dirty instead of being accepted locally.
+- Full Parameter List includes the upstream-compatible, explicitly confirmed reset-to-default and
+  reboot flow.
+- ADS-B aircraft received as MAVLink `ADSB_VEHICLE` telemetry are retained with expiry and rendered
+  as labelled, heading-aware traffic markers on Avalonia flight maps. Explicit collision severity
+  survives subsequent position packets, and unchanged traffic no longer rebuilds the layer at every
+  300 ms map tick.
+- `CAMERA_FEEDBACK` telemetry is rendered as numbered photo markers, flags captures below
+  `CAM_MIN_INTERVAL` and draws the projected footprints of the latest four images using the
+  upstream terrain-aware camera geometry.
+- The shared MAVLink runtime now owns every normal and built-in-SITL connection: it continuously
+  reads packets, sends the optional GCS heartbeat, requests the configured stream rates, polls
+  missing parameters, detects a disarmed silent/dead link and releases joystick control safely.
+  An armed radio link is kept open through a telemetry fade so it can recover, as in upstream. It also
+  restores GCS sysid, serial reset/ESP settings, refreshes Home on an arm transition and closes
+  telemetry logs on an unexpected link loss.
+- `Load Waypoints on connect` now opens the planner and reads the mission, while `Params Background
+  Load` performs upstream MAVFTP-with-fallback loading without holding the connect UI open.
+- Planner/Flight Data runtime settings that previously only wrote a preference now take effect:
+  heading-up map rotation, track length, distance-to-home visibility, HUD overlay visibility and
+  reduced refresh rate on slow machines. Colour-type WarningEngine rules now highlight their
+  matching QuickView cell with readable foreground text.
+- SITL and normal/auto connection attempts share one serialization gate; delayed auto-scan cannot
+  overwrite a concurrently started simulator link. Joystick shutdown also waits for an in-flight
+  sender asynchronously, so releasing overrides cannot freeze the Avalonia UI.
+- Autopilot and DroneCAN parameter favourites use separate persisted namespaces, with a
+  non-destructive migration from the early shared-key build.
+- The uAvionix transponder page now displays live maintenance/GPS/TX/airborne fault flags and the
+  upstream NIC/NACp accuracy labels decoded by `CurrentState` instead of fixed disabled placeholders.
 - Upstream library message/input callbacks are bridged to Avalonia, so recoverable joystick,
   mission-file, GStreamer and transport errors cannot fall through to `ShowEvent Not Set`.
 - PX4Flow image assembly is port-native and writes grayscale MAVLink frames directly to an Avalonia
@@ -80,7 +118,9 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 - Write Fast performs the upstream pipelined `MISSION_ITEM_INT` upload with
   MISSION_REQUEST/MISSION_ACK resynchronization instead of duplicating the normal write.
 - Geo-referencing writes GPS EXIF into geotagged image copies through the upstream
-  `GeoRefImageBase`/ExifLibrary path, in addition to location.txt and location.kml.
+  `GeoRefImageBase`/ExifLibrary path, in addition to location.txt and location.kml. CAM, TRIG and
+  EXIF-time/GPS-offset matching modes are available; TRIG deliberately requires equal photo/event
+  counts so a missing capture cannot silently shift every subsequent coordinate.
 
 Existing port functionality includes serial/TCP/UDP/UDP-client/WebSocket connections, flight data,
 mission planning, parameter pages, firmware/log tools, simulation launcher, NMEA/mirroring tools,
@@ -92,18 +132,19 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 104 passed, 0 failed.
+- Automated tests: 128 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 156 MB.
 - Headless Xvfb startup: reaches the normal application event loop.
-- `tar.gz` and `.deb` targets: rebuilt from the current 104-test source on 2026-08-21 with the
-  distribution SDK; `lintian`, dependency simulation and extracted-package Xvfb smokes pass.
+- `tar.gz` and `.deb` targets: the last artifacts were rebuilt from the earlier 104-test source on
+  2026-08-21; `lintian`, dependency simulation and extracted-package Xvfb smokes passed then. They
+  must be rebuilt before release because they do not contain the current joystick/survey changes.
 - Debian install: registered as `missionplanner-avalonia 2026.8.0`; launcher, desktop entry, icon,
   man page and dependency metadata verified.
 - Installed-package smoke test: `/usr/lib/missionplanner-avalonia` remains byte-for-byte unchanged;
   runtime files are routed to isolated XDG config/data/cache/state roots.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
-The current handoff artifacts are
+The previous handoff artifacts (now stale relative to source) are
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` and
 `out/packages/missionplanner-avalonia_2026.8.0_amd64.deb`. The apphost is an x86-64 ELF PIE, native
 libraries are ELF `.so` files and the `.dll` files are managed assemblies.
@@ -145,22 +186,23 @@ not remove required Windows-native files from `win-x64` builds.
 | --- | --- | --- |
 | Multiple simultaneous vehicle links / Connection List | All | Menu remains disabled; the port has one global primary link. Requires multi-link AppState/UI architecture. |
 | Full Mission Planner plugin loader | All | Discovery, lifecycle and WinForms plugin hosting are absent. Keep the new portable action/HUD hooks and add a cross-platform plugin host separately. |
-| Traffic, airport and TFR map overlays | All | Planner settings are persisted, but Mapsui does not yet render upstream ADS-B/AIS traffic, airports or TFR overlays. |
+| External traffic, airport and TFR overlays | All | MAVLink ADS-B traffic is rendered. External ADS-B/AIS feeds, airports and TFR data still need portable data services and Mapsui layers. |
 | SHP/DXF and optional GDAL map import | All | KML is supported. The upstream managed SHP/DXF readers and an optional native GDAL adapter still need Mapsui layers and an Avalonia import flow. |
 | Vehicle terrain service and extra elevation sources | All | Local SRTM profiles work; serving `TERRAIN_DATA` to a vehicle and DTED/GeoTIFF sources are absent. |
 | MAVLink Camera Protocol v2 integration | All | Reusable upstream protocol code exists, but stream discovery/selection and the gimbal/video overlay recorder are not wired into the Avalonia video UI. |
 | Moving Base tool | All | Advanced-page window is not ported. Follow Me is available but is not equivalent. |
 | Swarm / formation flight | All | The upstream swarm controllers and UI are absent. The control logic is portable, but needs a new multi-vehicle foundation and Avalonia safety UI. |
-| General startup auto-connect | All | SITL can auto-connect after launch; persisted serial/network auto-connect and upstream discovery pipelines are not wired into normal application startup. |
-| Survey grid mission commands | All | The survey grid generates plain waypoints only. Upstream camera triggers (`DO_SET_CAM_TRIGG_DIST`, `DO_DIGICAM_CONTROL`, servo modes), takeoff/RTL/land wrapping, speed, spline, heading hold and the sample-photo/camera-profile helpers are not generated. |
+| Survey grid advanced helpers | All | Core mission-command generation is ported. Upstream split-mission output, sample-photo preview, terrain-following adjustment and the camera-profile editor remain absent. |
 | Grid v2 / SimpleGrid variants | All | The alternative upstream/plugin grid workflows remain absent. |
 | DroneCAN file browser | All, hardware-specific | Node parameters and firmware upload work; general node file browsing is not exposed. |
-| DroneCAN parameter UI conveniences | All | The integrated DroneCAN page lacks parameter search, favourites, a modified-only filter and `.param` import/export. A removed unreferenced prototype with these features remains available in git history (`DroneCANParamsViewModel`). |
 | Secondary log/interchange tools | All | Tlog conversion is present; tlog parameter/waypoint extraction, ULog UI, offline MagFit and CoT output remain to be ported. |
 | Direct DroneCAN SLCAN adapter mode | All, hardware-specific | UI reports unsupported; MAVLink-CAN1/CAN2 works. Direct serial lifecycle needs porting and native testing. |
 | Antenna tracker interfaces other than Maestro | All, hardware-specific | Configuration rejects other drivers; port/test each driver independently. |
 | Traditional-heli live curve/servo visualization | All | Writable configuration is present; remaining ZedGraph visuals need Avalonia replacements. |
 | Persistent map tile cache | All | The Mapsui layer does not connect a persistent tile cache; the nonfunctional selector is disabled and maps currently need network access. |
+| Vehicle firmware/update metadata after connect | All | Connection/runtime parameter handling is ported, but the upstream online check for a newer ArduPilot vehicle firmware and version-specific parameter metadata download is not yet wired. |
+| Cached parameter reuse on connect | All | The port writes a cross-platform offline parameter snapshot and supports foreground/background vehicle loads, but does not yet skip a live download using upstream's one-hour `ParamCachePath` policy. |
+| Signed beta application updates | All | Stable signed updates work. The Beta Updates control is disabled until this project publishes and signs a separate beta manifest/channel. |
 | QGC Plan fence return point | All | QGC Plan has polygons/circles but no Mission Planner fence-return field. `.plan` export warns when it omits one; use legacy `.fen` when that point must round-trip. |
 | Custom theme editor and audio vario | All | Theme selection works, but the editor is absent. Upstream vario uses unsupported `Console.Beep`; it needs a native audio abstraction. |
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
@@ -169,16 +211,16 @@ not remove required Windows-native files from `win-x64` builds.
 | NativeAOT runtime | All | Linux links to a 66 MB ELF but fails in log4net `Assembly.GetCallingAssembly()`; MAVLink/XML/fastJSON also require dynamic code. Experimental only. |
 | Mission transfer over MAVFTP | All | Write Fast now uses the upstream-style pipelined `MISSION_ITEM_INT` upload; mission transfer over MAVFTP (`chk_usemavftp`) remains absent. |
 | HUD recording and pop-out UI | All | "Record Video Stream" records the libVLC stream; upstream HUD-to-AVI frame capture, fixed aspect override, and undock/pop-out of HUD/map/tab panels are absent. |
-| Flight Data map extras | All | Camera footprint overlay (`CAMERA_FEEDBACK`), POI actions on the Flight Data map, Point Camera Coords, and the mission `DistanceBar` strip are not ported (POI is available in the planner). |
+| Flight Data map extras | All | Camera feedback markers/footprints are ported. POI actions on the Flight Data map, Point Camera Coords, and the mission `DistanceBar` strip remain absent (POI is available in the planner). |
 | Pre-flight checklist engine | All | Only the manual checklist and six fixed automatic checks exist; the upstream configurable rule engine (`checklistDefault.xml`, condition types, colours, editor) is absent. |
 | DisplayView profiles | All | `DisplayViewExtensions.custompath` is set, but no screen consumes `DisplayConfiguration` to show/hide individual widgets (tab-level Customize is ported). |
 | Planner map tools | All | Tile prefetch (area and along-WP-path), offset polygon, Tracker Home from map, rally set/get/save/clear vehicle actions, and a general KML/KMZ/DXF overlay (beyond NoFly) are not ported. |
-| Full Parameter List extras | All | "Reset to Default" (`FORMAT_VERSION` wipe) and the ArduPilot GitHub parameter-file browser/comparison are absent. |
-| ADS-B connection settings | All | The ADS-B toggle is persisted, but the upstream server/port configuration prompt is not implemented. |
+| Full Parameter List extras | All | Reset-to-default is ported. The ArduPilot GitHub parameter-file browser/comparison remains absent. |
+| ADS-B connection settings | All | The toggle controls MAVLink traffic rendering. The upstream external ADS-B server/port connection and configuration prompt are not implemented. |
 | SSH terminal | All | The upstream companion-computer SSH terminal (`Renci.SshNet`) is not ported; the terminal is MAVLink NSH only. |
 | RF propagation overlay | All | The terrain line-of-sight/RF coverage overlay (Ctrl+W upstream) is absent. |
 | Log tooling extras | All | OSD video rendering from tlog, LogIndex with map thumbnails, log download over SCP, tlog→CSV/human-readable text/graph in the tlog converter, and MAVLink Inspector "Graph It" are not ported. |
-| Geo-reference gaps | All | GPS EXIF is now written into geotagged copies; trigger-message mode, shutter lag, Estimate Offset, AMSL base altitude and KML network-link export are still absent. |
+| Geo-reference gaps | All | GPS EXIF and TRIG matching are ported. Shutter lag, Estimate Offset, AMSL base altitude and KML network-link export remain absent. |
 | Geomagnetic K-index | All | The upstream K-index fetch and warning is not ported. |
 | Misc upstream tools | All | The hidden developer tool window (`temp.cs`), translation/resource editor, OpenGL 3D terrain view, MicroDrones serial downlink, vehicle default-settings loader, DevopsUI, menu auto-hide and menu icon sets are not ported. |
 
@@ -194,6 +236,8 @@ not remove required Windows-native files from `win-x64` builds.
 | IronPython script host | The portable local console uses MoonSharp Lua. Old Python scripts would require a large legacy runtime and are not enabled by default. |
 | Historical third-party service plugins | AltitudeAngel, DigitalSky, AirMarket and similar integrations require current API, authentication and privacy review before any port. |
 | DirectShow device enumeration | Replaced by libVLC video input so the feature can share one API across Windows, macOS and Linux. |
+| GDI+ HUD renderer switch | Not applicable to Avalonia: the port uses the cross-platform Skia renderer on every target, so the inherited GDI+ option is shown disabled. |
+| Usage analytics | This port has no analytics sender; the Config page states that analytics are disabled rather than presenting a preference with no runtime consumer. |
 | Windows SimpleBLE/libusb DLLs in Linux packages | Explicitly filtered only for Linux; shipping PE native libraries on Linux would not provide BLE/USB support. |
 | NativeAOT as release format | Disabled by default on every target. Supported releases are self-contained CoreCLR builds. |
 
@@ -201,7 +245,9 @@ not remove required Windows-native files from `win-x64` builds.
 
 A Flysky FS-i6XCN was used for a Linux joydev smoke: the port-native reader opened it through
 `/dev/input/by-id`, reported 16 buttons, returned live raw axis/button state and shut down cleanly.
-Hands-on auto-detect/mapping and RC output to a live vehicle still need acceptance. No USB flight
+The 20 Hz MAVLink and built-in-SITL packet paths are unit-tested; hands-on auto-detect/mapping and
+RC output to a live vehicle or SITL still need acceptance. Camera-footprint projection is
+unit-tested, but a live `CAMERA_FEEDBACK` source is still required for acceptance. No USB flight
 controller, CAN adapter, camera or live vehicle was attached during this verification. Each release
 target still needs acceptance tests with its native serial/USB permissions, video/audio stack and
 representative hardware. The port-native PX4Flow frame path is unit-tested but still needs a live

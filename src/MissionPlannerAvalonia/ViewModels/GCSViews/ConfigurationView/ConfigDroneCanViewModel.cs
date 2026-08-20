@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
@@ -10,6 +11,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -21,6 +23,7 @@ using MissionPlanner.Utilities;
 namespace MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView;
 
 public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
+  private const string _favoritesKey = "dronecan_fav_params";
   private readonly MAVLinkInterface _comPort = AppState.comPort;
   private DroneCAN.DroneCAN? _can;
   private CommsInjection? _port;
@@ -31,6 +34,8 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   public ObservableCollection<DroneCanNode> Nodes { get; } = new();
 
   public ObservableCollection<DroneCanParam> NodeParams { get; } = new();
+
+  private readonly List<DroneCanParam> _allNodeParams = new();
 
   public ObservableCollection<DroneCanLog> DebugLog { get; } = new();
 
@@ -63,14 +68,25 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private bool _isBusy;
 
+  [ObservableProperty]
+  private string _parameterSearch = "";
+
+  [ObservableProperty]
+  private bool _showModifiedParametersOnly;
+
   private CancellationTokenSource? _fwCancel;
 
   partial void OnSelectedNodeChanged(DroneCanNode? value) {
+    _allNodeParams.Clear();
     NodeParams.Clear();
     NodeStatus = value == null
         ? "Select a node, then Get Parameters / Restart / Update Firmware."
         : $"Node {value.Id} ({value.Name}) selected.";
   }
+
+  partial void OnParameterSearchChanged(string value) => ApplyParameterFilter();
+
+  partial void OnShowModifiedParametersOnlyChanged(bool value) => ApplyParameterFilter();
 
   public string ConnectLabel => IsConnected ? "Disconnect" : "Connect";
 
@@ -263,24 +279,38 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       return;
     }
 
+    _allNodeParams.Clear();
     NodeParams.Clear();
+    bool hasDedicatedFavorites = Settings.Instance.ContainsKey(_favoritesKey);
+    var favs = Settings.Instance.GetList(
+        hasDedicatedFavorites ? _favoritesKey : "fav_params").ToHashSet();
     foreach (var p in list) {
       var name = Encoding.ASCII.GetString(p.name, 0, p.name_len);
       if (string.IsNullOrEmpty(name)) {
         continue;
       }
 
-      NodeParams.Add(new DroneCanParam {
+      _allNodeParams.Add(new DroneCanParam {
         Name = name,
         Value = Convert.ToString(p.value.GetValue(), CultureInfo.InvariantCulture) ?? "",
         OriginalValue = Convert.ToString(p.value.GetValue(), CultureInfo.InvariantCulture) ?? "",
         Min = Convert.ToString(p.min_value.GetValue(), CultureInfo.InvariantCulture) ?? "",
         Max = Convert.ToString(p.max_value.GetValue(), CultureInfo.InvariantCulture) ?? "",
         Default = Convert.ToString(p.default_value.GetValue(), CultureInfo.InvariantCulture) ?? "",
+        IsFav = favs.Contains(name),
       });
     }
 
-    NodeStatus = $"Loaded {NodeParams.Count} parameters from node {node.Id}.";
+    if (!hasDedicatedFavorites) {
+      // Early Avalonia builds accidentally shared fav_params with the vehicle parameter page.
+      // Copy only names that exist on this node, without modifying the vehicle favourites.
+      Settings.Instance.SetList(_favoritesKey,
+          _allNodeParams.Where(parameter => parameter.IsFav).Select(parameter => parameter.Name));
+    }
+
+    SortAndFilterParameters();
+
+    NodeStatus = $"Loaded {_allNodeParams.Count} parameters from node {node.Id}.";
     IsBusy = false;
   }
 
@@ -293,7 +323,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       return;
     }
 
-    var changed = NodeParams.Where(p => p.IsDirty).ToList();
+    var changed = _allNodeParams.Where(p => p.IsDirty).ToList();
     if (changed.Count == 0) {
       NodeStatus = "No modified parameters to write.";
       return;
@@ -302,6 +332,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     IsBusy = true;
     var id = node.Id;
     int failed = 0;
+    var written = new List<DroneCanParam>();
 
     await Task.Run(() => {
       foreach (var p in changed) {
@@ -312,6 +343,8 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
               : p.Value;
           if (!can.SetParameter(id, p.Name, value)) {
             failed++;
+          } else {
+            written.Add(p);
           }
         } catch {
           failed++;
@@ -324,14 +357,129 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       }
     });
 
-    foreach (var p in changed) {
-      p.OriginalValue = p.Value;
+    foreach (var p in written) {
+      p.AcceptValue();
     }
+
+    ApplyParameterFilter();
 
     NodeStatus = failed == 0
         ? $"Wrote {changed.Count} parameters and saved to flash."
         : $"Wrote parameters with {failed} failure(s); saved to flash.";
     IsBusy = false;
+  }
+
+  [RelayCommand]
+  private void ToggleParameterFavorite(DroneCanParam? parameter) {
+    if (parameter == null) {
+      return;
+    }
+
+    parameter.IsFav = !parameter.IsFav;
+    var favs = _allNodeParams.Where(p => p.IsFav).Select(p => p.Name);
+    Settings.Instance.SetList(_favoritesKey, favs);
+    SortAndFilterParameters();
+  }
+
+  [RelayCommand]
+  private async Task ImportParameters() {
+    var owner = Services.Dialogs.Owner;
+    if (owner == null || _allNodeParams.Count == 0) {
+      NodeStatus = "Get node parameters before importing a .param file.";
+      return;
+    }
+
+    var files = await owner.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions {
+      Title = "Import DroneCAN parameters",
+      AllowMultiple = false,
+      FileTypeFilter = new[] {
+        new FilePickerFileType("Parameter files") { Patterns = new[] { "*.param", "*.parm" } },
+        new FilePickerFileType("All files") { Patterns = new[] { "*" } },
+      },
+    });
+    var path = files.FirstOrDefault()?.TryGetLocalPath();
+    if (path == null) {
+      return;
+    }
+
+    Dictionary<string, double> fileParams;
+    try {
+      fileParams = ParamFile.loadParamFile(path);
+    } catch (Exception ex) {
+      NodeStatus = "Parameter import failed: " + ex.Message;
+      return;
+    }
+
+    int matched = 0;
+    foreach (var parameter in _allNodeParams) {
+      if (fileParams.TryGetValue(parameter.Name, out var value)) {
+        parameter.Value = value.ToString(CultureInfo.InvariantCulture);
+        matched++;
+      }
+    }
+    ApplyParameterFilter();
+    NodeStatus = $"Imported {matched} matching value(s); review them, then press Write.";
+  }
+
+  [RelayCommand]
+  private async Task ExportParameters() {
+    var owner = Services.Dialogs.Owner;
+    if (owner == null || _allNodeParams.Count == 0) {
+      NodeStatus = "Get node parameters before exporting.";
+      return;
+    }
+
+    var file = await owner.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions {
+      Title = "Export DroneCAN parameters",
+      SuggestedFileName = SelectedNode == null ? "dronecan.param" : $"dronecan-node-{SelectedNode.Id}.param",
+      DefaultExtension = "param",
+      FileTypeChoices = new[] {
+        new FilePickerFileType("Parameter files") { Patterns = new[] { "*.param" } },
+      },
+    });
+    var path = file?.TryGetLocalPath();
+    if (path == null) {
+      return;
+    }
+
+    var table = new Hashtable();
+    foreach (var parameter in _allNodeParams) {
+      if (double.TryParse(parameter.Value, NumberStyles.Any,
+              CultureInfo.InvariantCulture, out var value)) {
+        table[parameter.Name] = value;
+      }
+    }
+
+    try {
+      ParamFile.SaveParamFile(path, table);
+      NodeStatus = $"Exported {table.Count} numeric parameter(s) to {Path.GetFileName(path)}.";
+    } catch (Exception ex) {
+      NodeStatus = "Parameter export failed: " + ex.Message;
+    }
+  }
+
+  private void SortAndFilterParameters() {
+    _allNodeParams.Sort((a, b) => a.IsFav != b.IsFav
+        ? b.IsFav.CompareTo(a.IsFav)
+        : string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+    ApplyParameterFilter();
+  }
+
+  private void ApplyParameterFilter() {
+    var search = ParameterSearch.Trim();
+    NodeParams.Clear();
+    foreach (var parameter in _allNodeParams) {
+      if (ShowModifiedParametersOnly && !parameter.IsDirty) {
+        continue;
+      }
+      if (search.Length >= 2 &&
+          !parameter.Name.Contains(search, StringComparison.OrdinalIgnoreCase) &&
+          !parameter.Value.Contains(search, StringComparison.OrdinalIgnoreCase) &&
+          !parameter.Default.Contains(search, StringComparison.OrdinalIgnoreCase)) {
+        continue;
+      }
+      NodeParams.Add(parameter);
+    }
   }
 
   [RelayCommand]
@@ -658,6 +806,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
     _port = null;
     IsConnected = false;
+    _allNodeParams.Clear();
     NodeParams.Clear();
     SelectedNode = null;
     Status = "Disconnected.";
@@ -732,7 +881,21 @@ public partial class DroneCanParam : ObservableObject {
   [ObservableProperty]
   private string _default = "";
 
+  [ObservableProperty]
+  private bool _isFav;
+
   public string OriginalValue { get; set; } = "";
 
   public bool IsDirty => !string.Equals(Value, OriginalValue, StringComparison.Ordinal);
+
+  public string FavoriteMarker => IsFav ? "★" : "☆";
+
+  partial void OnValueChanged(string value) => OnPropertyChanged(nameof(IsDirty));
+
+  partial void OnIsFavChanged(bool value) => OnPropertyChanged(nameof(FavoriteMarker));
+
+  public void AcceptValue() {
+    OriginalValue = Value;
+    OnPropertyChanged(nameof(IsDirty));
+  }
 }

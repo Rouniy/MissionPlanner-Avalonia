@@ -18,6 +18,8 @@
       <Button Content="Write Params" Command="{Binding WriteCommand}" Margin="0,0,6,4" />
       <Button Content="Refresh Params" Command="{Binding RefreshCommand}" Margin="0,0,6,4" />
       <Button Content="Commit to Flash" Command="{Binding CommitCommand}" Margin="0,0,6,4" />
+      <Button Content="Reset to Defaults…" Command="{Binding ResetToDefaultsCommand}"
+              Foreground="#FF7777" Margin="0,0,6,4" />
       <Button Content="Load Demo" Command="{Binding LoadDemoCommand}" Margin="0,0,12,4" />
       <TextBox Width="200" Watermark="Search (≥2 chars)…" Text="{Binding SearchText}" Margin="0,0,6,4" />
       <CheckBox Content="Modified" IsChecked="{Binding ShowModifiedOnly, Mode=TwoWay}" Margin="0,0,6,4" />

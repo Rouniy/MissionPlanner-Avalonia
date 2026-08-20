@@ -12,7 +12,7 @@
   x:DataType="cv:ConfigDroneCanViewModel"
   Background="{DynamicResource MpControlBg}"
 >
-  <Grid RowDefinitions="Auto,Auto,Auto,Auto,2*,Auto,Auto,Auto,2*,2*" Margin="16">
+  <Grid RowDefinitions="Auto,Auto,Auto,Auto,2*,Auto,Auto,Auto,Auto,2*,2*" Margin="16">
     <TextBlock Grid.Row="0" Classes="pagetitle" Text="DroneCAN / UAVCAN" />
 
     <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,8,0,8">
@@ -88,6 +88,8 @@
       <Button Content="Write" Command="{Binding WriteParametersCommand}" />
       <Button Content="Save to Flash" Command="{Binding SaveConfigCommand}" />
       <Button Content="Erase" Command="{Binding EraseConfigCommand}" />
+      <Button Content="Import .param…" Command="{Binding ImportParametersCommand}" />
+      <Button Content="Export .param…" Command="{Binding ExportParametersCommand}" />
     </StackPanel>
 
     <TextBlock
@@ -98,8 +100,15 @@
       Margin="0,0,0,8"
     />
 
+    <StackPanel Grid.Row="7" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+      <TextBox Width="260" Watermark="Search parameters (≥2 chars)…"
+               Text="{Binding ParameterSearch}" />
+      <CheckBox Content="Modified only" IsChecked="{Binding ShowModifiedParametersOnly}"
+                VerticalAlignment="Center" />
+    </StackPanel>
+
     <Grid
-      Grid.Row="7"
+      Grid.Row="8"
       ColumnDefinitions="Auto,*,Auto,*"
       RowDefinitions="Auto,Auto,Auto,Auto,Auto"
       Margin="0,0,0,8"
@@ -126,13 +135,22 @@
     </Grid>
 
     <DataGrid
-      Grid.Row="8"
+      Grid.Row="9"
       ItemsSource="{Binding NodeParams}"
       AutoGenerateColumns="False"
       GridLinesVisibility="All"
       HeadersVisibility="Column"
     >
       <DataGrid.Columns>
+        <DataGridTemplateColumn Header="Fav" Width="48">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="cv:DroneCanParam">
+              <Button Content="{Binding FavoriteMarker}"
+                      Command="{Binding $parent[DataGrid].((cv:ConfigDroneCanViewModel)DataContext).ToggleParameterFavoriteCommand}"
+                      CommandParameter="{Binding}" Padding="4,0" />
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
         <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="2*" IsReadOnly="True" />
         <DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="*" IsReadOnly="False" />
         <DataGridTextColumn Header="Min" Binding="{Binding Min}" Width="*" IsReadOnly="True" />
@@ -142,7 +160,7 @@
     </DataGrid>
 
     <DataGrid
-      Grid.Row="9"
+      Grid.Row="10"
       ItemsSource="{Binding DebugLog}"
       AutoGenerateColumns="False"
       IsReadOnly="True"

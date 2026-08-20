@@ -11,7 +11,7 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
   public SetupViewModel Setup { get; } = new();
   [System.Obsolete]
   public ConfigViewModel Config { get; } = new();
-  public SimulationViewModel Simulation { get; } = new();
+  public SimulationViewModel Simulation { get; }
   public HelpViewModel Help { get; } = new();
 
   [ObservableProperty]
@@ -21,10 +21,25 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
   private string _activeTab = "DATA";
 
   public MainWindowViewModel() {
+    Simulation = new SimulationViewModel(Connection);
     _currentScreen = FlightData;
+
+    Connection.Connected += OnConnected;
 
     Simulation.RequestFlightData += () =>
         Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = Navigate("DATA"));
+  }
+
+  private void OnConnected() {
+    if (!MissionPlanner.Utilities.Settings.Instance.GetBoolean("loadwpsonconnect", false)) {
+      return;
+    }
+    Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = LoadMissionOnConnectAsync());
+  }
+
+  private async System.Threading.Tasks.Task LoadMissionOnConnectAsync() {
+    await Navigate("PLAN");
+    await FlightPlanner.ReadMissionOnConnectAsync();
   }
 
   private bool _passwordUnlocked;
@@ -129,7 +144,9 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
   }
 
   public void Dispose() {
+    Connection.Connected -= OnConnected;
     Connection.Dispose();
+    FlightData.Dispose();
     Setup.Dispose();
 #pragma warning disable CS0612 // The CONFIG screen remains part of the current application shell.
     Config.Dispose();
