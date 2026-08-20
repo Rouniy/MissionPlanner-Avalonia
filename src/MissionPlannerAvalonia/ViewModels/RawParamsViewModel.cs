@@ -192,10 +192,9 @@ public partial class RawParamsViewModel : ViewModelBase {
 
   public static string CacheFilePath {
     get {
-      var dir = System.IO.Path.Combine(
-          Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MissionPlannerAvalonia");
+      var dir = Services.AppPaths.CacheRoot;
       System.IO.Directory.CreateDirectory(dir);
-      return System.IO.Path.Combine(dir, "last_params.param");
+      return Services.AppPaths.RawParamSnapshotPath;
     }
   }
 

@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          submodules: recursive
+          submodules: true
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -34,7 +34,7 @@ jobs:
           done
 
       - name: Test
-        run: dotnet test tests/MissionPlannerAvalonia.Tests/MissionPlannerAvalonia.Tests.csproj -c Release
+        run: dotnet test tests/MissionPlannerAvalonia.Tests/MissionPlannerAvalonia.Tests.csproj -c Release -m:1
 
   # Compile on every release OS so cross-platform restore/build breaks fail here, not at tag time.
   cross-build:
@@ -46,11 +46,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          submodules: recursive
+          submodules: true
 
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
       - name: Build
-        run: dotnet build src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj -c Release
+        run: dotnet build src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj -c Release -m:1

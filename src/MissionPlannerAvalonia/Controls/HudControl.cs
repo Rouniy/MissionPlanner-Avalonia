@@ -11,6 +11,12 @@ namespace MissionPlannerAvalonia.Controls;
 public class HudControl : Control {
 
   public event Action<string>? IndicatorClicked;
+
+  /// <summary>
+  /// Allows extensions to draw an overlay after the built-in HUD has rendered.
+  /// </summary>
+  public event Action<HudControl, DrawingContext>? CustomPaint;
+
   private Rect _ekfRect, _vibeRect, _prearmRect;
   public static readonly StyledProperty<double> RollProperty = AvaloniaProperty.Register<
       HudControl,
@@ -703,6 +709,8 @@ public class HudControl : Control {
     if (lowVoltage && blink) {
       DrawTextCenter(context, "LOW VOLTAGE", cx, ay, fontsize + 8, Brushes.Red);
     }
+
+    CustomPaint?.Invoke(this, context);
   }
 
   private void DrawHeadingTape(DrawingContext ctx, double w, double headH, double fontsize,

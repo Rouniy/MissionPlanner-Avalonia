@@ -1,0 +1,55 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:cv="using:MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView"
+  x:Class="MissionPlannerAvalonia.Views.GCSViews.ConfigurationView.WarningManagerView"
+  x:DataType="cv:WarningManagerViewModel"
+  Background="{DynamicResource MpControlBg}">
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="14" RowSpacing="8">
+    <TextBlock Grid.Row="0" Classes="pagetitle" Text="Warning Manager" />
+    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+      <Button Content="Add Warning" Command="{Binding AddCommand}" />
+      <Button Content="Save" Command="{Binding SaveCommand}" />
+      <TextBlock Text="{Binding Status}" Foreground="{DynamicResource MpAccentBrush}"
+                 VerticalAlignment="Center" />
+    </StackPanel>
+
+    <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Auto">
+      <ItemsControl ItemsSource="{Binding Rules}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="cv:WarningRuleViewModel">
+            <Border Margin="{Binding Margin}" Padding="6" BorderThickness="0,0,0,1"
+                    BorderBrush="{DynamicResource MpBorderBrush}">
+              <Grid ColumnDefinitions="44,170,80,100,150,115,78,280,34,34" ColumnSpacing="5">
+                <TextBlock Grid.Column="0" Text="{Binding DepthLabel}" FontWeight="Bold"
+                           VerticalAlignment="Center" />
+                <ComboBox Grid.Column="1" ItemsSource="{Binding SourceOptions}"
+                          SelectedItem="{Binding Source, Mode=TwoWay}" />
+                <ComboBox Grid.Column="2" ItemsSource="{Binding ConditionOptions}"
+                          SelectedItem="{Binding Condition, Mode=TwoWay}" />
+                <NumericUpDown Grid.Column="3" Minimum="-999999" Maximum="999999"
+                               Value="{Binding Threshold, Mode=TwoWay}" />
+                <ComboBox Grid.Column="4" ItemsSource="{Binding TypeOptions}"
+                          SelectedItem="{Binding Type, Mode=TwoWay}" />
+                <ComboBox Grid.Column="5" ItemsSource="{Binding ColorOptions}"
+                          SelectedItem="{Binding Color, Mode=TwoWay}" />
+                <NumericUpDown Grid.Column="6" Minimum="0" Maximum="86400"
+                               Value="{Binding RepeatSeconds, Mode=TwoWay}" />
+                <TextBox Grid.Column="7" Text="{Binding Text, Mode=TwoWay}"
+                         Watermark="WARNING: {name} is {value}" />
+                <Button Grid.Column="8" Content="+" Command="{Binding AddChildCommand}"
+                        ToolTip.Tip="Add AND condition" />
+                <Button Grid.Column="9" Content="−" Command="{Binding RemoveCommand}"
+                        ToolTip.Tip="Remove condition" />
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+
+    <TextBlock Grid.Row="3"
+               Text="Columns: source, comparison, threshold, action type, color, repeat seconds, message. Message tokens: {name}, {value}, {warning}."
+               Foreground="#999999" TextWrapping="Wrap" />
+  </Grid>
+</UserControl>

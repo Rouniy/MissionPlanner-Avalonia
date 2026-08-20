@@ -10,6 +10,8 @@ sealed class Program {
   [STAThread]
   public static void Main(string[] args) {
 
+    Services.AppPaths.Initialize();
+
     AppDomain.CurrentDomain.UnhandledException += (_, e) => LogCrash(e.ExceptionObject as Exception);
 
     IconProvider.Current.Register<FontAwesomeIconProvider>();
@@ -26,10 +28,8 @@ sealed class Program {
       return;
     }
     try {
-      var dir = Path.Combine(
-          Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MissionPlannerAvalonia");
-      Directory.CreateDirectory(dir);
-      File.AppendAllText(Path.Combine(dir, "crash.log"), $"---- crash ----\n{ex}\n\n");
+      Directory.CreateDirectory(Path.GetDirectoryName(Services.AppPaths.CrashLogPath)!);
+      File.AppendAllText(Services.AppPaths.CrashLogPath, $"---- crash ----\n{ex}\n\n");
     } catch {
 
     }

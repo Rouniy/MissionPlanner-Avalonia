@@ -5,7 +5,7 @@ using MissionPlanner.Comms;
 namespace MissionPlannerAvalonia;
 
 public static class AppState {
-  public static MAVLinkInterface comPort { get; } = new MAVLinkInterface();
+  public static MAVLinkInterface comPort { get; }
 
   public static event System.Action? ConnectionChanged;
 
@@ -18,6 +18,9 @@ public static class AppState {
   public static Services.ProgressReporter? ActiveConnectReporter { get; set; }
 
   static AppState() {
+
+    Services.AppPaths.Initialize();
+    comPort = new MAVLinkInterface();
 
     MAVLinkInterface.CreateIProgressReporterDialogue +=
         _ => new Services.ForwardingProgressReporter(ActiveConnectReporter);
@@ -32,9 +35,6 @@ public static class AppState {
 
     CommsBase.InputBoxShow += (string title, string prompt, ref string text) =>
         inputboxreturn.NotSet;
-
-    MissionPlanner.Utilities.srtm.datadirectory =
-        System.IO.Path.Combine(System.AppContext.BaseDirectory, "srtm");
 
     ApplyUnits();
   }

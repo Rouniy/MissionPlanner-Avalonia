@@ -6,7 +6,7 @@ using MissionPlanner.Utilities;
 
 namespace MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView;
 
-// ponytail: unportable controls (DirectShow video, joystick setup, audio vario, theme editor, Windows map-cache dir, spoken-phrase InputBox prompts) are marked inline below.
+// Remaining upstream-only controls and their platform impact are tracked in docs/PORT_STATUS.md.
 public partial class ConfigPlannerViewModel : ViewModelBase {
   private const string _defaultMapIconDesc =
       "{alt}{altunit} {airspeed}{speedunit} id:{sysid} Sats:{satcount} HDOP:{gpshdop} Volts:{battery_voltage}";
@@ -294,7 +294,6 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
     }
   }
 
-  // ponytail: BUT_Joystick/themecustom/Vario/logdirbrowse/mapCacheDir + DirectShow video combos have no cross-platform equivalent wired up yet and are omitted.
   partial void OnDistUnitsChanged(string value) {
     if (_loading) return;
     Settings.Instance["distunits"] = value;
@@ -366,6 +365,7 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
   partial void OnEnableSpeechChanged(bool value) {
     if (_loading) return;
     Settings.Instance["speechenable"] = value.ToString();
+    MissionPlannerAvalonia.Services.Speech.Enabled = value;
   }
 
   partial void OnSpeechArmedOnlyChanged(bool value) {

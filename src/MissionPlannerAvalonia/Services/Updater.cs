@@ -35,9 +35,14 @@ public static class Updater {
     return c;
   }
 
-  public static Task CheckOnStartupAsync() => RunAsync(silentWhenUpToDate: true, respectSkip: true);
+  public static Task CheckOnStartupAsync() => AppPaths.IsPackageManaged
+      ? Task.CompletedTask
+      : RunAsync(silentWhenUpToDate: true, respectSkip: true);
 
-  public static Task CheckNowAsync() => RunAsync(silentWhenUpToDate: false, respectSkip: false);
+  public static Task CheckNowAsync() => AppPaths.IsPackageManaged
+      ? Dialogs.Alert("Update", "This installation is managed by the system package manager. " +
+          "Use apt to install updates.")
+      : RunAsync(silentWhenUpToDate: false, respectSkip: false);
 
   private static async Task RunAsync(bool silentWhenUpToDate, bool respectSkip) {
     UpdateEngine engine;
@@ -134,7 +139,7 @@ public static class Updater {
   }
 
   private static UpdateEngine NewEngine() =>
-      new(_http, AppContext.BaseDirectory, PagesBaseUrl, Convert.FromBase64String(PublicKeyBase64));
+      new(_http, AppPaths.InstallRoot, PagesBaseUrl, Convert.FromBase64String(PublicKeyBase64));
 
   private static void ApplyAndRestart(
       UpdateEngine engine, IReadOnlyList<UpdateEngine.ManifestFile> changed, string staging) {
@@ -262,15 +267,7 @@ public sealed class UpdateEngine {
 
   public string InstallDir { get; }
 
-  public string CacheDir {
-    get {
-      try {
-        return Path.Combine(Settings.GetUserDataDirectory(), "updatecache");
-      } catch {
-        return Path.Combine(Path.GetTempPath(), "MissionPlannerAvalonia", "updatecache");
-      }
-    }
-  }
+  public string CacheDir => AppPaths.UpdateCacheRoot;
 
   public UpdateEngine(HttpClient http, string installDir, string baseUrl, byte[] publicKey,
       string? rid = null) {

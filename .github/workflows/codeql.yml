@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          submodules: recursive
+          submodules: true
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -35,7 +35,7 @@ jobs:
 
       # Manual build mode: CodeQL traces this compile (only our app, not the pinned submodule libs).
       - name: Build
-        run: dotnet build src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj -c Release
+        run: dotnet build src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj -c Release -m:1
 
       - uses: github/codeql-action/analyze@v4
         with:

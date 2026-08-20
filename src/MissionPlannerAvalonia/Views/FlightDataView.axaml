@@ -484,7 +484,7 @@
         </TabItem>
 
         <TabItem Header="DataFlash Logs">
-          <Grid Margin="8" ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto,Auto"
+          <Grid Margin="8" ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto,Auto,Auto"
                 ColumnSpacing="4" RowSpacing="4">
             <Button Grid.Row="0" Grid.Column="0" Content="Download DataFlash Log Via Mavlink"
                     HorizontalAlignment="Stretch" Command="{Binding DownloadDataflashLogCommand}" />
@@ -504,6 +504,12 @@
                     Command="{Binding GeoReferenceImagesCommand}" />
             <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding LogStatus}"
                        Foreground="#C8A03C" TextWrapping="Wrap" VerticalAlignment="Center" />
+
+            <Button Grid.Row="3" Grid.Column="0" Content="Organize tlog/rlog/bin/log"
+                    HorizontalAlignment="Stretch" Command="{Binding OrganizeLogsCommand}" />
+            <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2"
+                       Text="Sort local logs by vehicle type, system id and board serial number."
+                       Foreground="#999999" TextWrapping="Wrap" VerticalAlignment="Center" />
           </Grid>
         </TabItem>
 

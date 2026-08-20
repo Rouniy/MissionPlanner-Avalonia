@@ -1,11 +1,13 @@
 using System;
 using System.Diagnostics;
+using MissionPlanner.Utilities;
 
 namespace MissionPlannerAvalonia.Services;
 
 public static class Speech {
 
   public static bool Enabled { get; set; }
+  public static ISpeech Adapter { get; } = new SpeechAdapter();
 
   private static Process? _current;
 
@@ -19,13 +21,13 @@ public static class Speech {
       } else if (OperatingSystem.IsLinux()) {
 
         if (!TryStart("spd-say", new[] { text })) {
-          StartShell("festival", $"echo {Quote(text)} | festival --tts");
+          StartWithStandardInput("festival", new[] { "--tts" }, text);
         }
       } else if (OperatingSystem.IsWindows()) {
 
         var ps = "Add-Type -AssemblyName System.Speech; " +
                  "(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(" +
-                 Quote(text) + ")";
+                 PowerShellLiteral(text) + ")";
         Start("powershell", new[] { "-NoProfile", "-Command", ps });
       }
     } catch {
@@ -62,12 +64,42 @@ public static class Speech {
     }
   }
 
-  private static void StartShell(string _, string command) {
-    var psi = new ProcessStartInfo("/bin/bash") { UseShellExecute = false };
-    psi.ArgumentList.Add("-c");
-    psi.ArgumentList.Add(command);
+  private static void StartWithStandardInput(string file, string[] args, string input) {
+    var psi = new ProcessStartInfo(file) {
+      UseShellExecute = false,
+      RedirectStandardInput = true,
+    };
+    foreach (var a in args) {
+      psi.ArgumentList.Add(a);
+    }
     _current = Process.Start(psi);
+    if (_current == null) {
+      return;
+    }
+    _current.StandardInput.Write(input);
+    _current.StandardInput.Close();
   }
 
-  private static string Quote(string text) => "\"" + text.Replace("\"", "\\\"") + "\"";
+  private static string PowerShellLiteral(string text) => "'" + text.Replace("'", "''") + "'";
+
+  private sealed class SpeechAdapter : ISpeech {
+    public bool speechEnable {
+      get => Enabled;
+      set => Enabled = value;
+    }
+
+    public bool IsReady {
+      get {
+        try {
+          return _current is not { HasExited: false };
+        } catch {
+          return true;
+        }
+      }
+    }
+
+    public void SpeakAsync(string text) => Speak(text);
+
+    public void SpeakAsyncCancelAll() => Stop();
+  }
 }

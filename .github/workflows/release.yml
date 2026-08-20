@@ -20,7 +20,7 @@ jobs:
         shell: bash
         run: |
           V="${GITHUB_REF_NAME#v}"
-          if [[ ! "$V" =~ ^[0-9]{4}\.[0-9]{1,2}(\..+)?$ ]]; then
+          if [[ ! "$V" =~ ^[0-9]{4}\.[0-9]{1,2}(\.[0-9]+)?$ ]]; then
             echo "::error::Tag '$GITHUB_REF_NAME' is not CalVer (expected vYYYY.M or vYYYY.M.patch)."
             exit 1
           fi
@@ -43,7 +43,7 @@ jobs:
       matrix:
         include:
           - os: macos-14
-            rid: osx-arm64
+            rid: osx-x64
           - os: windows-latest
             rid: win-x64
           - os: ubuntu-latest
@@ -52,7 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          submodules: recursive
+          submodules: true
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -64,6 +64,11 @@ jobs:
         run: |
           REF="${GITHUB_REF_NAME:-dev}"
           V="${REF#v}"
+          # workflow_dispatch on a branch has a non-version ref. Use the project CalVer
+          # in that case so Debian metadata and assembly file versions remain valid.
+          if [[ ! "$V" =~ ^[0-9]{4}\.[0-9]{1,2}(\.[0-9]+)?$ ]]; then
+            V="$(dotnet msbuild "$APP" -nologo -getProperty:Version)"
+          fi
           # Patch = 3rd CalVer field (default 0). Passed as VersionPatch so the app project's
           # date-derived Version resolves to this; we must NOT pass a global -p:Version because
           # it leaks into the shielded submodule's MetaDataExtractor ProjectReference.
@@ -73,7 +78,7 @@ jobs:
           echo "fv=$V.0" >> "$GITHUB_OUTPUT"
 
       - name: Package macOS (.app, self-contained, signed + notarized)
-        if: matrix.rid == 'osx-arm64'
+        if: matrix.rid == 'osx-x64'
         shell: bash
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
@@ -85,7 +90,8 @@ jobs:
         run: |
           V=${{ steps.ver.outputs.v }}
           rm -rf out/osx dist
-          dotnet publish "$APP" -c Release -r osx-arm64 --self-contained true \
+          dotnet publish "$APP" -c Release -r osx-x64 --self-contained true \
+            -m:1 \
             -p:DebugType=none -p:StripSymbols=true \
             -p:VersionPatch="${{ steps.ver.outputs.patch }}" -p:FileVersion="${{ steps.ver.outputs.fv }}" -p:AssemblyVersion="${{ steps.ver.outputs.fv }}" \
             -o out/osx
@@ -115,7 +121,7 @@ jobs:
           ./build/macos/make-app.sh out/osx "$V" "dist/Mission Planner.app"
 
           mkdir -p upload
-          ZIP="upload/MissionPlannerAvalonia-$V-osx-arm64.zip"
+          ZIP="upload/MissionPlannerAvalonia-$V-osx-x64.zip"
           ( cd dist && ditto -c -k --sequesterRsrc --keepParent "Mission Planner.app" "../$ZIP" )
 
           # Notarize the zip, then staple the ticket onto the bundle and re-zip so the
@@ -140,6 +146,7 @@ jobs:
           # Self-contained folder (loose dlls) so the auto-updater can diff and download only the
           # changed files instead of the whole exe.
           dotnet publish "$APP" -c Release -r win-x64 --self-contained true \
+            -m:1 \
             -p:DebugType=none \
             -p:VersionPatch="${{ steps.ver.outputs.patch }}" -p:FileVersion="${{ steps.ver.outputs.fv }}" -p:AssemblyVersion="${{ steps.ver.outputs.fv }}" \
             -o out/win
@@ -154,19 +161,12 @@ jobs:
         shell: bash
         run: |
           V=${{ steps.ver.outputs.v }}
-          rm -rf out/linux
-          dotnet publish "$APP" -c Release -r linux-x64 --self-contained true \
-            -p:DebugType=none \
-            -p:VersionPatch="${{ steps.ver.outputs.patch }}" -p:FileVersion="${{ steps.ver.outputs.fv }}" -p:AssemblyVersion="${{ steps.ver.outputs.fv }}" \
-            -o out/linux
-          cp build/linux/missionplanner-avalonia.desktop out/linux/
-          cp build/linux/missionplanner-avalonia.png out/linux/
-          cp build/linux/install.sh out/linux/
-          chmod +x out/linux/MissionPlannerAvalonia out/linux/install.sh
-          DIR="MissionPlannerAvalonia-$V-linux-x64"
-          mv out/linux "out/$DIR"
-          mkdir -p upload
-          tar -czf "upload/$DIR.tar.gz" -C out "$DIR"
+          VERSION="$V" \
+          VERSION_PATCH="${{ steps.ver.outputs.patch }}" \
+          FILE_VERSION="${{ steps.ver.outputs.fv }}" \
+          OUTPUT_DIR="$GITHUB_WORKSPACE/upload" \
+          PUBLISH_PARENT="$GITHUB_WORKSPACE/out" \
+          ./build/linux/package.sh all
 
       - name: Build + sign update manifest
         shell: bash
@@ -177,18 +177,18 @@ jobs:
           RID=${{ matrix.rid }}
           case "$RID" in
             win-x64)   PUB=out/win ;;
-            osx-arm64) PUB=out/osx ;;
+            osx-x64)   PUB=out/osx ;;
             linux-x64) PUB="out/MissionPlannerAvalonia-$V-linux-x64" ;;
           esac
           SITE="site/$RID"
           rm -rf "$SITE"; mkdir -p "$SITE"
-          NOTES="https://github.com/sema-aviation/MissionPlanner-Avalonia/releases/tag/v$V"
-          if [[ "$RID" == "osx-arm64" ]]; then
+          NOTES="https://github.com/${GITHUB_REPOSITORY}/releases/tag/v$V"
+          if [[ "$RID" == "osx-x64" ]]; then
             # macOS updates whole-bundle (notarization can't survive loose-file swaps). The manifest
             # points at the notarized .app zip that the release job publishes as a release asset; the
             # URL is deterministic from the tag, so it resolves once release + pages jobs finish.
-            ZIP="upload/MissionPlannerAvalonia-$V-osx-arm64.zip"
-            BUNDLE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/MissionPlannerAvalonia-$V-osx-arm64.zip"
+            ZIP="upload/MissionPlannerAvalonia-$V-osx-x64.zip"
+            BUNDLE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/MissionPlannerAvalonia-$V-osx-x64.zip"
             BUNDLE_SHA=$(shasum -a 256 "$ZIP" | awk '{print $1}')
             BUNDLE_SIZE=$(stat -f%z "$ZIP")
             python3 build/gen-manifest.py "$SITE" "$V" "$NOTES" "$SITE/manifest.json" \

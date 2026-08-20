@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
+using MissionPlanner.Mavlink;
 using MissionPlanner.Utilities;
 using MissionPlannerAvalonia.Services;
 
@@ -19,6 +20,12 @@ public class ConfigAdvancedViewModel : ActionPageViewModel {
     Action("Mavlink Mirror", () => Views.SerialPassThroughWindow.OpenWindow());
     Action("NMEA", () => Views.SerialOutputNMEAWindow.OpenWindow());
     Action("Follow Me", () => Views.FollowMeWindow.OpenWindow());
+    Action("MAVLink Signing", () => _ = ManageSigningAsync());
+    Action("FFT", () => Views.ConfigFFTWindow.OpenWindow());
+    Action("Spectrogram", () => Views.SpectrogramWindow.OpenWindow());
+    Action("Warning Manager", () => Views.WarningManagerWindow.OpenWindow());
+    Action("Proximity", () => Views.ProximityWindow.OpenWindow());
+    Action("Param gen", () => _ = RegenerateParameterMetadataAsync());
 
     foreach (var (name, desc, opens) in _notPorted) {
       var n = name;
@@ -30,15 +37,152 @@ public class ConfigAdvancedViewModel : ActionPageViewModel {
 
   private static readonly (string Name, string Desc, string Opens)[] _notPorted =
   {
-        ("Warning Manager", "Enable custom warnings based on a set of conditions", "WarningsManager"),
-        ("Proximity", "View the data from a 360 lidar", "ProximityControl"),
-        ("Mavlink Signing", "Enable mavlink signing to secure communication", "AuthKeys"),
-        ("Param gen", "Regenerate the param info used inside MP", "ParameterMetaDataParser"),
         ("Moving Base", "Show an extra icon on the map of your current location", "MovingBase"),
-        ("FFT", "Plot an FFT from a log", "fftui"),
-        ("Spectrogram", "Plot a spectrogram from a log", "SpectrogramUI"),
         ("Support Proxy", "Share connection with support engineer", "SerialSupportProxy"),
     };
+
+  private const string _parameterLocations =
+      "https://raw.githubusercontent.com/ArduPilot/ardupilot/master/ArduCopter/Parameters.cpp;" +
+      "https://raw.githubusercontent.com/ArduPilot/ardupilot/master/ArduPlane/Parameters.cpp;" +
+      "https://raw.githubusercontent.com/ArduPilot/ardupilot/master/Rover/Parameters.cpp;" +
+      "https://raw.githubusercontent.com/ArduPilot/ardupilot/master/ArduSub/Parameters.cpp;" +
+      "https://raw.githubusercontent.com/ArduPilot/ardupilot/master/AntennaTracker/Parameters.cpp;" +
+      "https://raw.githubusercontent.com/ArduPilot/ardupilot/ArduCopter-stable/ArduCopter/Parameters.cpp;" +
+      "https://raw.githubusercontent.com/ArduPilot/ardupilot/ArduPlane-stable/ArduPlane/Parameters.cpp;" +
+      "https://raw.githubusercontent.com/ArduPilot/ardupilot/Rover-stable/Rover/Parameters.cpp;" +
+      "https://raw.githubusercontent.com/ArduPilot/ardupilot/ArduSub-stable/ArduSub/Parameters.cpp;";
+
+  private async Task RegenerateParameterMetadataAsync() {
+    if (!await Dialogs.Confirm(
+            "Regenerate Parameter Metadata",
+            "Download current master/stable ArduPilot parameter definitions and rebuild the local metadata cache?")) {
+      return;
+    }
+
+    AppendLog("Parameter metadata: downloading current ArduPilot definitions…");
+    try {
+      await Task.Run(() => {
+        ParameterMetaDataParser.GetParameterInformation(_parameterLocations);
+        ParameterMetaDataRepositoryAPMpdef.GetMetaData(true);
+        ParameterMetaDataRepositoryAPM.Reload();
+      });
+      AppendLog("Parameter metadata regenerated. Reopen parameter pages to refresh them.");
+    } catch (Exception ex) {
+      AppendLog("Parameter metadata generation failed: " + ex.Message);
+    }
+  }
+
+  private async Task ManageSigningAsync() {
+    while (true) {
+      var current = CurrentSigningKeyName();
+      var choice = await Dialogs.Choice(
+          "MAVLink Signing",
+          $"Stored keys: {MAVAuthKeys.Keys.Count}\nUsing key: {current}\n" +
+          $"Signed packets: {_comPort.Mavlink2Signed}",
+          "Add", "Use", "Delete", "Disable", "Close");
+
+      switch (choice) {
+        case "Add":
+          await AddSigningKeyAsync();
+          break;
+        case "Use":
+          await UseSigningKeyAsync();
+          break;
+        case "Delete":
+          await DeleteSigningKeyAsync();
+          break;
+        case "Disable":
+          await DisableSigningAsync();
+          break;
+        default:
+          return;
+      }
+    }
+  }
+
+  private string CurrentSigningKeyName() {
+    if (_comPort.MAV?.signing != true) {
+      return "None/Unknown";
+    }
+
+    var name = Settings.Instance["mavlink_signing_key_name"];
+    return string.IsNullOrWhiteSpace(name) ? "Enabled/Unknown" : name;
+  }
+
+  private async Task AddSigningKeyAsync() {
+    var name = await Dialogs.InputBox("MAVLink Signing", "Friendly key name");
+    if (string.IsNullOrWhiteSpace(name)) {
+      return;
+    }
+
+    var seed = await Dialogs.InputBox(
+        "MAVLink Signing",
+        "Pass phrase/seed (use a unique long phrase with mixed characters)");
+    if (string.IsNullOrEmpty(seed)) {
+      return;
+    }
+
+    MAVAuthKeys.AddKey(name.Trim(), seed);
+    MAVAuthKeys.Save();
+    AppendLog($"MAVLink signing key '{name.Trim()}' saved.");
+  }
+
+  private async Task UseSigningKeyAsync() {
+    if (!RequireConnection()) {
+      return;
+    }
+
+    var name = await ChooseSigningKeyAsync("Use Signing Key");
+    if (name == null) {
+      return;
+    }
+
+    var mav = _comPort.MAV;
+    _comPort.setupSigning(mav.sysid, mav.compid, "", MAVAuthKeys.Keys[name].Key);
+    Settings.Instance["mavlink_signing_key_name"] = name;
+    Settings.Instance.Save();
+    AppendLog($"MAVLink signing enabled with key '{name}'.");
+  }
+
+  private async Task DeleteSigningKeyAsync() {
+    var name = await ChooseSigningKeyAsync("Delete Signing Key");
+    if (name == null || !await Dialogs.Confirm(
+            "Delete Signing Key", $"Delete stored key '{name}'?")) {
+      return;
+    }
+
+    MAVAuthKeys.Keys.Remove(name);
+    MAVAuthKeys.Save();
+    if (Settings.Instance["mavlink_signing_key_name"] == name) {
+      Settings.Instance["mavlink_signing_key_name"] = "";
+      Settings.Instance.Save();
+    }
+    AppendLog($"MAVLink signing key '{name}' deleted.");
+  }
+
+  private async Task DisableSigningAsync() {
+    if (!RequireConnection() || !await Dialogs.Confirm(
+            "Disable MAVLink Signing",
+            "Disable signing on the connected vehicle and this link?")) {
+      return;
+    }
+
+    var mav = _comPort.MAV;
+    _comPort.setupSigning(mav.sysid, mav.compid, "");
+    Settings.Instance["mavlink_signing_key_name"] = "";
+    Settings.Instance.Save();
+    AppendLog("MAVLink signing disabled.");
+  }
+
+  private static async Task<string?> ChooseSigningKeyAsync(string title) {
+    var names = MAVAuthKeys.Keys.Keys.OrderBy(name => name).ToArray();
+    if (names.Length == 0) {
+      await Dialogs.Alert(title, "No signing keys are stored. Add one first.");
+      return null;
+    }
+
+    return await Dialogs.Choice(title, "Select a stored key", names);
+  }
 
   private async Task NoticeAsync(string name, string desc, string opens) {
     AppendLog($"{name}: not yet ported (upstream opens {opens}).");

@@ -1,24 +1,24 @@
 using System;
 using System.Linq;
 using Avalonia;
-using Avalonia.Markup.Xaml.Styling;
+using Avalonia.Controls;
 using MissionPlanner.Utilities;
+using MissionPlannerAvalonia.Theme.Palettes;
 
 namespace MissionPlannerAvalonia.Services;
 
 public static class ThemeService {
   public static readonly string[] Names = { "Classic", "Emerald", "Lime Refined", "Deep Forest" };
 
-  private static readonly Uri _base = new("avares://MissionPlannerAvalonia/App.axaml");
-  private static ResourceInclude? _current;
+  private static ResourceDictionary? _current;
 
   public static string Current { get; private set; } = "Classic";
 
-  private static string PathFor(string name) => name switch {
-    "Emerald" => "avares://MissionPlannerAvalonia/Theme/Palettes/Emerald.axaml",
-    "Lime Refined" => "avares://MissionPlannerAvalonia/Theme/Palettes/LimeRefined.axaml",
-    "Deep Forest" => "avares://MissionPlannerAvalonia/Theme/Palettes/DeepForest.axaml",
-    _ => "avares://MissionPlannerAvalonia/Theme/Palettes/Classic.axaml",
+  private static ResourceDictionary PaletteFor(string name) => name switch {
+    "Emerald" => new EmeraldPalette(),
+    "Lime Refined" => new LimeRefinedPalette(),
+    "Deep Forest" => new DeepForestPalette(),
+    _ => new ClassicPalette(),
   };
 
   public static void Apply(string name) {
@@ -36,7 +36,7 @@ public static class ThemeService {
       md.Remove(_current);
     }
 
-    _current = new ResourceInclude(_base) { Source = new Uri(PathFor(name)) };
+    _current = PaletteFor(name);
     md.Add(_current);
     Current = name;
     Settings.Instance["colortheme"] = name;

@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MODE="${1:-all}"
+case "$MODE" in
+  all|tar|deb) ;;
+  *)
+    echo "Usage: $0 [all|tar|deb]" >&2
+    exit 2
+    ;;
+esac
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+APP_PROJECT="$ROOT_DIR/src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj"
+DOTNET="${DOTNET:-dotnet}"
+CONFIGURATION="${CONFIGURATION:-Release}"
+RID="${RID:-linux-x64}"
+OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/out/packages}"
+PUBLISH_PARENT="${PUBLISH_PARENT:-$ROOT_DIR/out}"
+
+if [[ "$RID" != "linux-x64" ]]; then
+  echo "The Debian and tar packaging target currently supports RID=linux-x64 only." >&2
+  exit 2
+fi
+
+VERSION="${VERSION:-$($DOTNET msbuild "$APP_PROJECT" -nologo -getProperty:Version)}"
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+  echo "Package VERSION must be numeric (YEAR.MONTH or YEAR.MONTH.PATCH): '$VERSION'" >&2
+  exit 2
+fi
+IFS=. read -r _version_year _version_month _version_patch <<< "$VERSION"
+VERSION_PATCH="${VERSION_PATCH:-${_version_patch:-0}}"
+FILE_VERSION="${FILE_VERSION:-$VERSION.0}"
+PACKAGE_ARCH="amd64"
+DIR_NAME="MissionPlannerAvalonia-$VERSION-$RID"
+PUBLISH_DIR="$PUBLISH_PARENT/$DIR_NAME"
+TAR_PATH="$OUTPUT_DIR/$DIR_NAME.tar.gz"
+DEB_PATH="$OUTPUT_DIR/missionplanner-avalonia_${VERSION}_${PACKAGE_ARCH}.deb"
+BUILD_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT_DIR" log -1 --format=%ct)}"
+export SOURCE_DATE_EPOCH="$BUILD_EPOCH"
+
+case "$PUBLISH_DIR" in
+  /|""|"$PUBLISH_PARENT")
+    echo "Refusing unsafe publish directory: '$PUBLISH_DIR'" >&2
+    exit 2
+    ;;
+esac
+
+WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/missionplanner-package.XXXXXXXX")"
+cleanup() {
+  rm -rf -- "$WORK_ROOT"
+}
+trap cleanup EXIT
+
+PUBLISH_TEMP="$WORK_ROOT/publish"
+mkdir -p "$PUBLISH_TEMP" "$OUTPUT_DIR" "$PUBLISH_PARENT"
+
+echo "Publishing $DIR_NAME"
+# VERSION is also a reserved MSBuild property. Keep our package version out of the
+# environment and pass only VersionPatch, otherwise it leaks into upstream projects.
+env -u VERSION "$DOTNET" publish "$APP_PROJECT" \
+  -c "$CONFIGURATION" \
+  -r "$RID" \
+  --self-contained true \
+  -m:1 \
+  -p:DebugType=none \
+  -p:VersionPatch="$VERSION_PATCH" \
+  -p:FileVersion="$FILE_VERSION" \
+  -p:AssemblyVersion="$FILE_VERSION" \
+  -o "$PUBLISH_TEMP"
+
+test -x "$PUBLISH_TEMP/MissionPlannerAvalonia"
+for unwanted in libusb-1.0.dll simpleble-c.dll simpleble.dll; do
+  if [[ -e "$PUBLISH_TEMP/$unwanted" ]]; then
+    echo "Linux publish contains a Windows-native library: $unwanted" >&2
+    exit 1
+  fi
+done
+
+# NuGet packages can carry host checkout permissions (including writable or executable
+# managed assemblies). Normalize the release tree; only the ELF apphost is executed.
+find "$PUBLISH_TEMP" -type d -exec chmod 0755 {} +
+find "$PUBLISH_TEMP" -type f -exec chmod 0644 {} +
+chmod 0755 "$PUBLISH_TEMP/MissionPlannerAvalonia"
+if [[ -f "$PUBLISH_TEMP/createdump" ]]; then
+  chmod 0755 "$PUBLISH_TEMP/createdump"
+fi
+
+mkdir -p "$PUBLISH_DIR"
+find "$PUBLISH_DIR" -mindepth 1 -delete
+cp -a "$PUBLISH_TEMP/." "$PUBLISH_DIR/"
+chmod 0755 "$PUBLISH_DIR/MissionPlannerAvalonia"
+
+build_tar() {
+  local tar_root="$WORK_ROOT/tar"
+  local tar_app="$tar_root/$DIR_NAME"
+  mkdir -p "$tar_app"
+  cp -a "$PUBLISH_TEMP/." "$tar_app/"
+  cp "$SCRIPT_DIR/install.sh" "$tar_app/"
+  cp "$SCRIPT_DIR/missionplanner-avalonia.desktop" "$tar_app/"
+  cp "$SCRIPT_DIR/missionplanner-avalonia.png" "$tar_app/"
+  cp "$ROOT_DIR/LICENSE" "$tar_app/"
+  cp "$ROOT_DIR/NOTICE.md" "$tar_app/"
+  chmod 0755 "$tar_app/MissionPlannerAvalonia" "$tar_app/install.sh"
+
+  rm -f -- "$TAR_PATH"
+  tar --sort=name \
+      --mtime="@$BUILD_EPOCH" \
+      --owner=0 --group=0 --numeric-owner \
+      -czf "$TAR_PATH" -C "$tar_root" "$DIR_NAME"
+  echo "Created $TAR_PATH"
+}
+
+build_deb() {
+  local deb_root="$WORK_ROOT/deb"
+  local app_dir="$deb_root/usr/lib/missionplanner-avalonia"
+  local doc_dir="$deb_root/usr/share/doc/missionplanner-avalonia"
+  local installed_size
+
+  mkdir -p \
+    "$deb_root/DEBIAN" \
+    "$app_dir" \
+    "$deb_root/usr/bin" \
+    "$deb_root/usr/share/applications" \
+    "$deb_root/usr/share/icons/hicolor/256x256/apps" \
+    "$deb_root/usr/share/lintian/overrides" \
+    "$deb_root/usr/share/man/man1" \
+    "$doc_dir"
+
+  cp -a "$PUBLISH_TEMP/." "$app_dir/"
+  : > "$app_dir/.package-managed"
+  cp "$SCRIPT_DIR/debian/missionplanner-avalonia" "$deb_root/usr/bin/missionplanner-avalonia"
+  cp "$SCRIPT_DIR/debian/missionplanner-avalonia.desktop" \
+    "$deb_root/usr/share/applications/missionplanner-avalonia.desktop"
+  cp "$SCRIPT_DIR/missionplanner-avalonia.png" \
+    "$deb_root/usr/share/icons/hicolor/256x256/apps/missionplanner-avalonia.png"
+  cp "$SCRIPT_DIR/debian/copyright" "$doc_dir/copyright"
+  cp "$ROOT_DIR/NOTICE.md" "$doc_dir/NOTICE.md"
+  cp "$SCRIPT_DIR/debian/lintian-overrides" \
+    "$deb_root/usr/share/lintian/overrides/missionplanner-avalonia"
+  cp "$SCRIPT_DIR/debian/postinst" "$deb_root/DEBIAN/postinst"
+  cp "$SCRIPT_DIR/debian/postrm" "$deb_root/DEBIAN/postrm"
+
+  gzip -n -9 -c "$SCRIPT_DIR/debian/missionplanner-avalonia.1" \
+    > "$deb_root/usr/share/man/man1/missionplanner-avalonia.1.gz"
+  {
+    echo "missionplanner-avalonia ($VERSION) unstable; urgency=medium"
+    echo
+    echo "  * Build the self-contained cross-platform Mission Planner port."
+    echo
+    echo " -- Sema Aviation <opensource@sema-aviation.com>  $(date -R -d "@$BUILD_EPOCH")"
+  } | gzip -n -9 > "$doc_dir/changelog.gz"
+
+  find "$deb_root" -type d -exec chmod 0755 {} +
+  find "$deb_root" -type f -exec chmod 0644 {} +
+  chmod 0755 \
+    "$app_dir/MissionPlannerAvalonia" \
+    "$deb_root/usr/bin/missionplanner-avalonia" \
+    "$deb_root/DEBIAN/postinst" \
+    "$deb_root/DEBIAN/postrm"
+  if [[ -f "$app_dir/createdump" ]]; then
+    chmod 0755 "$app_dir/createdump"
+  fi
+
+  (
+    cd "$deb_root"
+    find usr -type f -print0 | sort -z | xargs -0 md5sum > DEBIAN/md5sums
+  )
+  installed_size="$(du -sk "$deb_root" | cut -f1)"
+
+  sed \
+    -e "s/@VERSION@/$VERSION/g" \
+    -e "s/@ARCH@/$PACKAGE_ARCH/g" \
+    -e "s/@INSTALLED_SIZE@/$installed_size/g" \
+    "$SCRIPT_DIR/debian/control.in" > "$deb_root/DEBIAN/control"
+
+  if command -v desktop-file-validate >/dev/null 2>&1; then
+    desktop-file-validate \
+      "$deb_root/usr/share/applications/missionplanner-avalonia.desktop"
+  fi
+
+  rm -f -- "$DEB_PATH"
+  dpkg-deb --root-owner-group --build "$deb_root" "$DEB_PATH"
+  echo "Created $DEB_PATH"
+}
+
+case "$MODE" in
+  all)
+    build_tar
+    build_deb
+    ;;
+  tar) build_tar ;;
+  deb) build_deb ;;
+esac

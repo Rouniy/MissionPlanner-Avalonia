@@ -1,0 +1,65 @@
+<Project>
+  <!-- Keep security overrides for vulnerable upstream transitive dependencies outside
+       the submodule so updating MissionPlanner does not create a permanent fork. -->
+  <ItemGroup>
+    <PackageReference Update="log4net" Version="3.3.2" />
+    <PackageReference Update="SharpCompress" Version="0.48.0" />
+    <PackageReference Update="SkiaSharp" Version="2.88.6" />
+    <PackageReference Update="SkiaSharp.NativeAssets.Linux" Version="2.88.6" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'MissionPlanner.Utilities'">
+    <Compile Include="$(MSBuildThisFileDirectory)src/UpstreamCompat/MonoRuntimeSettingsCompatibility.cs"
+             Link="Compatibility/MonoRuntimeSettingsCompatibility.cs" />
+  </ItemGroup>
+
+  <!-- Mission Planner's Settings.GetDataDirectory() uses /usr/share on CoreCLR Linux and
+       aliases all downloaded data to its config folder under Mono. Generate a build-only
+       compatibility copy with an explicit data/cache override, leaving the git submodule clean. -->
+  <UsingTask TaskName="PatchMissionPlannerSettings"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <SourceFile ParameterType="System.String" Required="true" />
+      <DestinationFile ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.IO" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        string source = File.ReadAllText(SourceFile).Replace("\r\n", "\n");
+        const string field = "public static string CustomUserDataDirectory = \"\";";
+        const string extraField = "public static string CustomDataDirectory = \"\";";
+        if (!source.Contains(extraField)) {
+          source = source.Replace(field, extraField + "\n\n        " + field);
+        }
+
+        string methodMarker = "public static string GetDataDirectory()\n        {";
+        string overrideCode = methodMarker + "\n"
+            + "            if (!string.IsNullOrWhiteSpace(CustomDataDirectory))\n"
+            + "                return Path.GetFullPath(CustomDataDirectory) + Path.DirectorySeparatorChar;";
+        if (!source.Contains(methodMarker)) {
+          throw new InvalidOperationException("Could not locate Settings.GetDataDirectory() in upstream source.");
+        }
+        source = source.Replace(methodMarker, overrideCode);
+        Directory.CreateDirectory(Path.GetDirectoryName(DestinationFile));
+        File.WriteAllText(DestinationFile, source);
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="GenerateMissionPlannerSettingsCompatibility"
+          BeforeTargets="CoreCompile"
+          Condition="'$(MSBuildProjectName)' == 'MissionPlanner.Utilities'">
+    <PropertyGroup>
+      <_UpstreamSettingsSource>$(MSBuildProjectDirectory)/Settings.cs</_UpstreamSettingsSource>
+      <_CompatibleSettingsSource>$(IntermediateOutputPath)Settings.AppPaths.g.cs</_CompatibleSettingsSource>
+    </PropertyGroup>
+    <PatchMissionPlannerSettings SourceFile="$(_UpstreamSettingsSource)"
+                                 DestinationFile="$(_CompatibleSettingsSource)" />
+    <ItemGroup>
+      <Compile Remove="Settings.cs" />
+      <Compile Include="$(_CompatibleSettingsSource)" />
+    </ItemGroup>
+  </Target>
+</Project>

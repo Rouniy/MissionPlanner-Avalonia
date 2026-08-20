@@ -1,0 +1,142 @@
+using System;
+using System.IO;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Headless.XUnit;
+using Avalonia.Media.Imaging;
+using MissionPlannerAvalonia.Controls;
+using MissionPlannerAvalonia.Services;
+using MissionPlannerAvalonia.ViewModels;
+using MissionPlannerAvalonia.Views;
+using Settings = MissionPlanner.Utilities.Settings;
+
+namespace MissionPlannerAvalonia.Tests;
+
+public class UpstreamPortTests {
+  [Fact]
+  public void App_paths_follow_each_platform_convention() {
+    static string? EmptyEnvironment(string _) => null;
+
+    var linux = AppPaths.Resolve(
+        AppPlatform.Linux, "/home/test", "", "", EmptyEnvironment);
+    Assert.Equal("/home/test/.config/MissionPlannerAvalonia", linux.ConfigRoot);
+    Assert.Equal("/home/test/.local/share/MissionPlannerAvalonia", linux.DataRoot);
+    Assert.Equal("/home/test/.cache/MissionPlannerAvalonia", linux.CacheRoot);
+    Assert.Equal("/home/test/.local/state/MissionPlannerAvalonia", linux.StateRoot);
+
+    var windows = AppPaths.Resolve(
+        AppPlatform.Windows,
+        @"C:\Users\test",
+        @"C:\Users\test\AppData\Roaming",
+        @"C:\Users\test\AppData\Local",
+        EmptyEnvironment);
+    Assert.EndsWith(Path.Combine("Roaming", "MissionPlannerAvalonia"), windows.ConfigRoot);
+    Assert.EndsWith(Path.Combine("Local", "MissionPlannerAvalonia"), windows.DataRoot);
+
+    var mac = AppPaths.Resolve(
+        AppPlatform.MacOS, "/Users/test", "", "", EmptyEnvironment);
+    Assert.Equal(
+        "/Users/test/Library/Application Support/MissionPlannerAvalonia",
+        mac.ConfigRoot);
+    Assert.Equal("/Users/test/Library/Caches/MissionPlannerAvalonia", mac.CacheRoot);
+  }
+
+  [Fact]
+  public void Linux_paths_honor_only_absolute_xdg_overrides() {
+    var values = new Dictionary<string, string?> {
+      ["XDG_CONFIG_HOME"] = "/xdg/config",
+      ["XDG_DATA_HOME"] = "relative-data-is-invalid",
+      ["XDG_CACHE_HOME"] = "/xdg/cache",
+      ["XDG_STATE_HOME"] = "/xdg/state",
+    };
+    var layout = AppPaths.Resolve(
+        AppPlatform.Linux,
+        "/home/test",
+        "",
+        "",
+        name => values.GetValueOrDefault(name));
+
+    Assert.Equal("/xdg/config/MissionPlannerAvalonia", layout.ConfigRoot);
+    Assert.Equal("/home/test/.local/share/MissionPlannerAvalonia", layout.DataRoot);
+    Assert.Equal("/xdg/cache/MissionPlannerAvalonia", layout.CacheRoot);
+    Assert.Equal("/xdg/state/MissionPlannerAvalonia", layout.StateRoot);
+  }
+
+  [Fact]
+  public void Upstream_data_directory_is_redirected_to_the_cache_directory() {
+    AppPaths.Initialize();
+
+    Assert.Equal(
+        Path.GetFullPath(AppPaths.CacheRoot).TrimEnd(Path.DirectorySeparatorChar),
+        Path.GetFullPath(Settings.GetDataDirectory()).TrimEnd(Path.DirectorySeparatorChar));
+    Assert.StartsWith(
+        Path.GetFullPath(AppPaths.ConfigRoot),
+        Path.GetFullPath(Settings.GetUserDataDirectory()));
+  }
+
+  [Fact]
+  public void LogOrganizerFindsAllSupportedExtensionsCaseInsensitively() {
+    var root = Path.Combine(Path.GetTempPath(), "mp-log-organizer-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(Path.Combine(root, "nested"));
+    try {
+      File.WriteAllText(Path.Combine(root, "one.tlog"), "data");
+      File.WriteAllText(Path.Combine(root, "two.RLOG"), "data");
+      File.WriteAllText(Path.Combine(root, "nested", "three.BIN"), "data");
+      File.WriteAllText(Path.Combine(root, "nested", "four.log"), "data");
+      File.WriteAllText(Path.Combine(root, "ignore.txt"), "data");
+
+      Assert.Equal(4, LogOrganizer.FindCandidates(root).Length);
+    } finally {
+      Directory.Delete(root, recursive: true);
+    }
+  }
+
+  [AvaloniaFact]
+  public async Task Custom_flight_action_can_be_registered_invoked_and_removed() {
+    var vm = new FlightDataViewModel();
+    string? invoked = null;
+
+    vm.RegisterCustomAction("Extension_Action", value => invoked = value,
+        after: "Return_To_Launch");
+
+    Assert.Equal("Extension_Action",
+        vm.Actions[vm.Actions.IndexOf("Return_To_Launch") + 1]);
+
+    vm.SelectedAction = "Extension_Action";
+    await vm.DoActionCommand.ExecuteAsync(null);
+
+    Assert.Equal("Extension_Action", invoked);
+    Assert.True(vm.UnregisterCustomAction("Extension_Action"));
+    Assert.DoesNotContain("Extension_Action", vm.Actions);
+  }
+
+  [AvaloniaFact]
+  public void Hud_custom_paint_runs_after_builtin_rendering() {
+    var hud = new HudControl();
+    int calls = 0;
+    hud.CustomPaint += (_, _) => calls++;
+    hud.Measure(new Size(640, 480));
+    hud.Arrange(new Rect(0, 0, 640, 480));
+
+    using var target = new RenderTargetBitmap(new PixelSize(640, 480));
+    target.Render(hud);
+
+    Assert.Equal(1, calls);
+  }
+
+  [AvaloniaFact]
+  public void Restored_advanced_windows_and_typed_palettes_construct() {
+    foreach (var theme in ThemeService.Names) {
+      ThemeService.Apply(theme);
+      Assert.Equal(theme, ThemeService.Current);
+    }
+
+    var windows = new Window[] {
+      new ConfigFFTWindow(),
+      new SpectrogramWindow(),
+      new ProximityWindow(),
+      new WarningManagerWindow(),
+    };
+    Assert.All(windows, window => Assert.NotNull(window.Content));
+  }
+}

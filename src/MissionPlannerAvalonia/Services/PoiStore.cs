@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using MissionPlanner.Utilities;
 
 namespace MissionPlannerAvalonia.Services;
 
@@ -9,15 +8,7 @@ public sealed record PoiPoint(double Lat, double Lng, double Alt, string Name);
 
 public static class PoiStore {
 
-  public static string FilePath {
-    get {
-      try {
-        return Path.Combine(Settings.GetUserDataDirectory(), "poi.txt");
-      } catch {
-        return Path.Combine(Path.GetTempPath(), "MissionPlannerAvalonia", "poi.txt");
-      }
-    }
-  }
+  public static string FilePath => AppPaths.PoiFilePath;
 
   private static readonly List<PoiPoint> _points = new();
 

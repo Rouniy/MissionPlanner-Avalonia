@@ -1,5 +1,6 @@
 <ResourceDictionary xmlns="https://github.com/avaloniaui"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    x:Class="MissionPlannerAvalonia.Theme.Palettes.LimeRefinedPalette">
   <Color x:Key="MpAccentColor">#A3E635</Color>
   <Color x:Key="MpAccent2Color">#84CC16</Color>
   <Color x:Key="MpControlBgColor">#202324</Color>

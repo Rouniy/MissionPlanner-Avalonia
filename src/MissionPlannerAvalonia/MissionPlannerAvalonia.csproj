@@ -7,6 +7,17 @@
     <AssemblyName>MissionPlannerAvalonia</AssemblyName>
     <RootNamespace>MissionPlannerAvalonia</RootNamespace>
     <ApplicationIcon>Assets/appicon.ico</ApplicationIcon>
+    <!-- Keep PublishAot local to the executable project. Passing PublishAot on the
+         command line propagates it to the netstandard2.0 upstream projects. -->
+    <PublishAot Condition="'$(EnableNativeAot)' == 'true'">true</PublishAot>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <!-- VideoLAN.LibVLC.Windows enables all three architectures for AnyCPU unless
+         told otherwise. A win-x64 artifact only needs the x64 runtime. -->
+    <VlcWindowsX64Enabled>true</VlcWindowsX64Enabled>
+    <VlcWindowsX86Enabled>false</VlcWindowsX86Enabled>
+    <VlcWindowsArm64Enabled>false</VlcWindowsArm64Enabled>
   </PropertyGroup>
 
   <ItemGroup>
@@ -39,10 +50,12 @@
     <PackageReference Include="MetadataExtractor" />
   </ItemGroup>
 
-  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+  <!-- The official VideoLAN.LibVLC.Mac package contains an x86-64 dylib only. Keep the
+       operational macOS artifact x64 until a compatible arm64 runtime can be supplied. -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-x64'">
     <PackageReference Include="VideoLAN.LibVLC.Mac" />
   </ItemGroup>
-  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) Or '$(RuntimeIdentifier)' == 'win-x64'">
     <PackageReference Include="VideoLAN.LibVLC.Windows" />
   </ItemGroup>
 
@@ -65,5 +78,35 @@
     <Content Include="../../external/MissionPlanner/mavcmd.xml" Link="mavcmd.xml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="../../external/MissionPlanner/ParameterFactMetaData.xml" Link="ParameterFactMetaData.xml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../../external/MissionPlanner/APMotorLayout.json" Link="APMotorLayout.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../../external/MissionPlanner/camerasBuiltin.xml" Link="camerasBuiltin.xml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../../external/MissionPlanner/block_plane_0.dae" Link="block_plane_0.dae">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../../external/MissionPlanner/graphs/*.xml" Link="graphs/%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MissionPlannerAvalonia.Tests" />
+  </ItemGroup>
+
+  <Target Name="RemoveWindowsNativeBinariesFromLinuxPublish"
+          AfterTargets="ComputeFilesToPublish"
+          Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+                             Condition="'%(Filename)%(Extension)' == 'libusb-1.0.dll' Or
+                                        '%(Filename)%(Extension)' == 'simpleble-c.dll' Or
+                                        '%(Filename)%(Extension)' == 'simpleble.dll'" />
+    </ItemGroup>
+  </Target>
 </Project>

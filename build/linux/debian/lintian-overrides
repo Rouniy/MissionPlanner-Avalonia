@@ -1,0 +1,5 @@
+# A self-contained .NET application intentionally carries its matching CoreCLR,
+# compression runtime and SkiaSharp native assets instead of using a system runtime.
+missionplanner-avalonia: embedded-library * [usr/lib/missionplanner-avalonia/*]
+# libSkiaSharp is a prebuilt NuGet runtime asset; stripping it here is not safe.
+missionplanner-avalonia: unstripped-binary-or-object [usr/lib/missionplanner-avalonia/libSkiaSharp.so]

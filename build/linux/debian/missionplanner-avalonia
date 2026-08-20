@@ -1,0 +1,3 @@
+#!/bin/sh
+export MISSIONPLANNER_PACKAGE_MANAGED=1
+exec /usr/lib/missionplanner-avalonia/MissionPlannerAvalonia "$@"

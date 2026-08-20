@@ -70,9 +70,7 @@ public class SitlLauncher {
 
   public string TcpEndpoint => $"tcp:{_host}:{_tcpPort}";
 
-  private static string CacheDir => Path.Combine(
-      Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-      "MissionPlannerAvalonia", "sitl");
+  private static string CacheDir => AppPaths.SitlCacheRoot;
 
   public static (string ExeName, string DefaultModel) Map(SitlVehicle vehicle) => vehicle switch {
     SitlVehicle.Plane => ("ArduPlane", "plane"),

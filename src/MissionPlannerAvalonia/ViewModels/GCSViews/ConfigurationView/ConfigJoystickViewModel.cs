@@ -55,8 +55,7 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
   private string _loadedConfig = "Loaded config: (default xml)";
 
   [ObservableProperty]
-  private string _status =
-      "Select a joystick and map each RC channel to an axis. DirectInput only enumerates devices on Windows.";
+  private string _status = InitialStatus();
 
   public bool IsEnabled => _joystick != null && _joystick.enabled;
 
@@ -98,8 +97,28 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
     } else if (Devices.Count > 0) {
       SelectedDevice = Devices[0];
     } else {
-      Status = "No joysticks detected (DirectInput finds devices on Windows only).";
+      Status = NoDevicesStatus();
     }
+  }
+
+  private static string InitialStatus() {
+    if (OperatingSystem.IsLinux()) {
+      return "Select a joystick and map each RC channel to an axis. This system uses the kernel joydev interface.";
+    }
+    if (OperatingSystem.IsWindows()) {
+      return "Select a joystick and map each RC channel to an axis. This system uses DirectInput.";
+    }
+    return "Select a joystick and map each RC channel to an axis. A native joystick backend is not yet available on this platform.";
+  }
+
+  private static string NoDevicesStatus() {
+    if (OperatingSystem.IsLinux()) {
+      return "No joysticks detected under /dev/input/by-id (connect a joydev-compatible device).";
+    }
+    if (OperatingSystem.IsWindows()) {
+      return "No DirectInput joysticks detected.";
+    }
+    return "Joystick input is not yet supported on this platform.";
   }
 
   [RelayCommand]

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
@@ -20,6 +21,7 @@ public partial class FlightDataViewModel : ViewModelBase {
   private readonly DispatcherTimer _timer;
   private readonly TlogPlayer _tlog = new();
   private readonly LuaScriptHost _lua = new();
+  private readonly Dictionary<string, Action<string>> _customActions = new(StringComparer.Ordinal);
 
   [ObservableProperty]
   private double _roll;
@@ -874,6 +876,31 @@ public partial class FlightDataViewModel : ViewModelBase {
     await Views.GeoRefWindow.OpenWith();
   }
 
+  [RelayCommand]
+  private async Task OrganizeLogs() {
+    var root = Settings.Instance.LogDir;
+    var candidates = await Task.Run(() => LogOrganizer.FindCandidates(root));
+    if (candidates.Length == 0) {
+      LogStatus = $"No tlog/rlog/bin/log files found in {root}.";
+      return;
+    }
+
+    if (!await Dialogs.Confirm(
+            "Organize Logs",
+            $"Move {candidates.Length} log file(s) into vehicle/system folders under:\n{root}\n\n" +
+            "Associated files with the same base name will be moved too.")) {
+      return;
+    }
+
+    LogStatus = $"Organizing {candidates.Length} log file(s)…";
+    try {
+      var processed = await Task.Run(() => LogOrganizer.Organize(root));
+      LogStatus = $"Organized {processed} tlog/rlog/bin/log file(s) under {root}.";
+    } catch (Exception ex) {
+      LogStatus = "Log organization failed: " + ex.Message;
+    }
+  }
+
   [ObservableProperty]
   private double _tilt;
 
@@ -1018,6 +1045,46 @@ public partial class FlightDataViewModel : ViewModelBase {
             "Engine_Stop",
             "Terminate_Flight",
       };
+
+  /// <summary>
+  /// Registers an extension-provided action in the Flight Data action selector.
+  /// </summary>
+  public void RegisterCustomAction(
+      string action, Action<string> handler, string? after = null, string? before = null) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(action);
+    ArgumentNullException.ThrowIfNull(handler);
+    if (Actions.Contains(action) || _customActions.ContainsKey(action)) {
+      throw new InvalidOperationException($"Action {action} already exists.");
+    }
+
+    int index = -1;
+    if (after != null) {
+      int afterIndex = Actions.IndexOf(after);
+      if (afterIndex >= 0) {
+        index = afterIndex + 1;
+      }
+    }
+    if (before != null) {
+      int beforeIndex = Actions.IndexOf(before);
+      if (beforeIndex >= 0) {
+        index = beforeIndex;
+      }
+    }
+
+    _customActions.Add(action, handler);
+    if (index >= 0) {
+      Actions.Insert(index, action);
+    } else {
+      Actions.Add(action);
+    }
+  }
+
+  public bool UnregisterCustomAction(string action) {
+    if (!_customActions.Remove(action)) {
+      return false;
+    }
+    return Actions.Remove(action);
+  }
 
   [ObservableProperty]
   private string _selectedAction = "Return_To_Launch";
@@ -1444,11 +1511,21 @@ public partial class FlightDataViewModel : ViewModelBase {
   [RelayCommand]
   [Obsolete]
   private async Task DoAction() {
+    var a = SelectedAction;
+    if (_customActions.TryGetValue(a, out var customAction)) {
+      try {
+        customAction(a);
+        Log($"Custom action {a} completed");
+      } catch (Exception ex) {
+        Log($"Custom action {a} failed: {ex.Message}");
+      }
+      return;
+    }
+
     if (!Connected) {
       Messages += "Not connected.\n";
       return;
     }
-    var a = SelectedAction;
     await Task.Run(() => RunAction(a));
     Log($"Action {a} sent");
   }
