@@ -160,6 +160,19 @@ internal static class MapTileSourceFactory {
     return new MapPrefetchResult(tiles.Count, downloaded, failed);
   }
 
+  /// <summary>
+  /// Reads one tile through the provider-specific persistent cache without ever using
+  /// the network. Directory-wide consumers such as Log Index must not turn a scan of
+  /// hundreds of logs into an unbounded tile download job.
+  /// </summary>
+  internal static Task<byte[]?> GetCachedTileAsync(
+      string mapType, TileInfo tile, CancellationToken cancellationToken = default) {
+    string normalized = NormalizeMapType(mapType);
+    HttpTileSource source = CreateSource(
+        normalized, UrlTemplateFor(normalized), MapTileAccessMode.CacheOnly);
+    return source.GetTileAsync(_prefetchClient, tile, cancellationToken);
+  }
+
   internal static TileLayer CreateLayer(
       string name,
       string urlTemplate,

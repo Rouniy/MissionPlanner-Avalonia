@@ -210,9 +210,6 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
   private bool _paramsBg;
 
   [ObservableProperty]
-  private bool _useCachedParams;
-
-  [ObservableProperty]
   private bool _slowMachine;
 
   [ObservableProperty]
@@ -310,7 +307,6 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
     AutoParamCommit = s.GetBoolean("autoParamCommit", AutoParamCommit);
     ShowNoFly = s.GetBoolean("ShowNoFly", ShowNoFly);
     ParamsBg = s.GetBoolean("Params_BG", ParamsBg);
-    UseCachedParams = s.GetBoolean("UseCachedParams", UseCachedParams);
     SlowMachine = s.GetBoolean("SlowMachine", SlowMachine);
     GdiPlus = s.GetBoolean("CHK_GDIPlus", GdiPlus);
     AnalyticsOptOut = s.GetBoolean("analyticsoptout", AnalyticsOptOut);
@@ -362,13 +358,15 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
   }
 
   [RelayCommand]
-  private void RerequestParams() {
+  private async System.Threading.Tasks.Task RerequestParams() {
     if (_comPort.BaseStream?.IsOpen != true) {
       return;
     }
 
     try {
-      _comPort.getParamList();
+      await AppState.ParameterLoads.LoadLatestAsync(
+          _comPort.MAV.sysid, _comPort.MAV.compid);
+      AppState.RaiseConnectionChanged();
     } catch {
 
     }
@@ -725,11 +723,6 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
   partial void OnParamsBgChanged(bool value) {
     if (_loading) return;
     Settings.Instance["Params_BG"] = value.ToString();
-  }
-
-  partial void OnUseCachedParamsChanged(bool value) {
-    if (_loading) return;
-    Settings.Instance["UseCachedParams"] = value.ToString();
   }
 
   partial void OnSlowMachineChanged(bool value) {

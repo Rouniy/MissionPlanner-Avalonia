@@ -4,7 +4,8 @@
   <ItemGroup>
     <PackageReference Update="log4net" Version="3.3.2" />
     <PackageReference Update="SharpCompress" Version="0.48.0" />
-    <PackageReference Update="SkiaSharp" Version="2.88.6" />
+    <PackageReference Update="SkiaSharp" Version="2.88.6"
+                      Condition="'$(MSBuildProjectName)' != 'MissionPlannerAvalonia'" />
     <PackageReference Update="SkiaSharp.NativeAssets.Linux" Version="2.88.6" />
   </ItemGroup>
 
@@ -60,6 +61,56 @@
     <ItemGroup>
       <Compile Remove="Settings.cs" />
       <Compile Include="$(_CompatibleSettingsSource)" />
+    </ItemGroup>
+  </Target>
+
+  <!-- The upstream MAVState writes every completed parameter list to paramcache automatically.
+       This port intentionally requires a live read for each connection/device selection: showing
+       parameters from a previous run can lead an operator to configure the wrong UDP device.
+       Generate a build-only copy so the pinned Mission Planner submodule remains untouched. -->
+  <UsingTask TaskName="DisableMissionPlannerParameterPersistence"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <SourceFile ParameterType="System.String" Required="true" />
+      <DestinationFile ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.IO" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        string source = File.ReadAllText(SourceFile).Replace("\r\n", "\n");
+        const string startMarker = "            bool queuewrite = false;\n";
+        const string endMarker = "            this.packets = new Dictionary<uint, Queue<MAVLinkMessage>>(byte.MaxValue);";
+        int start = source.IndexOf(startMarker, StringComparison.Ordinal);
+        int end = source.IndexOf(endMarker, StringComparison.Ordinal);
+        if (start < 0 || end <= start) {
+          throw new InvalidOperationException("Could not locate MAVState parameter-cache subscription in upstream source.");
+        }
+        const string replacement =
+            "            // MissionPlanner-Avalonia safety policy: parameter lists are session-only.\n";
+        source = source.Substring(0, start) + replacement + source.Substring(end);
+        Directory.CreateDirectory(Path.GetDirectoryName(DestinationFile));
+        File.WriteAllText(DestinationFile, source);
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="GenerateMissionPlannerMavStateCompatibility"
+          BeforeTargets="CoreCompile"
+          Condition="'$(MSBuildProjectName)' == 'MissionPlanner.ArduPilot'">
+    <PropertyGroup>
+      <_UpstreamMavStateSource>$(MSBuildProjectDirectory)/Mavlink/MAVState.cs</_UpstreamMavStateSource>
+      <_CompatibleMavStateSource>$(IntermediateOutputPath)MAVState.SessionParameters.g.cs</_CompatibleMavStateSource>
+    </PropertyGroup>
+    <DisableMissionPlannerParameterPersistence
+        SourceFile="$(_UpstreamMavStateSource)"
+        DestinationFile="$(_CompatibleMavStateSource)" />
+    <ItemGroup>
+      <!-- MSBuild preserves the default Compile item separator on Windows, so list both forms. -->
+      <Compile Remove="Mavlink/MAVState.cs" />
+      <Compile Remove="Mavlink\MAVState.cs" />
+      <Compile Include="$(_CompatibleMavStateSource)" />
     </ItemGroup>
   </Target>
 </Project>

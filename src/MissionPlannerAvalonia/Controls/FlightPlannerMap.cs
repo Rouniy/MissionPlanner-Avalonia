@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Avalonia;
 using Avalonia.Threading;
 using Mapsui;
@@ -26,7 +27,8 @@ public class FlightPlannerMap : MapControl {
   private readonly WritableLayer _rings = new() { Name = "WpRings" };
   private readonly WritableLayer _waypoints = new() { Name = "Waypoints" };
   private readonly WritableLayer _selection = new() { Name = "Selection" };
-  private readonly WritableLayer _kml = new() { Name = "KmlTrack" };
+  private readonly WritableLayer _mapOverlay = new() { Name = "ImportedMapOverlay" };
+  private readonly WritableLayer _mapOverlayRaster = new() { Name = "ImportedMapRaster" };
   private readonly WritableLayer _vehicle = new() { Name = "Vehicle" };
   private readonly GridLayer _graticule = new("Graticule");
   private readonly DispatcherTimer _timer;
@@ -49,6 +51,7 @@ public class FlightPlannerMap : MapControl {
   private bool _centered;
   private int _dragIndex = -1;
   private bool _pressedOnWaypoint;
+  private readonly List<MPoint> _mapOverlayPoints = [];
 
   private readonly HashSet<int> _groupSet = new();
   private readonly Dictionary<int, (double Lat, double Lng)> _groupSnapshot = new();
@@ -81,7 +84,9 @@ public class FlightPlannerMap : MapControl {
     map.Layers.Add(_route);
     map.Layers.Add(_distLabels);
     map.Layers.Add(_midpoints);
-    map.Layers.Add(_kml);
+    map.Layers.Add(_mapOverlay);
+    // Upstream renders GroundOverlay as a marker after vector KML features.
+    map.Layers.Add(_mapOverlayRaster);
     map.Layers.Add(_home);
     map.Layers.Add(_rings);
     map.Layers.Add(_waypoints);
@@ -277,15 +282,17 @@ public class FlightPlannerMap : MapControl {
   }
 
   public void ShowKmlTrack(IReadOnlyList<(double Lat, double Lng)> track) {
-    _kml.Clear();
-    var pts = new List<MPoint>(track.Count);
-    foreach (var (lat, lng) in track) {
-      var (x, y) = SphericalMercator.FromLonLat(lng, lat);
-      pts.Add(new MPoint(x, y));
-    }
+    ShowMapOverlay(new ImportedMapOverlay(
+        [new ImportedOverlayRoute("KML", track
+            .Select(point => new ImportedGeoPoint(point.Lat, point.Lng)).ToList(),
+            new ImportedMapColor(0x00, 0xC8, 0xFF))],
+        Array.Empty<ImportedOverlayMarker>()));
+  }
 
-    AddPolyline(_kml, pts, new Color(0x00, 0xC8, 0xFF), 3);
-    _kml.DataHasChanged();
+  internal void ShowMapOverlay(ImportedMapOverlay overlay) {
+    _mapOverlayPoints.Clear();
+    _mapOverlayPoints.AddRange(ImportedMapOverlayRenderer.Populate(
+        _mapOverlay, _mapOverlayRaster, overlay));
     RefreshGraphics();
   }
 
@@ -848,6 +855,27 @@ public class FlightPlannerMap : MapControl {
     }
     double padX = (maxX - minX) * 0.1, padY = (maxY - minY) * 0.1;
     Map.Navigator.ZoomToBox(new MRect(minX - padX, minY - padY, maxX + padX, maxY + padY));
+  }
+
+  internal void ZoomToMapOverlay() => ZoomToPoints(_mapOverlayPoints);
+
+  private void ZoomToPoints(IReadOnlyList<MPoint> points) {
+    if (points.Count == 0) {
+      return;
+    }
+    double minX = points.Min(point => point.X);
+    double minY = points.Min(point => point.Y);
+    double maxX = points.Max(point => point.X);
+    double maxY = points.Max(point => point.Y);
+    if (maxX - minX < 1 && maxY - minY < 1) {
+      Map.Navigator.CenterOnAndZoomTo(points[0],
+          156543.03392804097 / Math.Pow(2, 17));
+      return;
+    }
+    double padX = Math.Max((maxX - minX) * 0.1, 1);
+    double padY = Math.Max((maxY - minY) * 0.1, 1);
+    Map.Navigator.ZoomToBox(new MRect(
+        minX - padX, minY - padY, maxX + padX, maxY + padY));
   }
 
   public void RotateBy(double deg) => Map.Navigator.RotateTo(Map.Navigator.Viewport.Rotation + deg);

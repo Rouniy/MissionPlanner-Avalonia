@@ -13,7 +13,7 @@ using MissionPlanner.Utilities;
 
 namespace MissionPlannerAvalonia.ViewModels;
 
-public partial class RawParamsViewModel : ViewModelBase {
+public partial class RawParamsViewModel : ViewModelBase, IDisposable {
   private static readonly HashSet<string> ProtectedFileParameters = new(
       StringComparer.OrdinalIgnoreCase) {
     "SYSID_SW_MREV",
@@ -66,10 +66,8 @@ public partial class RawParamsViewModel : ViewModelBase {
   public bool IsConnected => _comPort.BaseStream?.IsOpen == true;
 
   public RawParamsViewModel() {
-
-    if (!IsConnected && System.IO.File.Exists(CacheFilePath)) {
-      LoadSnapshotFile(CacheFilePath);
-    }
+    AppState.ConnectionChanged += OnConnectionChanged;
+    SynchronizeSelectedVehicle();
   }
 
   partial void OnSearchTextChanged(string value) => ApplyFilter();
@@ -92,9 +90,13 @@ public partial class RawParamsViewModel : ViewModelBase {
     }
 
     try {
-
-      await Task.Run(() => _comPort.getParamListMavftp(_comPort.MAV.sysid, _comPort.MAV.compid));
+      bool loaded = await AppState.ParameterLoads.LoadLatestAsync(
+          _comPort.MAV.sysid, _comPort.MAV.compid);
+      if (!loaded) {
+        return;
+      }
       LoadFromMav();
+      AppState.RaiseConnectionChanged();
       await Services.Dialogs.Alert("Refresh parameters", $"Loaded {_all.Count} parameters.");
     } catch (Exception ex) {
       await Services.Dialogs.Alert("Refresh failed", ex.Message);
@@ -189,9 +191,13 @@ public partial class RawParamsViewModel : ViewModelBase {
     await Services.Dialogs.Alert("Params",
         "The number of available parameters changed. The complete list will now be refreshed.");
     try {
-      await Task.Run(() => _comPort.getParamListMavftp(
-          _comPort.MAV.sysid, _comPort.MAV.compid));
+      bool loaded = await AppState.ParameterLoads.LoadLatestAsync(
+          _comPort.MAV.sysid, _comPort.MAV.compid);
+      if (!loaded) {
+        return;
+      }
       LoadFromMav();
+      AppState.RaiseConnectionChanged();
     } catch (Exception ex) {
       await Services.Dialogs.Alert("Refresh failed", ex.Message);
     }
@@ -403,48 +409,6 @@ public partial class RawParamsViewModel : ViewModelBase {
     }
   }
 
-  public static string CacheFilePath {
-    get {
-      var dir = Services.AppPaths.CacheRoot;
-      System.IO.Directory.CreateDirectory(dir);
-      return Services.AppPaths.RawParamSnapshotPath;
-    }
-  }
-
-  public static void SaveSnapshot(MAVLinkInterface comPort) {
-    try {
-      if (comPort?.MAV?.param == null || comPort.MAV.param.Count == 0) {
-        return;
-      }
-      var table = new Hashtable();
-      foreach (var p in comPort.MAV.param.ToArray()) {
-        table[p.Name] = p.Value;
-      }
-      ParamFile.SaveParamFile(CacheFilePath, table);
-    } catch {
-
-    }
-  }
-
-  private void LoadSnapshotFile(string path) {
-    Dictionary<string, double> fileParams;
-    try {
-      fileParams = ParamFile.loadParamFile(path);
-    } catch (Exception ex) {
-      Status = "Snapshot load failed: " + ex.Message;
-      return;
-    }
-    if (fileParams.Count == 0) {
-      return;
-    }
-
-    var fw = _comPort.MAV.cs.firmware.ToString();
-    var favs = Settings.Instance.GetList("fav_params").ToHashSet();
-    var rows = fileParams.OrderBy(k => k.Key).Select(p => BuildRow(p.Key, p.Value, null, fw, favs));
-    LoadFrom(rows);
-    Status = $"Offline: {_all.Count} parameters from the last connected session. Connect to edit/write.";
-  }
-
   private static bool TryLoadParamFile(string path, out Dictionary<string, double> fileParams) {
     try {
       fileParams = ParamFile.loadParamFile(path);
@@ -522,6 +486,25 @@ public partial class RawParamsViewModel : ViewModelBase {
     var rows = snapshot.Select(p => BuildRow(p.Name, p.Value, p.default_value, fw, favs)).ToList();
     LoadFrom(rows);
   }
+
+  private void OnConnectionChanged() =>
+      Dispatcher.UIThread.Post(SynchronizeSelectedVehicle);
+
+  internal void SynchronizeSelectedVehicle() {
+    if (!IsConnected) {
+      LoadFrom([]);
+      Status = "Not connected. Connect a vehicle or explicitly load a parameter file.";
+      return;
+    }
+
+    LoadFromMav();
+    Status = _comPort.MAV.param.Count == 0
+        ? $"Waiting for parameters from {_comPort.MAV.sysid}:{_comPort.MAV.compid}…"
+        : $"Loaded {_comPort.MAV.param.Count} parameters from "
+          + $"{_comPort.MAV.sysid}:{_comPort.MAV.compid}.";
+  }
+
+  public void Dispose() => AppState.ConnectionChanged -= OnConnectionChanged;
 
   private ParamRow BuildRow(string name, double value, double? def, string fw, HashSet<string> favs) {
     string units = Meta(name, ParameterMetaDataConstants.Units, fw);

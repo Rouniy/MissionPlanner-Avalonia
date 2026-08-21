@@ -148,6 +148,7 @@
                 <Button Content="Start" Command="{Binding StartMagCalCommand}" MinWidth="90" />
                 <Button Content="Accept" Command="{Binding AcceptMagCalCommand}" IsEnabled="{Binding CalRunning}" MinWidth="90" />
                 <Button Content="Cancel" Command="{Binding CancelMagCalCommand}" IsEnabled="{Binding CalRunning}" MinWidth="90" />
+                <Button Content="Calibrate from Log…" Command="{Binding OfflineMagFitCommand}" />
               </StackPanel>
 
               <Grid ColumnDefinitions="60,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="4">

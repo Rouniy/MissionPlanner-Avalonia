@@ -12,12 +12,12 @@
   x:DataType="vm:FlightPlannerViewModel"
   Background="{DynamicResource MpControlBg}"
 >
-  <Grid ColumnDefinitions="*,168">
-    <Grid Grid.Column="0" RowDefinitions="*,4,210">
-      <ctl:FlightPlannerMap Grid.Row="0" x:Name="Map" />
-      <GridSplitter Grid.Row="1" Background="{DynamicResource MpBg}" ResizeDirection="Rows" />
+  <Grid x:Name="PlannerLayoutGrid" ColumnDefinitions="*,4,168" RowDefinitions="*,4,210">
+    <ctl:FlightPlannerMap x:Name="Map" Grid.Row="0" Grid.Column="0" />
+    <GridSplitter x:Name="HorizontalDockSplitter" Grid.Row="1" Grid.Column="0"
+                  Background="{DynamicResource MpBg}" ResizeDirection="Rows" />
 
-      <Grid Grid.Row="2" RowDefinitions="Auto,*">
+    <Grid x:Name="WaypointPanel" Grid.Row="2" Grid.Column="0" RowDefinitions="Auto,*">
         <WrapPanel Grid.Row="0" Margin="6,4" VerticalAlignment="Center">
           <ctl:FormField Label="{Binding WpRadiusLabel}" LabelWidth="92" Margin="0,2,12,2">
             <NumericUpDown Classes="sm" Value="{Binding WpRadius}" />
@@ -161,12 +161,16 @@
             </DataGridTemplateColumn>
           </DataGrid.Columns>
         </DataGrid>
-      </Grid>
     </Grid>
 
-    <Border Grid.Column="1" Background="{DynamicResource MpPanelBg}" Padding="6">
-      <ScrollViewer>
-        <StackPanel Spacing="6">
+    <GridSplitter x:Name="VerticalDockSplitter" Grid.Row="0" Grid.RowSpan="3" Grid.Column="1"
+                  Background="{DynamicResource MpBg}" ResizeDirection="Columns" />
+
+    <Border x:Name="ActionPanel" Grid.Row="0" Grid.RowSpan="3" Grid.Column="2"
+            Background="{DynamicResource MpPanelBg}" Padding="6">
+      <ScrollViewer x:Name="ActionScroller" VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled">
+        <StackPanel x:Name="ActionItemsPanel" Spacing="6">
           <CheckBox Content="Grid" IsChecked="{Binding ShowGrid}" Foreground="#E0E0E0" />
           <Button Content="View KML" HorizontalAlignment="Stretch" Click="OnViewKml" />
           <ComboBox

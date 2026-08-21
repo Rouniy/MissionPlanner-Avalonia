@@ -117,3 +117,31 @@ public class ForwardingProgressReporter : IProgressReporterDialogue {
 
   public void Dispose() { }
 }
+
+/// <summary>
+/// Gives synchronous upstream operations a cancellation source without showing another dialog.
+/// Mission Planner's parameter protocol observes doWorkArgs.CancelRequested at every retry.
+/// </summary>
+internal sealed class CancellationProgressReporter : IProgressReporterDialogue {
+  private readonly CancellationTokenRegistration _registration;
+  private readonly Action<int, string>? _progress;
+
+  public ProgressWorkerEventArgs doWorkArgs { get; set; } = new();
+  public event DoWorkEventHandler? DoWork;
+
+  internal CancellationProgressReporter(
+      CancellationToken cancellationToken,
+      Action<int, string>? progress = null) {
+    _progress = progress;
+    _registration = cancellationToken.Register(() => doWorkArgs.CancelRequested = true);
+  }
+
+  public void RunBackgroundOperationAsync() => DoWork?.Invoke(this);
+
+  public void UpdateProgressAndStatus(int progress, string status) =>
+      _progress?.Invoke(progress, status);
+
+  public void BeginInvoke(Delegate method) => method?.DynamicInvoke();
+
+  public void Dispose() => _registration.Dispose();
+}

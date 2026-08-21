@@ -31,6 +31,27 @@ public static class Dialogs {
   public static Task<bool> Confirm(string title, string text) =>
       ShowButtons(title, text, ("Yes", true), ("No", false));
 
+  /// <summary>
+  /// Confirmation for a security-sensitive state change. Reject is both the default
+  /// and cancel action, so Enter/Escape can never silently approve the operation.
+  /// </summary>
+  public static Task<bool> ConfirmDangerous(string title, string text, string acceptText) {
+    var panel = Shell(title);
+    panel.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap });
+    var reject = new Button {
+      Content = "Cancel",
+      MinWidth = 80,
+      IsDefault = true,
+      IsCancel = true,
+    };
+    var accept = new Button { Content = acceptText, MinWidth = 110 };
+    panel.Children.Add(Buttons(reject, accept));
+    var window = Frame(title, panel);
+    reject.Click += (_, _) => window.Close(false);
+    accept.Click += (_, _) => window.Close(true);
+    return ShowOwned<bool>(window);
+  }
+
   public static Task Alert(string title, string text) =>
       ShowButtons(title, text, ("OK", true));
 

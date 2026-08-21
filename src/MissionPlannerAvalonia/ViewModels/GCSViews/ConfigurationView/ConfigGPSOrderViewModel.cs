@@ -85,7 +85,8 @@ public partial class ConfigGPSOrderViewModel : ParamPageBase {
       int node = row.NodeID;
       bool ok = await System.Threading.Tasks.Task.Run(() => comPort.setParam(param, node));
       Status = ok ? $"{param} = {node}" : "write failed";
-      await System.Threading.Tasks.Task.Run(() => comPort.getParamList());
+      await AppState.ParameterLoads.LoadLatestAsync(comPort.MAV.sysid, comPort.MAV.compid);
+      AppState.RaiseConnectionChanged();
       OnRefreshed();
       foreach (var f in Fields) {
         f.Reload();

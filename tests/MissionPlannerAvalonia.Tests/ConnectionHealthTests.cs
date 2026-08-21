@@ -1,4 +1,7 @@
+using System.Reflection;
+using MissionPlanner;
 using MissionPlanner.ArduPilot;
+using MissionPlanner.Comms;
 using MissionPlannerAvalonia.Services;
 using MissionPlannerAvalonia.ViewModels;
 
@@ -44,18 +47,112 @@ public class ConnectionHealthTests {
   }
 
   [Fact]
-  public void Parameter_cache_must_exist_and_be_newer_than_one_hour() {
-    var now = new DateTime(2026, 8, 21, 12, 0, 0, DateTimeKind.Local);
+  public async Task New_parameter_read_cancels_unresponsive_device_and_runs_next_device() {
+    var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    int active = 0;
+    int maximumActive = 0;
+    var coordinator = new VehicleParameterLoadCoordinator(async (sysid, _, token, _) => {
+      int nowActive = Interlocked.Increment(ref active);
+      maximumActive = Math.Max(maximumActive, nowActive);
+      try {
+        if (sysid == 1) {
+          firstStarted.TrySetResult();
+          await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        }
+      } finally {
+        Interlocked.Decrement(ref active);
+      }
+    });
 
-    Assert.True(ParameterCachePolicy.IsFresh(
-        "param.json", now, TimeSpan.FromHours(1),
-        _ => now.AddMinutes(-59), _ => true));
-    Assert.False(ParameterCachePolicy.IsFresh(
-        "param.json", now, TimeSpan.FromHours(1),
-        _ => now.AddHours(-1), _ => true));
-    Assert.False(ParameterCachePolicy.IsFresh(
-        "param.json", now, TimeSpan.FromHours(1),
-        _ => now, _ => false));
+    Task<bool> first = coordinator.LoadLatestAsync(1, 1);
+    await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+    Task<bool> second = coordinator.LoadLatestAsync(2, 1);
+
+    Assert.True(await second.WaitAsync(TimeSpan.FromSeconds(1)));
+    Assert.False(await first.WaitAsync(TimeSpan.FromSeconds(1)));
+    Assert.Equal(1, maximumActive);
+  }
+
+  [Fact]
+  public void Cancellation_reporter_forwards_token_to_upstream_contract() {
+    using var source = new CancellationTokenSource();
+    var reporter = new CancellationProgressReporter(source.Token);
+
+    source.Cancel();
+
+    Assert.True(reporter.doWorkArgs.CancelRequested);
+    reporter.Dispose();
+  }
+
+  [Fact]
+  public void Switching_vehicle_clears_parameter_values_types_and_reported_count() {
+    using var comPort = new MAVLinkInterface();
+    var mav = comPort.MAVlist[42, 1];
+    mav.param.Add(new MAVLink.MAVLinkParam(
+        "DANGEROUS_OLD_VALUE", 1, MAVLink.MAV_PARAM_TYPE.REAL32));
+    mav.param.TotalReported = 1;
+    mav.param_types["DANGEROUS_OLD_VALUE"] = MAVLink.MAV_PARAM_TYPE.REAL32;
+
+    ConnectionViewModel.ResetSelectedVehicleParameters(mav);
+
+    Assert.Empty(mav.param);
+    Assert.Equal(0, mav.param.TotalReported);
+    Assert.Empty(mav.param_types);
+  }
+
+  [Fact]
+  public void Starting_a_new_session_clears_parameters_for_every_known_vehicle() {
+    using var comPort = new MAVLinkInterface();
+    foreach (var id in new byte[] { 7, 8 }) {
+      var mav = comPort.MAVlist[id, 1];
+      mav.param.Add(new MAVLink.MAVLinkParam(
+          $"OLD_{id}", id, MAVLink.MAV_PARAM_TYPE.REAL32));
+      mav.param.TotalReported = 1;
+      mav.param_types[$"OLD_{id}"] = MAVLink.MAV_PARAM_TYPE.REAL32;
+    }
+
+    ConnectionViewModel.ResetAllVehicleParameters(comPort);
+
+    foreach (var mav in comPort.MAVlist) {
+      Assert.Empty(mav.param);
+      Assert.Equal(0, mav.param.TotalReported);
+      Assert.Empty(mav.param_types);
+    }
+  }
+
+  [Fact]
+  public void Built_mav_state_has_no_automatic_parameter_cache_subscription() {
+    using var comPort = new MAVLinkInterface();
+    var mav = comPort.MAVlist[0, 0];
+    var eventField = typeof(MAVLink.MAVLinkParamList).GetField(
+        "PropertyChanged", BindingFlags.Instance | BindingFlags.NonPublic);
+
+    Assert.NotNull(eventField);
+    Assert.Null(eventField!.GetValue(mav.param));
+  }
+
+  [Theory]
+  [InlineData("TCP", "192.0.2.1", "5760")]
+  [InlineData("UDPCl", "192.0.2.2", "14550")]
+  [InlineData("UDP", "14551", "")]
+  [InlineData("WS", "ws://192.0.2.3:8080", "")]
+  public void Network_stream_uses_one_preconfigured_dialog_only(
+      string kind, string primary, string secondary) {
+    var stream = ConnectionViewModel.CreateConfiguredNetworkStream(kind, primary, secondary);
+    try {
+      Assert.True(Assert.IsAssignableFrom<IPreconfiguredNetworkStream>(stream)
+          .SuppressesUpstreamInput);
+      if (stream is TcpSerial tcp) {
+        Assert.Equal(primary, tcp.Host);
+        Assert.Equal(secondary, tcp.Port);
+      } else if (stream is UdpSerialConnect udpClient) {
+        Assert.Equal(secondary, udpClient.Port);
+      } else if (stream is UdpSerial udpListener) {
+        Assert.Equal(primary, udpListener.Port);
+      }
+    } finally {
+      (stream as IDisposable)?.Dispose();
+    }
   }
 
   [Theory]

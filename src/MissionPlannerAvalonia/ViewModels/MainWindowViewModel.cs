@@ -210,7 +210,9 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
     if (AppState.comPort.BaseStream?.IsOpen != true) {
       return;
     }
-    await System.Threading.Tasks.Task.Run(() => AppState.comPort.getParamList());
+    await AppState.ParameterLoads.LoadLatestAsync(
+        AppState.comPort.MAV.sysid, AppState.comPort.MAV.compid);
+    AppState.RaiseConnectionChanged();
   }
 
   [RelayCommand]

@@ -31,7 +31,10 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
     Action("Split DataFlash Log", () => _ = SplitDataFlashAsync());
     Action("Create DashWare CSV", () => _ = CreateDashWareAsync());
     Action("Extract GPS Corrections", () => _ = ExtractGpsCorrectionsAsync());
+    Action("Offline Magnetometer Calibration (MagFit)", () => Views.OfflineMagFitWindow.OpenWindow());
+    Action("Flight Log Index", () => Views.LogIndexWindow.OpenWindow(Settings.Instance.LogDir));
     Action("Organize Log Directory", () => _ = OrganizeLogsAsync());
+    Action("Download DataFlash Logs over SFTP", () => Views.SftpLogDownloadWindow.OpenWindow());
     Action("Download MAVFTP File", () => _ = DownloadMavFtpFileAsync());
     Action("Restore Parameters (Recovery)", () => _ = RestoreParametersAsync());
     Action("Set QNH", () => _ = SetQnhAsync());

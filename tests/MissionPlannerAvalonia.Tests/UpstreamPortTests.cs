@@ -136,7 +136,14 @@ public class UpstreamPortTests {
       new SpectrogramWindow(),
       new ProximityWindow(),
       new WarningManagerWindow(),
+      new OfflineMagFitWindow(),
     };
-    Assert.All(windows, window => Assert.NotNull(window.Content));
+    try {
+      Assert.All(windows, window => Assert.NotNull(window.Content));
+    } finally {
+      foreach (var window in windows) {
+        window.Close();
+      }
+    }
   }
 }

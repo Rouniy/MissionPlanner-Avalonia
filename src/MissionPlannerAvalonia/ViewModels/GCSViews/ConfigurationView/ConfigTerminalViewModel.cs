@@ -2,34 +2,58 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MissionPlanner;
 using MissionPlanner.Comms;
+using MissionPlanner.Utilities;
+using MissionPlannerAvalonia.Services;
 
 namespace MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView;
 
 public partial class ConfigTerminalViewModel : ViewModelBase, IDisposable, IDeactivationAware {
+  internal const string MavlinkTransport = "MAVLink shell (SERIAL_CONTROL)";
+  internal const string RawTransport = "Raw active link";
+  internal const string SshTransport = "SSH companion computer";
+
   private readonly MAVLinkInterface _comPort = AppState.comPort;
   private readonly DispatcherTimer _timer;
   private readonly ConcurrentQueue<byte> _shellBuffer = new();
   private readonly Decoder _shellDecoder = Encoding.UTF8.GetDecoder();
+  private readonly ISshTerminalSession _sshSession;
+  private readonly AnsiTerminalBuffer _sshScreen = new(80, 24);
+  private readonly bool _usePersistentSettings;
+  private CancellationTokenSource? _sshCancellation;
   private int _shellSubscription;
   private bool _ownsRawComPort;
+  private bool _sshOutputActive;
+  private bool _disposed;
   private DateTime _lastShellPoll = DateTime.MinValue;
 
   public ObservableCollection<string> TransportOptions { get; } =
-      new() { "MAVLink shell (SERIAL_CONTROL)", "Raw active link" };
+      new() { MavlinkTransport, RawTransport, SshTransport };
 
   [ObservableProperty]
-  private string _selectedTransport = "MAVLink shell (SERIAL_CONTROL)";
+  private string _selectedTransport = MavlinkTransport;
 
   [ObservableProperty]
+  [NotifyCanExecuteChangedFor(nameof(StartSessionCommand))]
+  [NotifyCanExecuteChangedFor(nameof(StopSessionCommand))]
   private bool _sessionOpen;
 
   [ObservableProperty]
+  [NotifyCanExecuteChangedFor(nameof(StartSessionCommand))]
+  [NotifyCanExecuteChangedFor(nameof(StopSessionCommand))]
+  private bool _isStarting;
+
+  [ObservableProperty]
   private string _output = "";
+
+  [ObservableProperty]
+  private TerminalSnapshot? _terminalScreen;
 
   [ObservableProperty]
   private string _input = "";
@@ -37,16 +61,47 @@ public partial class ConfigTerminalViewModel : ViewModelBase, IDisposable, IDeac
   [ObservableProperty]
   private string _status = "Connect to a vehicle, then start the MAVLink shell session.";
 
-  public bool IsConnected => _comPort.BaseStream?.IsOpen == true;
+  [ObservableProperty]
+  private string _sshHost = "";
 
-  public ConfigTerminalViewModel() {
+  [ObservableProperty]
+  private string _sshPort = "22";
+
+  [ObservableProperty]
+  private string _sshUsername = "";
+
+  [ObservableProperty]
+  private string _sshPassword = "";
+
+  public bool IsConnected => _comPort.BaseStream?.IsOpen == true;
+  public bool IsSshSelected => IsSshTransport;
+  public bool IsSshSession => SessionOpen && IsSshTransport;
+  public bool UsesLineInput => !IsSshSession;
+
+  public ConfigTerminalViewModel() : this(new SshTerminalSession(), usePersistentSettings: true) {
+  }
+
+  internal ConfigTerminalViewModel(
+      ISshTerminalSession sshSession, bool usePersistentSettings = false) {
+    _sshSession = sshSession ?? throw new ArgumentNullException(nameof(sshSession));
+    _usePersistentSettings = usePersistentSettings;
+    _sshSession.TextReceived += OnSshTextReceived;
+    _sshSession.ConnectionClosed += OnSshConnectionClosed;
+    _sshScreen.ResponseGenerated += response => SendSshText(response);
+
+    if (_usePersistentSettings) {
+      SshHost = Settings.Instance["SSHTerminalHost"] ?? "";
+      SshPort = Settings.Instance["SSHTerminalPort"] ?? "22";
+      SshUsername = Settings.Instance["SSHTerminalUsername"] ?? "";
+    }
+
     _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
     _timer.Tick += (_, _) => Pump();
     _timer.Start();
   }
 
   private void Pump() {
-    if (!SessionOpen) {
+    if (!SessionOpen || IsSshTransport) {
       return;
     }
 
@@ -57,7 +112,7 @@ public partial class ConfigTerminalViewModel : ViewModelBase, IDisposable, IDeac
 
     ICommsSerial port = _comPort.BaseStream;
     if (port == null || !port.IsOpen) {
-      StopSession();
+      StopSessionNow();
       Status = "The raw link was closed.";
       return;
     }
@@ -70,16 +125,19 @@ public partial class ConfigTerminalViewModel : ViewModelBase, IDisposable, IDeac
         }
       }
     } catch {
-
+      // The next timer tick will observe a closed transport if it disappeared.
     }
   }
 
   private bool IsMavlinkShell =>
       SelectedTransport.StartsWith("MAVLink", StringComparison.Ordinal);
 
+  private bool IsSshTransport =>
+      SelectedTransport.StartsWith("SSH", StringComparison.Ordinal);
+
   private void PumpMavlinkShell() {
     if (_comPort.BaseStream?.IsOpen != true) {
-      StopSession();
+      StopSessionNow();
       Status = "The MAVLink link was closed.";
       return;
     }
@@ -146,15 +204,22 @@ public partial class ConfigTerminalViewModel : ViewModelBase, IDisposable, IDeac
     Output = text;
   }
 
-  [RelayCommand]
-  private void StartSession() {
-    if (_comPort.BaseStream?.IsOpen != true) {
-      Status = "Not connected — open the serial/MAVLink link first.";
-      return;
-    }
+  private bool CanStartSession() => !SessionOpen && !IsStarting;
 
+  [RelayCommand(CanExecute = nameof(CanStartSession))]
+  private async Task StartSessionAsync() {
+    IsStarting = true;
     try {
-      StopSession();
+      await StopSessionCoreAsync(updateStatus: false);
+      if (IsSshTransport) {
+        await StartSshSessionAsync();
+        return;
+      }
+
+      if (_comPort.BaseStream?.IsOpen != true) {
+        Status = "Not connected — open the serial/MAVLink link first.";
+        return;
+      }
       if (_comPort.giveComport) {
         throw new InvalidOperationException("The active link is already reserved by another operation.");
       }
@@ -173,16 +238,136 @@ public partial class ConfigTerminalViewModel : ViewModelBase, IDisposable, IDeac
         Status = "Raw-link terminal started. Normal MAVLink parsing is paused until it is stopped.";
       }
       SessionOpen = true;
+    } catch (OperationCanceledException) {
+      Status = "Terminal connection cancelled.";
     } catch (Exception ex) {
-      StopSession();
+      await StopSessionCoreAsync(updateStatus: false);
       Status = "Unable to start terminal: " + ex.Message;
+    } finally {
+      IsStarting = false;
     }
   }
 
-  [RelayCommand]
-  private void StopSession() {
-    bool wasOpen = SessionOpen || _shellSubscription != 0 || _ownsRawComPort;
+  private async Task StartSshSessionAsync() {
+    if (!int.TryParse(SshPort, out int selectedPort) || selectedPort is < 1 or > 65535) {
+      Status = "SSH port must be a number between 1 and 65535.";
+      return;
+    }
+    if (!SshEndpoint.TryParse(SshHost, selectedPort, out string host, out int port)) {
+      Status = "Enter an SSH host, optionally as host:port or [IPv6]:port.";
+      return;
+    }
+    string username = SshUsername.Trim();
+    if (username.Length == 0) {
+      Status = "Enter the SSH username.";
+      return;
+    }
+
+    var cancellation = new CancellationTokenSource();
+    _sshCancellation = cancellation;
+    _sshOutputActive = true;
+    _sshScreen.Reset();
+    Output = "";
+    TerminalScreen = _sshScreen.Snapshot();
+
+    var connection = new SshTerminalConnection(host, port, username, SshPassword ?? "");
+    string settingName = SshEndpoint.TrustedKeySettingName(host, port);
+    string? trustedFingerprint = _usePersistentSettings ? Settings.Instance[settingName] : null;
+    try {
+      try {
+        Status = $"Connecting to {host}:{port}…";
+        await _sshSession.ConnectAsync(connection, trustedFingerprint, cancellation.Token);
+      } catch (SshHostKeyException ex) {
+        if (!await SshHostKeyPrompt.ConfirmAsync(ex.Challenge)) {
+          Status = ex.Challenge.IsChanged
+              ? "SSH connection rejected: the server host key changed."
+              : "SSH connection cancelled: the server host key was not trusted.";
+          return;
+        }
+
+        cancellation.Token.ThrowIfCancellationRequested();
+        trustedFingerprint = ex.Challenge.PresentedFingerprint;
+        if (_usePersistentSettings) {
+          Settings.Instance[settingName] = trustedFingerprint;
+          Settings.Instance.Save();
+        }
+        Status = $"Host key trusted. Connecting to {host}:{port}…";
+        await _sshSession.ConnectAsync(connection, trustedFingerprint, cancellation.Token);
+      }
+
+      if (_usePersistentSettings) {
+        Settings.Instance["SSHTerminalHost"] = host;
+        Settings.Instance["SSHTerminalPort"] = port.ToString();
+        Settings.Instance["SSHTerminalUsername"] = username;
+        Settings.Instance.Save();
+      }
+      SshHost = host;
+      SshPort = port.ToString();
+      SshPassword = "";
+      Input = "";
+      SessionOpen = true;
+      Status = $"SSH terminal connected to {username}@{host}:{port} (xterm 80×24).";
+    } finally {
+      if (!SessionOpen) {
+        _sshOutputActive = false;
+        TryCancel(cancellation);
+        await _sshSession.StopAsync();
+        if (ReferenceEquals(_sshCancellation, cancellation)) {
+          _sshCancellation = null;
+        }
+        cancellation.Dispose();
+        SshPassword = "";
+      }
+    }
+  }
+
+  private bool CanStopSession() => SessionOpen || IsStarting;
+
+  [RelayCommand(CanExecute = nameof(CanStopSession))]
+  private Task StopSessionAsync() => StopSessionCoreAsync(updateStatus: true);
+
+  private async Task StopSessionCoreAsync(bool updateStatus) {
+    bool connectionWasStarting = IsStarting;
+    bool wasOpen = SessionOpen || IsStarting || _shellSubscription != 0 ||
+        _ownsRawComPort || _sshOutputActive;
+    _sshOutputActive = false;
     SessionOpen = false;
+
+    var sshCancellation = _sshCancellation;
+    _sshCancellation = null;
+    TryCancel(sshCancellation);
+    await _sshSession.StopAsync();
+    if (!connectionWasStarting) {
+      sshCancellation?.Dispose();
+    }
+
+    CloseVehicleTerminal();
+    if (wasOpen && updateStatus) {
+      Status = "Terminal session stopped.";
+    }
+  }
+
+  private void StopSessionNow() {
+    bool connectionWasStarting = IsStarting;
+    bool wasOpen = SessionOpen || IsStarting || _shellSubscription != 0 ||
+        _ownsRawComPort || _sshOutputActive;
+    _sshOutputActive = false;
+    SessionOpen = false;
+    var cancellation = _sshCancellation;
+    _sshCancellation = null;
+    TryCancel(cancellation);
+    if (!connectionWasStarting) {
+      cancellation?.Dispose();
+    }
+    _sshSession.Stop();
+    CloseVehicleTerminal();
+    if (wasOpen) {
+      Status = "Terminal session stopped.";
+    }
+  }
+
+  private void CloseVehicleTerminal() {
+    bool closeMavlinkShell = _shellSubscription != 0;
     if (_ownsRawComPort) {
       _comPort.giveComport = false;
       _ownsRawComPort = false;
@@ -198,7 +383,7 @@ public partial class ConfigTerminalViewModel : ViewModelBase, IDisposable, IDeac
     while (_shellBuffer.TryDequeue(out _)) {
     }
     _shellDecoder.Reset();
-    if (wasOpen && IsMavlinkShell && _comPort.BaseStream?.IsOpen == true) {
+    if (closeMavlinkShell && _comPort.BaseStream?.IsOpen == true) {
       try {
         _comPort.SendSerialControl(
             MAVLink.SERIAL_CONTROL_DEV.SHELL, 0, Array.Empty<byte>(), 0, true);
@@ -206,19 +391,38 @@ public partial class ConfigTerminalViewModel : ViewModelBase, IDisposable, IDeac
         // The vehicle may disappear while the terminal is being closed.
       }
     }
-    if (wasOpen) {
-      Status = "Terminal session stopped.";
+  }
+
+  private static void TryCancel(CancellationTokenSource? cancellation) {
+    try {
+      cancellation?.Cancel();
+    } catch (ObjectDisposedException) {
     }
   }
 
   partial void OnSelectedTransportChanging(string value) {
-    if (SessionOpen) {
-      StopSession();
+    if (SessionOpen || IsStarting) {
+      StopSessionNow();
     }
   }
 
+  partial void OnSelectedTransportChanged(string value) {
+    OnPropertyChanged(nameof(IsSshSelected));
+    OnPropertyChanged(nameof(IsSshSession));
+    OnPropertyChanged(nameof(UsesLineInput));
+    TerminalScreen = IsSshTransport ? _sshScreen.Snapshot() : null;
+    Status = IsSshTransport
+        ? "Enter the companion-computer SSH address and credentials, then start the session."
+        : "Connect to a vehicle, then start the terminal session.";
+  }
+
+  partial void OnSessionOpenChanged(bool value) {
+    OnPropertyChanged(nameof(IsSshSession));
+    OnPropertyChanged(nameof(UsesLineInput));
+  }
+
   [RelayCommand]
-  private void Send() {
+  private async Task SendAsync() {
     if (!SessionOpen) {
       Status = "Start a terminal session first.";
       return;
@@ -227,20 +431,23 @@ public partial class ConfigTerminalViewModel : ViewModelBase, IDisposable, IDeac
     string line = Input ?? "";
     try {
       string text = line == "+++" ? line : line + "\r";
-      if (IsMavlinkShell) {
+      if (IsSshTransport) {
+        await _sshSession.WriteAsync(text, _sshCancellation?.Token ?? default);
+      } else if (IsMavlinkShell) {
         _comPort.SendSerialControl(
             MAVLink.SERIAL_CONTROL_DEV.SHELL, 0, Encoding.UTF8.GetBytes(text));
+        Append("\n" + line + "\n");
       } else {
         ICommsSerial port = _comPort.BaseStream;
         if (port == null || !port.IsOpen) {
-          StopSession();
+          StopSessionNow();
           Status = "The raw link is not open.";
           return;
         }
         port.Write(text);
+        Append("\n" + line + "\n");
       }
 
-      Append("\n" + line + "\n");
       Status = "Sent.";
     } catch (Exception ex) {
       Status = "Error writing to terminal: " + ex.Message;
@@ -249,19 +456,80 @@ public partial class ConfigTerminalViewModel : ViewModelBase, IDisposable, IDeac
     Input = "";
   }
 
+  public void SendSshText(string? text) {
+    if (!IsSshSession || string.IsNullOrEmpty(text)) {
+      return;
+    }
+    _ = SendSshTextAsync(text);
+  }
+
+  private async Task SendSshTextAsync(string text) {
+    try {
+      await _sshSession.WriteAsync(text, _sshCancellation?.Token ?? default);
+    } catch (OperationCanceledException) {
+    } catch (Exception ex) {
+      Dispatcher.UIThread.Post(() => Status = "Error writing to SSH terminal: " + ex.Message);
+    }
+  }
+
+  public string? EncodeSshKey(Avalonia.Input.Key key, Avalonia.Input.KeyModifiers modifiers) =>
+      IsSshSession
+          ? TerminalKeyEncoder.Encode(key, modifiers, _sshScreen.ApplicationCursorKeys)
+          : null;
+
+  private void OnSshTextReceived(string text) {
+    Dispatcher.UIThread.Post(() => {
+      if (!_sshOutputActive) {
+        return;
+      }
+      _sshScreen.Write(text);
+      Output = _sshScreen.Render();
+      TerminalScreen = _sshScreen.Snapshot();
+    });
+  }
+
+  private void OnSshConnectionClosed(string reason) {
+    Dispatcher.UIThread.Post(() => {
+      if (!_sshOutputActive) {
+        return;
+      }
+      _sshOutputActive = false;
+      SessionOpen = false;
+      var cancellation = _sshCancellation;
+      _sshCancellation = null;
+      TryCancel(cancellation);
+      cancellation?.Dispose();
+      _sshSession.Stop();
+      Status = reason;
+    });
+  }
+
   [RelayCommand]
   private void Clear() {
+    if (IsSshTransport) {
+      _sshScreen.Reset();
+      TerminalScreen = _sshScreen.Snapshot();
+    }
     Output = "";
   }
 
   public void Deactivate() {
-    if (SessionOpen || _shellSubscription != 0 || _ownsRawComPort) {
-      StopSession();
+    if (SessionOpen || IsStarting || _shellSubscription != 0 ||
+        _ownsRawComPort || _sshOutputActive) {
+      StopSessionNow();
     }
   }
 
   public void Dispose() {
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
     Deactivate();
     _timer.Stop();
+    _sshSession.TextReceived -= OnSshTextReceived;
+    _sshSession.ConnectionClosed -= OnSshConnectionClosed;
+    _sshSession.Stop();
+    _ = _sshSession.DisposeAsync();
   }
 }

@@ -9,12 +9,12 @@
     <ApplicationIcon>Assets/appicon.ico</ApplicationIcon>
     <!-- Keep the product version aligned with the exact official MissionPlanner source pinned
          by the submodule. Release/package scripts pass the build date and short port commit;
-         ordinary developer builds get today's UTC date and the SDK-provided full Git revision. -->
+         ordinary developer builds get today's local date and the SDK-provided full Git revision. -->
     <MissionPlannerVersionFile>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../external/MissionPlanner/Properties/AssemblyInfo.cs'))</MissionPlannerVersionFile>
     <MissionPlannerVersionFileExists>$([System.IO.File]::Exists('$(MissionPlannerVersionFile)'))</MissionPlannerVersionFileExists>
     <MissionPlannerUpstreamVersion Condition="'$(MissionPlannerUpstreamVersion)' == '' And '$(MissionPlannerVersionFileExists)' == 'True'">$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(MissionPlannerVersionFile)')), 'AssemblyFileVersion\(&quot;([0-9]+\.[0-9]+\.[0-9]+)&quot;\)').Groups[1].Value)</MissionPlannerUpstreamVersion>
     <MissionPlannerUpstreamVersion Condition="'$(MissionPlannerUpstreamVersion)' == ''">0.0.0</MissionPlannerUpstreamVersion>
-    <MissionPlannerBuildDate Condition="'$(MissionPlannerBuildDate)' == ''">$([System.DateTime]::UtcNow.ToString('yyyyMMdd'))</MissionPlannerBuildDate>
+    <MissionPlannerBuildDate Condition="'$(MissionPlannerBuildDate)' == ''">$([System.DateTime]::Now.ToString('yyyyMMdd'))</MissionPlannerBuildDate>
     <Version>$(MissionPlannerUpstreamVersion)</Version>
     <AssemblyVersion>$(MissionPlannerUpstreamVersion).0</AssemblyVersion>
     <FileVersion>$(MissionPlannerUpstreamVersion).0</FileVersion>
@@ -60,6 +60,7 @@
     <PackageReference Include="Mapsui.Avalonia" />
     <PackageReference Include="Mapsui.Tiling" />
     <PackageReference Include="Mapsui.Nts" />
+    <PackageReference Include="SkiaSharp" />
     <PackageReference Include="Projektanker.Icons.Avalonia" />
     <PackageReference Include="Projektanker.Icons.Avalonia.FontAwesome" />
     <PackageReference Include="System.IO.Ports" />
@@ -68,7 +69,9 @@
     <PackageReference Include="MoonSharp" />
     <PackageReference Include="LibVLCSharp.Avalonia" />
     <PackageReference Include="BouncyCastle.Cryptography" />
+    <PackageReference Include="SSH.NET" />
     <PackageReference Include="MetadataExtractor" />
+    <PackageReference Include="NetTopologySuite.IO.Esri.Shapefile" />
   </ItemGroup>
 
   <!-- The official VideoLAN.LibVLC.Mac package contains an x86-64 dylib only. Keep the
@@ -89,6 +92,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../external/MissionPlanner/ExtLibs/ArduPilot/MissionPlanner.ArduPilot.csproj" />
+    <ProjectReference Include="../../external/MissionPlanner/ExtLibs/alglibnet/alglibnet.csproj" />
     <ProjectReference Include="../../external/MissionPlanner/ExtLibs/DroneCAN/DroneCAN.csproj" />
     <ProjectReference Include="../Px4Uploader/Px4Uploader.csproj" />
   </ItemGroup>

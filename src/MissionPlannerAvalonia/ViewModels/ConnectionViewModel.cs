@@ -101,7 +101,6 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
     _comPort.sysidcurrent = value.SysId;
     _comPort.compidcurrent = value.CompId;
-    AppState.RaiseConnectionChanged();
     LoadSelectedVehicleParameters(value);
   }
 
@@ -144,8 +143,6 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   private readonly bool _initializing;
   private bool _updatingVehicleChoices;
   private string _vehicleChoiceSignature = "";
-  private readonly SemaphoreSlim _selectedVehicleParamLoadGate = new(1, 1);
-  private int _selectedVehicleLoadGeneration;
 
   private int StartReader() {
     StopReader();
@@ -189,7 +186,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   }
 
   private void StopReader() {
-    Interlocked.Increment(ref _selectedVehicleLoadGeneration);
+    AppState.ParameterLoads.CancelCurrent();
     CancellationTokenSource? cts;
     lock (_readerSync) {
       _readerGeneration++;
@@ -383,7 +380,6 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
         _updatingVehicleChoices = false;
       }
       if (fallbackSelection != null) {
-        AppState.RaiseConnectionChanged();
         LoadSelectedVehicleParameters(fallbackSelection);
       }
     });
@@ -410,48 +406,54 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
   private void LoadSelectedVehicleParameters(MavSystemChoice choice) {
     var mav = _comPort.MAVlist[choice.SysId, choice.CompId];
-    if (mav.param.TotalReported > 0 && mav.param.TotalReceived >= mav.param.TotalReported) {
-      return;
-    }
+    // A list from a previous selection may be correct, but displaying it while a new read is in
+    // flight is unsafe. Always make the selected target visibly empty until this request completes.
+    ResetSelectedVehicleParameters(mav);
 
-    int generation = Interlocked.Increment(ref _selectedVehicleLoadGeneration);
+    var operation = AppState.ParameterLoads.Start(
+        choice.SysId, choice.CompId, _lifetimeCts.Token, OnProgress);
     Status = $"Loading parameters for {choice.Label}…";
-    var lifetimeToken = _lifetimeCts.Token;
-    _ = Task.Run(async () => {
-      Exception? error = null;
-      bool entered = false;
-      try {
-        await _selectedVehicleParamLoadGate.WaitAsync(lifetimeToken).ConfigureAwait(false);
-        entered = true;
-        if (!IsSelectedVehicleCurrent(choice, generation)) {
-          return;
-        }
-        _comPort.getParamListMavftp(choice.SysId, choice.CompId);
-      } catch (OperationCanceledException) when (lifetimeToken.IsCancellationRequested) {
-        return;
-      } catch (Exception ex) {
-        error = ex;
-      } finally {
-        if (entered) {
-          _selectedVehicleParamLoadGate.Release();
-        }
-      }
-
-      Avalonia.Threading.Dispatcher.UIThread.Post(() => {
-        if (!IsSelectedVehicleCurrent(choice, generation)) {
-          return;
-        }
-        Status = error == null
-            ? $"Selected {choice.Label}. {mav.param.Count} params."
-            : $"Selected {choice.Label}; parameter load failed: {error.Message}";
-      });
-    });
+    AppState.RaiseConnectionChanged();
+    _ = ObserveSelectedVehicleParameterLoad(choice, mav, operation);
   }
 
-  private bool IsSelectedVehicleCurrent(MavSystemChoice choice, int generation) =>
-      Volatile.Read(ref _selectedVehicleLoadGeneration) == generation &&
-      _comPort.BaseStream?.IsOpen == true &&
-      _comPort.sysidcurrent == choice.SysId && _comPort.compidcurrent == choice.CompId;
+  internal static void ResetSelectedVehicleParameters(MAVState mav) {
+    mav.param.Clear();
+    lock (mav.param_types) {
+      mav.param_types.Clear();
+    }
+  }
+
+  internal static void ResetAllVehicleParameters(MAVLinkInterface comPort) {
+    foreach (var mav in comPort.MAVlist.ToArray()) {
+      ResetSelectedVehicleParameters(mav);
+    }
+  }
+
+  private async Task ObserveSelectedVehicleParameterLoad(
+      MavSystemChoice choice,
+      MAVState mav,
+      Services.VehicleParameterLoadCoordinator.Operation operation) {
+    Exception? error = null;
+    try {
+      await operation.Completion.ConfigureAwait(false);
+    } catch (OperationCanceledException) when (operation.Token.IsCancellationRequested) {
+      return;
+    } catch (Exception ex) {
+      error = ex;
+    }
+
+    Avalonia.Threading.Dispatcher.UIThread.Post(() => {
+      if (!operation.IsLatest || _comPort.BaseStream?.IsOpen != true ||
+          _comPort.sysidcurrent != choice.SysId || _comPort.compidcurrent != choice.CompId) {
+        return;
+      }
+      Status = error == null
+          ? $"Selected {choice.Label}. {mav.param.Count} params."
+          : $"Selected {choice.Label}; parameter load failed: {error.Message}";
+      AppState.RaiseConnectionChanged();
+    });
+  }
 
   private bool IsReaderSessionActive(int generation) {
     lock (_readerSync) {
@@ -477,6 +479,8 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   }
 
   internal void PrepareForConnection() {
+    AppState.ParameterLoads.CancelCurrent();
+    ResetAllVehicleParameters(_comPort);
     ApplyPersistentLinkSettings();
     _lastArmed = false;
     _lastVersionPollUtc = DateTime.MinValue;
@@ -496,7 +500,6 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     _connectedAtUtc = DateTime.UtcNow;
     StartReader();
     RefreshVehicleChoices();
-    RawParamsViewModel.SaveSnapshot(_comPort);
     AppState.RaiseConnectionChanged();
     RaiseConnected();
   }
@@ -512,13 +515,14 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   private void StartBackgroundParameterLoad(int generation) {
     byte sysid = _comPort.MAV.sysid;
     byte compid = _comPort.MAV.compid;
-    _ = Task.Run(() => {
+    var operation = AppState.ParameterLoads.Start(
+        sysid, compid, _lifetimeCts.Token, OnProgress);
+    _ = Task.Run(async () => {
       Exception? error = null;
       try {
-        // This upstream API uses MAVFTP when the vehicle advertises it and transparently falls
-        // back to the parameter protocol otherwise.
-        _comPort.getParamListMavftp(sysid, compid);
-        RawParamsViewModel.SaveSnapshot(_comPort);
+        await operation.Completion.ConfigureAwait(false);
+      } catch (OperationCanceledException) when (operation.Token.IsCancellationRequested) {
+        return;
       } catch (Exception ex) {
         error = ex;
       }
@@ -526,13 +530,14 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       Avalonia.Threading.Dispatcher.UIThread.Post(() => {
         lock (_readerSync) {
           if (_readerGeneration != generation || _readerCts == null ||
-              _comPort.BaseStream?.IsOpen != true) {
+              _comPort.BaseStream?.IsOpen != true || !operation.IsLatest) {
             return;
           }
         }
         Status = error == null
             ? $"Connected. {_comPort.MAV.param.Count} params loaded in background."
             : "Connected, but background parameter load failed: " + error.Message;
+        AppState.RaiseConnectionChanged();
       });
     });
   }
@@ -587,36 +592,6 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
         }
       });
     });
-  }
-
-  private bool TryLoadFreshParameterCache(out int count) {
-    count = 0;
-    if (!Settings.Instance.GetBoolean("UseCachedParams", false)) {
-      return false;
-    }
-
-    try {
-      string path = _comPort.MAV.ParamCachePath;
-      if (!ParameterCachePolicy.IsFresh(
-              path, DateTime.Now, TimeSpan.FromHours(1), File.GetLastWriteTime)) {
-        return false;
-      }
-
-      var cached = File.ReadAllText(path).FromJSON<MAVLink.MAVLinkParamList>();
-      if (cached == null || cached.Count == 0) {
-        return false;
-      }
-      foreach (var parameter in cached) {
-        _comPort.MAV.param.Add(parameter);
-      }
-      _comPort.MAV.param.TotalReported = _comPort.MAV.param.TotalReceived;
-      count = _comPort.MAV.param.Count;
-      return count > 0;
-    } catch {
-      // A corrupt, stale or concurrently-written cache is never fatal; fall back to the live
-      // MAVFTP/parameter protocol path below.
-      return false;
-    }
   }
 
   private void RefreshHomeOnArmTransition(CancellationToken ct) {
@@ -674,6 +649,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
         _comPort.Close();
       } catch {
       }
+      ResetAllVehicleParameters(_comPort);
       CloseLogs();
     }
     Services.Speech.Stop();
@@ -850,6 +826,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       } catch {
       }
     });
+    ResetAllVehicleParameters(_comPort);
     CloseLogs();
     IsConnected = false;
     ConnectText = "CONNECT";
@@ -940,19 +917,14 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
       Exception? openError = null;
       bool backgroundParamLoad = false;
-      bool cachedParamsLoaded = false;
-      int cachedParamCount = 0;
       try {
 
         await Task.Run(() => _comPort.Open(getparams: false, skipconnectedcheck: true, showui: true));
         if (_comPort.BaseStream.IsOpen && !dlg.CancelRequested &&
             _comPort.MAV.compid != (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_PERIPHERAL) {
-          cachedParamsLoaded = TryLoadFreshParameterCache(out cachedParamCount);
-          if (!cachedParamsLoaded) {
-            backgroundParamLoad = Settings.Instance.GetBoolean("Params_BG", false);
-            if (!backgroundParamLoad) {
-              await Task.Run(() => _comPort.getParamList());
-            }
+          backgroundParamLoad = Settings.Instance.GetBoolean("Params_BG", false);
+          if (!backgroundParamLoad) {
+            await Task.Run(() => _comPort.getParamList());
           }
         }
       } catch (Exception ex) {
@@ -999,11 +971,9 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
         if (IsSerialEndpoint(endpoint)) {
           Settings.Instance[PortBaudKey(endpoint)] = SelectedBaud.ToString();
         }
-        Status = cachedParamsLoaded
-            ? $"Connected. Reused {cachedParamCount} cached params."
-            : backgroundParamLoad
-                ? "Connected. Loading parameters in background…"
-                : $"Connected. {_comPort.MAV.param.Count} params.";
+        Status = backgroundParamLoad
+            ? "Connected. Loading parameters in background…"
+            : $"Connected. {_comPort.MAV.param.Count} params.";
         _connectedAtUtc = DateTime.UtcNow;
         int generation = StartReader();
         RefreshVehicleChoices();
@@ -1011,8 +981,6 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
         if (backgroundParamLoad) {
           StartBackgroundParameterLoad(generation);
-        } else {
-          RawParamsViewModel.SaveSnapshot(_comPort);
         }
         RaiseConnected();
 
@@ -1062,7 +1030,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
           Store("TCP_host", v[0]);
           Store("TCP_port", v[1]);
-          return new TcpSerial();
+          return CreateConfiguredNetworkStream("TCP", v[0], v[1]);
         }
 
       case "UDPCl": {
@@ -1076,7 +1044,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
           Store("UDP_host", v[0]);
           Store("UDP_port", v[1]);
-          return new UdpSerialConnect();
+          return CreateConfiguredNetworkStream("UDPCl", v[0], v[1]);
         }
 
       case "UDP": {
@@ -1089,7 +1057,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
           }
 
           Store("UDP_port", v[0]);
-          return new UdpSerial();
+          return CreateConfiguredNetworkStream("UDP", v[0], "");
         }
 
       case "WS": {
@@ -1102,7 +1070,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
           }
 
           Store("WS_url", v[0]);
-          return new WebSocket();
+          return CreateConfiguredNetworkStream("WS", v[0], "");
         }
 
       default:
@@ -1113,6 +1081,15 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
         };
     }
   }
+
+  internal static ICommsSerial CreateConfiguredNetworkStream(
+      string kind, string primary, string secondary) => kind switch {
+        "TCP" => new PreconfiguredTcpSerial(primary, secondary),
+        "UDPCl" => new PreconfiguredUdpClient(primary, secondary),
+        "UDP" => new PreconfiguredUdpListener(primary),
+        "WS" => new PreconfiguredWebSocket(primary),
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown network transport."),
+      };
 
   private async Task<ICommsSerial?> ScanForStreamAsync(bool interactive) {
     var dlg = new Services.ProgressReporter("Scanning serial ports");
@@ -1209,6 +1186,54 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   }
 }
 
+internal interface IPreconfiguredNetworkStream {
+  bool SuppressesUpstreamInput { get; }
+}
+
+internal sealed class PreconfiguredTcpSerial : TcpSerial, IPreconfiguredNetworkStream {
+  internal PreconfiguredTcpSerial(string host, string port) {
+    Host = host;
+    Port = port;
+  }
+
+  public bool SuppressesUpstreamInput => true;
+
+  protected override inputboxreturn OnInputBoxShow(
+      string title, string prompttext, ref string text) => inputboxreturn.OK;
+}
+
+internal sealed class PreconfiguredUdpClient : UdpSerialConnect, IPreconfiguredNetworkStream {
+  internal PreconfiguredUdpClient(string host, string port) {
+    Port = port;
+    AppState.CommsSettings["UDP_host"] = host;
+    AppState.CommsSettings["UDP_port"] = port;
+  }
+
+  public bool SuppressesUpstreamInput => true;
+
+  protected override inputboxreturn OnInputBoxShow(
+      string title, string prompttext, ref string text) => inputboxreturn.OK;
+}
+
+internal sealed class PreconfiguredUdpListener : UdpSerial, IPreconfiguredNetworkStream {
+  internal PreconfiguredUdpListener(string port) => Port = port;
+
+  public bool SuppressesUpstreamInput => true;
+
+  protected override inputboxreturn OnInputBoxShow(
+      string title, string prompttext, ref string text) => inputboxreturn.OK;
+}
+
+internal sealed class PreconfiguredWebSocket : MissionPlanner.Comms.WebSocket,
+    IPreconfiguredNetworkStream {
+  internal PreconfiguredWebSocket(string url) => AppState.CommsSettings["WS_url"] = url;
+
+  public bool SuppressesUpstreamInput => true;
+
+  protected override inputboxreturn OnInputBoxShow(
+      string title, string prompttext, ref string text) => inputboxreturn.OK;
+}
+
 internal static class ConnectionHealth {
   internal static bool ShouldCloseSilentLink(bool armed, DateTime nowUtc,
       DateTime newestPacketUtc, DateTime connectedAtUtc, TimeSpan timeout) =>
@@ -1223,21 +1248,5 @@ internal static class ConnectionHealth {
     // grace period, but is still closed if it never receives a first packet.
     DateTime baseline = newestPacketUtc > connectedAtUtc ? newestPacketUtc : connectedAtUtc;
     return nowUtc - baseline > timeout;
-  }
-}
-
-internal static class ParameterCachePolicy {
-  internal static bool IsFresh(
-      string? path,
-      DateTime now,
-      TimeSpan maximumAge,
-      Func<string, DateTime>? getLastWriteTime = null,
-      Func<string, bool>? fileExists = null) {
-    if (string.IsNullOrWhiteSpace(path) || maximumAge < TimeSpan.Zero) {
-      return false;
-    }
-    fileExists ??= File.Exists;
-    getLastWriteTime ??= File.GetLastWriteTime;
-    return fileExists(path) && getLastWriteTime(path) > now.Subtract(maximumAge);
   }
 }

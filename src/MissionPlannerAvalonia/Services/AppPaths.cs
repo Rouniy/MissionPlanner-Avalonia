@@ -29,7 +29,6 @@ public static class AppPaths {
   public static string LogsRoot => Path.Combine(DataRoot, "logs");
   public static string CrashLogPath => Path.Combine(StateRoot, "logs", "crash.log");
   public static string PoiFilePath => Path.Combine(DataRoot, "poi.txt");
-  public static string RawParamSnapshotPath => Path.Combine(CacheRoot, "last_params.param");
   public static string SitlCacheRoot => Path.Combine(CacheRoot, "sitl");
   public static string SrtmCacheRoot => Path.Combine(CacheRoot, "srtm");
   public static string MapTileCacheRoot => Path.Combine(CacheRoot, "map-tiles");
@@ -154,7 +153,6 @@ public static class AppPaths {
           && !IsLegacyCacheFile(fileName));
       CopyTopLevelFiles(legacy, CacheRoot, IsLegacyCacheFile);
       CopyIfMissing(Path.Combine(legacy, "poi.txt"), PoiFilePath);
-      CopyIfMissing(Path.Combine(legacy, "last_params.param"), RawParamSnapshotPath);
       CopyIfMissing(Path.Combine(legacy, "crash.log"), CrashLogPath);
     }
 

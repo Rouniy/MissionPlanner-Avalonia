@@ -196,7 +196,8 @@ public abstract partial class TuningPageBase : ParamPageBase {
   [RelayCommand]
   private async Task RefreshParams() {
     if (IsConnected) {
-      await Task.Run(() => comPort.getParamList());
+      await AppState.ParameterLoads.LoadLatestAsync(comPort.MAV.sysid, comPort.MAV.compid);
+      AppState.RaiseConnectionChanged();
     }
 
     Rebuild();

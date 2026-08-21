@@ -49,6 +49,8 @@ public class FlightMapOverlayTests {
     Assert.Contains("Guided target", names);
     Assert.Contains("POI", names);
     Assert.Contains("ADS-B / AIS traffic", names);
+    Assert.Contains("Camera overlap count", names);
+    Assert.Contains("Camera target", names);
   }
 
   [Fact]

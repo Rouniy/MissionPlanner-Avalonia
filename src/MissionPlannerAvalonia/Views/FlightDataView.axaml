@@ -14,12 +14,12 @@
   x:DataType="vm:FlightDataViewModel"
   Background="{DynamicResource MpControlBg}"
 >
-  <Grid>
+  <Grid x:Name="FlightDataLayoutGrid">
     <Grid.ColumnDefinitions>
 
-      <ColumnDefinition Width="2*" MinWidth="300" />
-      <ColumnDefinition Width="4" />
-      <ColumnDefinition Width="3*" MinWidth="300" />
+      <ColumnDefinition Width="2*" MinWidth="240" />
+      <ColumnDefinition Width="6" />
+      <ColumnDefinition Width="3*" MinWidth="240" />
     </Grid.ColumnDefinitions>
     <Grid Grid.Column="{Binding HudColumn}" RowDefinitions="*,4,*">
       <Border Grid.Row="0" Background="Black">
@@ -125,7 +125,12 @@
         </ctl:HudControl>
       </Border>
 
-      <GridSplitter Grid.Row="1" Background="{DynamicResource MpBg}" ResizeDirection="Rows" IsEnabled="False" />
+      <GridSplitter
+        Grid.Row="1"
+        Background="{DynamicResource MpBorderBrush}"
+        ResizeDirection="Rows"
+        ResizeBehavior="PreviousAndNext"
+      />
 
       <TabControl
         x:Name="FdTabs"
@@ -677,7 +682,14 @@
       </TabControl>
     </Grid>
 
-    <GridSplitter Grid.Column="1" Background="{DynamicResource MpBg}" ResizeDirection="Columns" IsEnabled="False" />
+    <GridSplitter
+      x:Name="MainFlightSplitter"
+      Grid.Column="1"
+      Background="{DynamicResource MpBorderBrush}"
+      ResizeDirection="Columns"
+      ResizeBehavior="PreviousAndNext"
+      DragCompleted="OnMainSplitterDragCompleted"
+    />
 
     <Border Grid.Column="{Binding MapColumn}" Background="{DynamicResource MpBg}" ClipToBounds="True">
       <Grid>
