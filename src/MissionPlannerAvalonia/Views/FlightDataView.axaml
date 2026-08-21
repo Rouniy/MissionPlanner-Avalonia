@@ -125,7 +125,12 @@
 
       <GridSplitter Grid.Row="1" Background="{DynamicResource MpBg}" ResizeDirection="Rows" IsEnabled="False" />
 
-      <TabControl x:Name="FdTabs" Grid.Row="2" Background="{DynamicResource MpControlBg}">
+      <TabControl
+        x:Name="FdTabs"
+        Grid.Row="2"
+        Background="{DynamicResource MpControlBg}"
+        SelectedIndex="{Binding SelectedActionTabIndex, Mode=TwoWay}"
+      >
         <TabItem Header="Quick">
           <ItemsControl x:Name="QuickGrid" ItemsSource="{Binding QuickItems}" Margin="2"
                         DoubleTapped="OnQuickViewDoubleTapped">

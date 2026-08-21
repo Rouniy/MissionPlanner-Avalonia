@@ -37,7 +37,7 @@
           <MenuItem Header="Link Stats" Click="OnLinkStats" />
           <MenuItem Header="Connection Options" Click="OnConnectionOptions" />
           <MenuItem Header="Download Logs (MAVLink)" Click="OnDownloadLogs" />
-          <MenuItem Header="Tlog Convert (KML/GPX/Matlab)" Click="OnMavlinkLogConvert" />
+          <MenuItem Header="Tlog Convert / Extract" Click="OnMavlinkLogConvert" />
           <Separator />
           <MenuItem Header="Connection List (not ported)" IsEnabled="False" />
         </ContextMenu>

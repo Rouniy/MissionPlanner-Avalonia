@@ -833,6 +833,11 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private bool _tlogPlaying;
 
+  [ObservableProperty]
+  private int _selectedActionTabIndex;
+
+  public bool HasTlog => _tlog.IsOpen;
+
   private bool _seekFromUi = true;
 
   [RelayCommand]
@@ -872,6 +877,30 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       _tlog.Speed = s;
       PlaybackSpeedText = $"x {_tlog.Speed:0.0##}";
     }
+  }
+
+  public void SelectActionTab(int index) {
+    if (index is >= 0 and <= 9) {
+      SelectedActionTabIndex = index;
+    }
+  }
+
+  public void AdjustTlogSpeed(int direction) {
+    if (direction == 0) {
+      return;
+    }
+    _tlog.Speed = NextTlogSpeed(_tlog.Speed, direction);
+    PlaybackSpeedText = $"x {_tlog.Speed:0.0##}";
+  }
+
+  internal static double NextTlogSpeed(double current, int direction) {
+    if (direction < 0) {
+      return Math.Clamp(current > 1 ? current - 1 : current / 2, 0.1, 10);
+    }
+    if (direction > 0) {
+      return Math.Clamp(current > 1 ? current + 1 : current * 2, 0.1, 10);
+    }
+    return Math.Clamp(current, 0.1, 10);
   }
 
   partial void OnTlogProgressChanged(double value) {

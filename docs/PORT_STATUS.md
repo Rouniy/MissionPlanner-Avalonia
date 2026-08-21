@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 158 tests verified; Linux `.deb` rebuilt and extracted-package smoke verified, while the existing `tar.gz` predates the latest feature round |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 172 tests verified; the existing Linux packages predate the latest planner undo and hotkey round |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -128,6 +128,12 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   checks.
 - Mission file compatibility for QGC WPL, Mission Planner `.mission`, QGC `.plan`, `.poly`, legacy
   `.fen`/`.ral`, and load-and-append. QGC Plan round-trips mission, polygon/circle fence, and rally data.
+- Flight Planner now keeps a bounded undo history across Mission/Fence/Rally edits, home changes,
+  map operations, generated patterns and direct grid edits. Ctrl+Z, file open/save and normal/fast
+  mission-transfer shortcuts mirror upstream, while the existing KML overlay loader is reachable
+  from the map context menu.
+- Flight Data restores upstream Ctrl+1…Ctrl+0 action-tab selection and tlog playback/speed keyboard
+  controls; the log context action is labelled for its actual convert/extract feature set.
 - Fence inclusion/exclusion polygons and circles can be created from the Avalonia planner.
 - libVLC startup now resolves versioned Linux `libvlc.so.5`, reports live playback errors, retains
   media for its full native lifetime, and accepts direct MRLs plus common RTP/GStreamer input.
@@ -157,10 +163,10 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 158 passed, 0 failed.
+- Automated tests: 172 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 156 MB.
 - Headless Xvfb startup: reaches the normal application event loop.
-- The `.deb` target was rebuilt from the current 158-test source on 2026-08-21; package structure,
+- The `.deb` target was rebuilt from the then-current 158-test source on 2026-08-21; package structure,
   dependencies, current QuickView/tlog strings and an extracted-package Xvfb event-loop smoke were
   verified. Lintian reports informational tags for bundled .NET/Skia/HarfBuzz native binaries, but
   no warning or error tags.
@@ -170,9 +176,9 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
   runtime files are routed to isolated XDG config/data/cache/state roots.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
-The current Debian artifact is `out/packages/missionplanner-avalonia_2026.8.0_amd64.deb` (SHA-256
-`f6d5a36db8f11f3eda2d8d70c0cb150b4bd23d86421183b434411c63f862b3a7`). Any existing
-`out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
+The most recent Debian artifact is `out/packages/missionplanner-avalonia_2026.8.0_amd64.deb`
+(SHA-256 `f6d5a36db8f11f3eda2d8d70c0cb150b4bd23d86421183b434411c63f862b3a7`). It and the existing
+`out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predate the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
 
@@ -241,7 +247,7 @@ not remove required Windows-native files from `win-x64` builds.
 | Flight Data map extras | All | Camera feedback markers/footprints are ported. POI actions on the Flight Data map, Point Camera Coords, and the mission `DistanceBar` strip remain absent (POI is available in the planner). |
 | Pre-flight checklist engine | All | Only the manual checklist and six fixed automatic checks exist; the upstream configurable rule engine (`checklistDefault.xml`, condition types, colours, editor) is absent. |
 | DisplayView profiles | All | `DisplayViewExtensions.custompath` is set, but no screen consumes `DisplayConfiguration` to show/hide individual widgets (tab-level Customize is ported). |
-| Planner map tools | All | Tile prefetch (area and along-WP-path), offset polygon, Tracker Home from map, rally set/get/save/clear vehicle actions, and a general KML/KMZ/DXF overlay (beyond NoFly) are not ported. |
+| Planner map tools | All | Tile prefetch (area and along-WP-path), offset polygon, Tracker Home from map, rally set/get/save/clear vehicle actions, and KML/KMZ/DXF support beyond the current flattened `.kml` track overlay are not ported. |
 | Full Parameter List extras | All | Reset-to-default is ported. The ArduPilot GitHub parameter-file browser/comparison remains absent. |
 | ADS-B connection settings | All | The toggle controls MAVLink traffic rendering. The upstream external ADS-B server/port connection and configuration prompt are not implemented. |
 | SSH terminal | All | The upstream companion-computer SSH terminal (`Renci.SshNet`) is not ported; the terminal is MAVLink NSH only. |

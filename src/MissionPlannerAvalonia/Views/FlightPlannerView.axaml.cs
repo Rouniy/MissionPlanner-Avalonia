@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Platform.Storage;
@@ -31,6 +32,7 @@ public partial class FlightPlannerView : UserControl {
     Map.MidpointInsertRequested += (afterSeq, lat, lng) =>
         Vm?.InsertWaypointAfterSeq(afterSeq, lat, lng);
     Map.ContextMenu = BuildMapMenu();
+    KeyDown += OnPlannerKeyDown;
     DataContextChanged += (_, _) => WireViewModel();
     WireViewModel();
     LoadAutoNoFly();
@@ -227,6 +229,9 @@ public partial class FlightPlannerView : UserControl {
     var noflyClear = new MenuItem { Header = "Clear NoFly Overlay" };
     noflyClear.Click += (_, _) => Map.SetNoFlyLayer(null);
     menu.Items.Add(noflyClear);
+    var kmlOverlay = new MenuItem { Header = "Load KML Overlay…" };
+    kmlOverlay.Click += OnLoadKmlOverlay;
+    menu.Items.Add(kmlOverlay);
     menu.Items.Add(new Separator());
     var poly = new MenuItem { Header = "Polygon" };
     var draw = new MenuItem { Header = "Draw" };
@@ -425,6 +430,10 @@ public partial class FlightPlannerView : UserControl {
   }
 
   private async void OnSaveFile(object? sender, RoutedEventArgs e) {
+    await SaveFile();
+  }
+
+  private async Task SaveFile() {
     var top = TopLevel.GetTopLevel(this);
     if (top is null || Vm is null) {
       return;
@@ -446,6 +455,40 @@ public partial class FlightPlannerView : UserControl {
     );
     if (file?.TryGetLocalPath() is { } path) {
       await Vm.SaveFileAsync(path);
+    }
+  }
+
+  private async void OnPlannerKeyDown(object? sender, KeyEventArgs e) {
+    if (Vm == null || !e.KeyModifiers.HasFlag(KeyModifiers.Control)) {
+      return;
+    }
+
+    bool shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+    switch (e.Key) {
+      case Key.Z when !shift:
+        e.Handled = true;
+        Vm.UndoCommand.Execute(null);
+        break;
+      case Key.O when !shift:
+        e.Handled = true;
+        await PickAndLoadFile(false);
+        break;
+      case Key.S when !shift:
+        e.Handled = true;
+        await SaveFile();
+        break;
+      case Key.F when shift:
+        e.Handled = true;
+        Vm.WriteWaypointsFastCommand.Execute(null);
+        break;
+      case Key.W when shift:
+        e.Handled = true;
+        Vm.WriteWaypointsCommand.Execute(null);
+        break;
+      case Key.R when shift:
+        e.Handled = true;
+        Vm.ReadWaypointsCommand.Execute(null);
+        break;
     }
   }
 

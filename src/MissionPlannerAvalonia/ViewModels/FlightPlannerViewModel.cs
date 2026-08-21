@@ -18,6 +18,9 @@ namespace MissionPlannerAvalonia.ViewModels;
 public partial class FlightPlannerViewModel : ViewModelBase {
   private readonly MAVLinkInterface _comPort = AppState.comPort;
   private bool _recomputing;
+  private bool _restoringUndo;
+  private int _undoMutationDepth;
+  private readonly List<MissionSnapshot> _undoHistory = new();
 
   public event Action? WaypointsChanged;
 
@@ -43,6 +46,121 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     } catch {
 
     }
+  }
+
+  public bool CanUndo => _undoHistory.Count > 0;
+
+  private IDisposable BeginUndoMutation() {
+    if (_undoMutationDepth == 0) {
+      CaptureUndo();
+    }
+    _undoMutationDepth++;
+    return new UndoMutationScope(this);
+  }
+
+  private void EndUndoMutation() => _undoMutationDepth--;
+
+  private void CaptureUndo() {
+    if (_restoringUndo || _undoMutationDepth > 0) {
+      return;
+    }
+
+    var snapshot = new MissionSnapshot(
+        MissionType,
+        EffectiveRows("Mission"),
+        EffectiveRows("Fence"),
+        EffectiveRows("Rally"),
+        HomeLat, HomeLng, HomeAlt);
+    if (_undoHistory.Count > 0 && SameMission(_undoHistory[^1], snapshot)) {
+      return;
+    }
+    _undoHistory.Add(snapshot);
+    if (_undoHistory.Count > 40) {
+      _undoHistory.RemoveRange(0, _undoHistory.Count - 40);
+    }
+    OnPropertyChanged(nameof(CanUndo));
+  }
+
+  private List<WpRow> EffectiveRows(string type) =>
+      (MissionType == type ? Waypoints.AsEnumerable() : StoreFor(type))
+      .Select(CloneRow).ToList();
+
+  [RelayCommand]
+  private void Undo() {
+    if (_undoHistory.Count == 0) {
+      Status = "Nothing to undo.";
+      return;
+    }
+
+    var snapshot = _undoHistory[^1];
+    _undoHistory.RemoveAt(_undoHistory.Count - 1);
+    _restoringUndo = true;
+    try {
+      HomeLat = snapshot.HomeLat;
+      HomeLng = snapshot.HomeLng;
+      HomeAlt = snapshot.HomeAlt;
+      ReplaceStore(_missionStore, snapshot.MissionRows);
+      ReplaceStore(_fenceStore, snapshot.FenceRows);
+      ReplaceStore(_rallyStore, snapshot.RallyRows);
+      MissionType = snapshot.MissionType;
+      var current = StoreFor(snapshot.MissionType);
+      Replace(current.Select(CloneRow).ToList());
+      Status = $"Undo restored {current.Count} {snapshot.MissionType.ToLowerInvariant()} item(s).";
+    } finally {
+      _restoringUndo = false;
+    }
+    OnPropertyChanged(nameof(CanUndo));
+  }
+
+  private static void ReplaceStore(List<WpRow> target, IEnumerable<WpRow> source) {
+    target.Clear();
+    target.AddRange(source.Select(CloneRow));
+  }
+
+  private static WpRow CloneRow(WpRow row) => new() {
+    Seq = row.Seq,
+    Command = row.Command,
+    Frame = row.Frame,
+    P1 = row.P1,
+    P2 = row.P2,
+    P3 = row.P3,
+    P4 = row.P4,
+    Lat = row.Lat,
+    Lng = row.Lng,
+    Alt = row.Alt,
+  };
+
+  private static bool SameMission(MissionSnapshot left, MissionSnapshot right) =>
+      left.MissionType == right.MissionType
+      && left.HomeLat.Equals(right.HomeLat)
+      && left.HomeLng.Equals(right.HomeLng)
+      && left.HomeAlt.Equals(right.HomeAlt)
+      && SameRows(left.MissionRows, right.MissionRows)
+      && SameRows(left.FenceRows, right.FenceRows)
+      && SameRows(left.RallyRows, right.RallyRows);
+
+  private static bool SameRows(IReadOnlyList<WpRow> left, IReadOnlyList<WpRow> right) =>
+      left.Count == right.Count
+      && left.Zip(right).All(pair => SameRow(pair.First, pair.Second));
+
+  private static bool SameRow(WpRow left, WpRow right) =>
+      left.Command == right.Command && left.Frame == right.Frame
+      && left.P1.Equals(right.P1) && left.P2.Equals(right.P2)
+      && left.P3.Equals(right.P3) && left.P4.Equals(right.P4)
+      && left.Lat.Equals(right.Lat) && left.Lng.Equals(right.Lng)
+      && left.Alt.Equals(right.Alt);
+
+  private sealed record MissionSnapshot(
+      string MissionType,
+      List<WpRow> MissionRows,
+      List<WpRow> FenceRows,
+      List<WpRow> RallyRows,
+      double HomeLat,
+      double HomeLng,
+      double HomeAlt);
+
+  private sealed class UndoMutationScope(FlightPlannerViewModel owner) : IDisposable {
+    public void Dispose() => owner.EndUndoMutation();
   }
 
   public async Task AddPoi(double lat, double lng) {
@@ -120,6 +238,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     if (MissionType != "Fence") {
       MissionType = "Fence";
     }
+    using var undo = BeginUndoMutation();
     var command = inclusion
         ? MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION
         : MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_EXCLUSION;
@@ -142,6 +261,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     if (MissionType != "Fence") {
       MissionType = "Fence";
     }
+    using var undo = BeginUndoMutation();
     AddCommandRow(
         inclusion ? MAVLink.MAV_CMD.FENCE_CIRCLE_INCLUSION : MAVLink.MAV_CMD.FENCE_CIRCLE_EXCLUSION,
         lat, lng, 0, p1: radius, frame: (byte)MAVLink.MAV_FRAME.GLOBAL);
@@ -184,6 +304,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       AddWaypointAt(lat, lng);
       return;
     }
+    using var undo = BeginUndoMutation();
     var cmd = SplineDefault ? MAVLink.MAV_CMD.SPLINE_WAYPOINT : MAVLink.MAV_CMD.WAYPOINT;
     Waypoints.Insert(idx + 1, new WpRow {
       Command = (ushort)cmd,
@@ -218,11 +339,16 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   };
 
   partial void OnMissionTypeChanged(string? oldValue, string newValue) {
+    if (_restoringUndo) {
+      OnPropertyChanged(nameof(CanUndo));
+      return;
+    }
     var prev = StoreFor(oldValue);
     prev.Clear();
     prev.AddRange(Waypoints);
     Replace(StoreFor(newValue).ToList());
     WaypointsChanged?.Invoke();
+    OnPropertyChanged(nameof(CanUndo));
   }
 
   public ObservableCollection<string> MapTypes { get; } =
@@ -1135,6 +1261,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       };
 
   private void ReplaceOrAppend(IEnumerable<WpRow> rows, bool append) {
+    using var undo = BeginUndoMutation();
     if (!append) {
       Replace(rows);
       return;
@@ -1150,6 +1277,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   private void AddWaypoint() => AddWaypointAt(HomeLat, HomeLng);
 
   public void AddWaypointAt(double lat, double lng) {
+    using var undo = BeginUndoMutation();
     switch (MissionType) {
       case "Fence":
         AddCommandRow(MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION, lat, lng, 0,
@@ -1170,9 +1298,11 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   [ObservableProperty]
   private bool _splineDefault;
 
-  public void AddSplineWp(double lat, double lng) =>
-      AddCommandRow(MAVLink.MAV_CMD.SPLINE_WAYPOINT, lat, lng,
-          VerifyPlaceAlt(lat, lng, DefaultAlt, (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT));
+  public void AddSplineWp(double lat, double lng) {
+    using var undo = BeginUndoMutation();
+    AddCommandRow(MAVLink.MAV_CMD.SPLINE_WAYPOINT, lat, lng,
+        VerifyPlaceAlt(lat, lng, DefaultAlt, (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT));
+  }
 
   public void InsertAtCurrentPosition() {
     var cs = _comPort.MAV?.cs;
@@ -1183,7 +1313,10 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     AddWaypointAt(cs.lat, cs.lng);
   }
 
-  public void AddJumpStart() => AddCommandRow(MAVLink.MAV_CMD.DO_JUMP, 0, 0, 0, p1: 1, p2: -1);
+  public void AddJumpStart() {
+    using var undo = BeginUndoMutation();
+    AddCommandRow(MAVLink.MAV_CMD.DO_JUMP, 0, 0, 0, p1: 1, p2: -1);
+  }
 
   public async Task CreateWpCircle(double lat, double lng) {
     if (await Ask("Radius", "Radius", "50") is not { } s1 || !int.TryParse(s1, out var radius)) {
@@ -1208,6 +1341,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       a += 360;
       step *= -1;
     }
+    using var undo = BeginUndoMutation();
     var center = new PointLatLngAlt(lat, lng);
     int n = 0;
     for (; a <= startangle + 360 && a >= 0; a += step) {
@@ -1238,6 +1372,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     }
     int points = 4;
     double step = 360.0 / points;
+    using var undo = BeginUndoMutation();
     AddCommandRow(MAVLink.MAV_CMD.DO_SET_ROI, lat, lng, 0);
     var center = new PointLatLngAlt(lat, lng);
     bool startup = true;
@@ -1279,6 +1414,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
         || !int.TryParse(s6, out var startheading)) {
       return;
     }
+    using var undo = BeginUndoMutation();
     var center = new PointLatLngAlt(lat, lng);
     AddCommandRow(MAVLink.MAV_CMD.DO_SET_ROI, lat, lng, 0);
     for (int alt = startalt; alt <= endalt; alt += seperation) {
@@ -1360,6 +1496,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   public void SetFenceReturn(double lat, double lng) {
+    using var undo = BeginUndoMutation();
     var existing = Waypoints.Where(w => w.Command == (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT)
                        .ToList();
     foreach (var r in existing) {
@@ -1403,32 +1540,46 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       }
     }
     if (best != null) {
+      using var undo = BeginUndoMutation();
       Waypoints.Remove(best);
       Renumber();
       WaypointsChanged?.Invoke();
     }
   }
 
-  public void AddRtl() => AddCommandRow(MAVLink.MAV_CMD.RETURN_TO_LAUNCH, 0, 0, 0);
+  public void AddRtl() {
+    using var undo = BeginUndoMutation();
+    AddCommandRow(MAVLink.MAV_CMD.RETURN_TO_LAUNCH, 0, 0, 0);
+  }
 
-  public void AddLand(double lat, double lng) => AddCommandRow(MAVLink.MAV_CMD.LAND, lat, lng, 0);
+  public void AddLand(double lat, double lng) {
+    using var undo = BeginUndoMutation();
+    AddCommandRow(MAVLink.MAV_CMD.LAND, lat, lng, 0);
+  }
 
   public async Task AddTakeoff(double lat, double lng) {
     var s = await Services.Dialogs.InputBox("Takeoff", "Takeoff alt (m)", DefaultAlt.ToString("0", CultureInfo.InvariantCulture));
     if (double.TryParse(s, out var alt)) {
+      using var undo = BeginUndoMutation();
       AddCommandRow(MAVLink.MAV_CMD.TAKEOFF, lat, lng, alt);
     }
   }
 
   [Obsolete]
-  public void AddRoi(double lat, double lng) => AddCommandRow(MAVLink.MAV_CMD.DO_SET_ROI, lat, lng, DefaultAlt);
+  public void AddRoi(double lat, double lng) {
+    using var undo = BeginUndoMutation();
+    AddCommandRow(MAVLink.MAV_CMD.DO_SET_ROI, lat, lng, DefaultAlt);
+  }
 
-  public void AddLoiterForever(double lat, double lng) =>
-      AddCommandRow(MAVLink.MAV_CMD.LOITER_UNLIM, lat, lng, DefaultAlt);
+  public void AddLoiterForever(double lat, double lng) {
+    using var undo = BeginUndoMutation();
+    AddCommandRow(MAVLink.MAV_CMD.LOITER_UNLIM, lat, lng, DefaultAlt);
+  }
 
   public async Task AddLoiterTime(double lat, double lng) {
     var s = await Services.Dialogs.InputBox("Loiter Time", "Seconds", "60");
     if (double.TryParse(s, out var sec)) {
+      using var undo = BeginUndoMutation();
       AddCommandRow(MAVLink.MAV_CMD.LOITER_TIME, lat, lng, DefaultAlt, p1: sec);
     }
   }
@@ -1436,6 +1587,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   public async Task AddLoiterCircles(double lat, double lng) {
     var s = await Services.Dialogs.InputBox("Loiter Circles", "Turns", "3");
     if (double.TryParse(s, out var turns)) {
+      using var undo = BeginUndoMutation();
       AddCommandRow(MAVLink.MAV_CMD.LOITER_TURNS, lat, lng, DefaultAlt, p1: turns);
     }
   }
@@ -1443,18 +1595,21 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   public async Task AddJump() {
     var s = await Services.Dialogs.InputBox("Jump (DO_JUMP)", "Target WP #", "0");
     if (double.TryParse(s, out var wp)) {
+      using var undo = BeginUndoMutation();
       AddCommandRow(MAVLink.MAV_CMD.DO_JUMP, 0, 0, 0, p1: wp, p2: -1);
     }
   }
 
   [RelayCommand]
   private void ClearMission() {
+    using var undo = BeginUndoMutation();
     Waypoints.Clear();
     WaypointsChanged?.Invoke();
   }
 
   [RelayCommand]
   private void ReverseWaypoints() {
+    using var undo = BeginUndoMutation();
     var rev = Waypoints.Reverse().ToList();
     Waypoints.Clear();
     foreach (var w in rev) {
@@ -1468,6 +1623,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     var s = await Services.Dialogs.InputBox("Modify Alt", "New altitude for all waypoints (m)",
         DefaultAlt.ToString("0", CultureInfo.InvariantCulture));
     if (double.TryParse(s, out var alt)) {
+      using var undo = BeginUndoMutation();
       foreach (var w in Waypoints) {
         w.Alt = alt;
       }
@@ -1482,6 +1638,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   private void DeleteWaypoint(WpRow? row) {
     row ??= SelectedWaypoint;
     if (row != null) {
+      using var undo = BeginUndoMutation();
       Waypoints.Remove(row);
       Renumber();
       WaypointsChanged?.Invoke();
@@ -1492,6 +1649,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   private void MoveWaypointUp(WpRow? row) {
     int i = row == null ? -1 : Waypoints.IndexOf(row);
     if (i > 0) {
+      using var undo = BeginUndoMutation();
       Waypoints.Move(i, i - 1);
       Renumber();
       WaypointsChanged?.Invoke();
@@ -1502,6 +1660,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   private void MoveWaypointDown(WpRow? row) {
     int i = row == null ? -1 : Waypoints.IndexOf(row);
     if (i >= 0 && i < Waypoints.Count - 1) {
+      using var undo = BeginUndoMutation();
       Waypoints.Move(i, i + 1);
       Renumber();
       WaypointsChanged?.Invoke();
@@ -1516,6 +1675,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     }
     await Task.Yield();
     var cs = _comPort.MAV.cs;
+    using var undo = BeginUndoMutation();
     HomeLat = cs.lat;
     HomeLng = cs.lng;
     // cs.altasl is in display units; the waypoint model stores raw metres.
@@ -1524,6 +1684,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   public void SetHome(double lat, double lng) {
+    using var undo = BeginUndoMutation();
     HomeLat = lat;
     HomeLng = lng;
     var t = srtm.getAltitude(lat, lng);
@@ -1560,6 +1721,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       return;
     }
 
+    using var undo = BeginUndoMutation();
     if (VerifyHeight
         && (MAVLink.MAV_FRAME)row.Frame != MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT) {
       var oldT = srtm.getAltitude(row.Lat, row.Lng);
@@ -1592,6 +1754,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
         return "Grid generation produced no waypoints.";
       }
 
+      using var undo = BeginUndoMutation();
       foreach (var p in grid) {
         Waypoints.Add(new WpRow {
           Seq = Waypoints.Count,
@@ -1630,6 +1793,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       return "Grid produced no waypoints.";
     }
 
+    using var undo = BeginUndoMutation();
     foreach (var p in grid) {
       Waypoints.Add(new WpRow {
         Seq = Waypoints.Count,
@@ -1651,6 +1815,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       return "Grid produced no mission commands.";
     }
 
+    using var undo = BeginUndoMutation();
     foreach (var item in plan.Commands) {
       Waypoints.Add(new WpRow {
         Seq = Waypoints.Count,
@@ -1678,6 +1843,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     if (e.OldItems != null) {
       foreach (WpRow r in e.OldItems) {
         r.PropertyChanged -= OnRowChanged;
+        r.PropertyChanging -= OnRowChanging;
       }
     }
 
@@ -1685,11 +1851,26 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       foreach (WpRow r in e.NewItems) {
         r.PropertyChanged -= OnRowChanged;
         r.PropertyChanged += OnRowChanged;
+        r.PropertyChanging -= OnRowChanging;
+        r.PropertyChanging += OnRowChanging;
       }
     }
 
     RecomputeGrid();
     WaypointsChanged?.Invoke();
+  }
+
+  private void OnRowChanging(object? sender, System.ComponentModel.PropertyChangingEventArgs e) {
+    if (_restoringUndo || _undoMutationDepth > 0 || _recomputing) {
+      return;
+    }
+    if (e.PropertyName is nameof(WpRow.Command) or nameof(WpRow.Frame)
+        or nameof(WpRow.P1) or nameof(WpRow.P2) or nameof(WpRow.P3) or nameof(WpRow.P4)
+        or nameof(WpRow.Lat) or nameof(WpRow.Lng) or nameof(WpRow.Alt)
+        or nameof(WpRow.Zone) or nameof(WpRow.Easting) or nameof(WpRow.Northing)
+        or nameof(WpRow.Mgrs)) {
+      CaptureUndo();
+    }
   }
 
   private void OnRowChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) {

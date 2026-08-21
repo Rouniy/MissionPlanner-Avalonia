@@ -23,6 +23,29 @@ public partial class MainWindow : Window {
     }
     bool ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
     switch (e.Key) {
+      case Key.D1 when ctrl && vm.ActiveTab == "DATA":
+      case Key.D2 when ctrl && vm.ActiveTab == "DATA":
+      case Key.D3 when ctrl && vm.ActiveTab == "DATA":
+      case Key.D4 when ctrl && vm.ActiveTab == "DATA":
+      case Key.D5 when ctrl && vm.ActiveTab == "DATA":
+      case Key.D6 when ctrl && vm.ActiveTab == "DATA":
+      case Key.D7 when ctrl && vm.ActiveTab == "DATA":
+      case Key.D8 when ctrl && vm.ActiveTab == "DATA":
+      case Key.D9 when ctrl && vm.ActiveTab == "DATA":
+      case Key.D0 when ctrl && vm.ActiveTab == "DATA":
+        vm.FlightData.SelectActionTab(ShortcutTabIndex(e.Key));
+        break;
+      case Key.Space when !ctrl && vm.ActiveTab == "DATA" && vm.FlightData.HasTlog:
+        vm.FlightData.PlayPauseTlogCommand.Execute(null);
+        break;
+      case Key.Subtract when vm.ActiveTab == "DATA" && vm.FlightData.HasTlog:
+      case Key.OemMinus when vm.ActiveTab == "DATA" && vm.FlightData.HasTlog:
+        vm.FlightData.AdjustTlogSpeed(-1);
+        break;
+      case Key.Add when vm.ActiveTab == "DATA" && vm.FlightData.HasTlog:
+      case Key.OemPlus when vm.ActiveTab == "DATA" && vm.FlightData.HasTlog:
+        vm.FlightData.AdjustTlogSpeed(1);
+        break;
       case Key.F2:
         vm.NavigateCommand.Execute("DATA");
         break;
@@ -59,6 +82,9 @@ public partial class MainWindow : Window {
     }
     e.Handled = true;
   }
+
+  internal static int ShortcutTabIndex(Key key) =>
+      key == Key.D0 ? 9 : (int)key - (int)Key.D1;
 
   private void OnFullScreen(object? sender, RoutedEventArgs e) {
     if (WindowState == WindowState.FullScreen) {
