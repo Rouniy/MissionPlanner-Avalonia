@@ -100,6 +100,11 @@ public partial class MainWindow : Window {
       key == Key.D0 ? 9 : (int)key - (int)Key.D1;
 
   internal static bool ShouldPreserveFocusedInput(Control? focused, Key key) {
+    for (Control? control = focused; control != null; control = control.Parent as Control) {
+      if (control.Classes.Contains("ssh-terminal-input")) {
+        return true;
+      }
+    }
     if (key is Key.F2 or Key.F3 or Key.F4 or Key.F5 or Key.F12) {
       return false;
     }

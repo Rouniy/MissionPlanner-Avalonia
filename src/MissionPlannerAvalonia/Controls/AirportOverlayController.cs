@@ -24,7 +24,7 @@ internal sealed class AirportOverlayController : IDisposable {
 
   private readonly MapControl _map;
   private readonly bool _alwaysShow;
-  private readonly WritableLayer _layer = new() { Name = "Airports" };
+  private readonly WritableLayer _layer = new() { Name = "Airports", Style = null };
   private IReadOnlyList<AirportMapItem> _rendered = Array.Empty<AirportMapItem>();
   private (double Lat, double Lng)? _lastQueryCenter;
   private bool _suspended = true;
@@ -141,7 +141,9 @@ internal sealed class AirportOverlayController : IDisposable {
       Data = airport,
     };
     feature.Styles.Add(new VectorStyle {
-      Fill = new Brush(new Color(255, 0, 0, 25)),
+      // GMapMarkerAirport uses this exact fill. The layer style must stay null so
+      // Mapsui does not paint its default opaque white polygon underneath it.
+      Fill = new Brush(Color.FromArgb(25, 255, 0, 0)),
       Line = null,
       Outline = null,
     });

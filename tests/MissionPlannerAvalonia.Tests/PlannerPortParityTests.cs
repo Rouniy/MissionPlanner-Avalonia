@@ -1,10 +1,18 @@
 using System.IO.Compression;
 using System.Text;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Headless.XUnit;
+using Avalonia.Layout;
 using MissionPlanner.ArduPilot;
 using MissionPlanner.Utilities;
 using MissionPlannerAvalonia.Controls;
 using MissionPlannerAvalonia.Services;
 using MissionPlannerAvalonia.ViewModels;
+using MissionPlannerAvalonia.Views;
+using AvaloniaGrid = Avalonia.Controls.Grid;
+using AvaloniaRect = Avalonia.Rect;
 
 namespace MissionPlannerAvalonia.Tests;
 
@@ -61,6 +69,218 @@ public class PlannerPortParityTests {
     Assert.Single(unpacked.wps);
     Assert.Equal((byte)MAVLink.MAV_FRAME.GLOBAL, unpacked.wps[0].frame);
     Assert.Equal((byte)MAVLink.MAV_MISSION_TYPE.FENCE, unpacked.wps[0].mission_type);
+  }
+
+  [AvaloniaFact]
+  public void Rally_shortcut_adds_a_relative_point_without_losing_the_active_mission() {
+    using var vm = new FlightPlannerViewModel { VerifyHeight = false };
+    vm.AddWaypointAt(40, 28);
+
+    vm.AddRallyPointAt(41, 29, 120);
+
+    Assert.Equal("Rally", vm.MissionType);
+    var rally = Assert.Single(vm.Waypoints);
+    Assert.Equal((ushort)MAVLink.MAV_CMD.RALLY_POINT, rally.Command);
+    Assert.Equal((byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT, rally.Frame);
+    Assert.Equal((41d, 29d, 120d), (rally.Lat, rally.Lng, rally.Alt));
+    vm.MissionType = "Mission";
+    Assert.Single(vm.Waypoints);
+    Assert.Equal((ushort)MAVLink.MAV_CMD.WAYPOINT, vm.Waypoints[0].Command);
+  }
+
+  [AvaloniaFact]
+  public async Task Clearing_rally_offline_is_undoable_and_preserves_the_mission_store() {
+    using var vm = new FlightPlannerViewModel { VerifyHeight = false };
+    vm.AddWaypointAt(40, 28);
+    vm.AddRallyPointAt(41, 29, 120);
+
+    await vm.ClearRallyPointsAsync();
+
+    Assert.Empty(vm.Waypoints);
+    Assert.Contains("local rally", vm.Status, StringComparison.OrdinalIgnoreCase);
+    vm.UndoCommand.Execute(null);
+    Assert.Single(vm.Waypoints);
+    vm.MissionType = "Mission";
+    Assert.Single(vm.Waypoints);
+    Assert.Equal(40, vm.Waypoints[0].Lat);
+  }
+
+  [AvaloniaFact]
+  public async Task Failed_vehicle_rally_clear_keeps_the_local_points() {
+    using var vm = new FlightPlannerViewModel { VerifyHeight = false };
+    vm.AddRallyPointAt(41, 29, 120);
+
+    await vm.ClearRallyPointsAsync(true, () => Task.FromResult(false));
+
+    Assert.Single(vm.Waypoints);
+    Assert.Contains("not cleared", vm.Status, StringComparison.OrdinalIgnoreCase);
+    Assert.Contains("local list was kept", vm.Status, StringComparison.OrdinalIgnoreCase);
+  }
+
+  [AvaloniaFact]
+  public async Task Successful_vehicle_rally_clear_is_undoable() {
+    using var vm = new FlightPlannerViewModel { VerifyHeight = false };
+    vm.AddRallyPointAt(41, 29, 120);
+
+    await vm.ClearRallyPointsAsync(true, () => Task.FromResult(true));
+
+    Assert.Empty(vm.Waypoints);
+    Assert.Equal("Cleared rally points on the vehicle.", vm.Status);
+    vm.UndoCommand.Execute(null);
+    Assert.Single(vm.Waypoints);
+  }
+
+  [AvaloniaFact]
+  public async Task Concurrent_vehicle_rally_clear_does_not_start_a_second_transfer() {
+    using var vm = new FlightPlannerViewModel { VerifyHeight = false };
+    vm.AddRallyPointAt(41, 29, 120);
+    var releaseFirst = new TaskCompletionSource<bool>(
+        TaskCreationOptions.RunContinuationsAsynchronously);
+    int transfers = 0;
+    Task first = vm.ClearRallyPointsAsync(true, () => {
+      transfers++;
+      return releaseFirst.Task;
+    });
+
+    await vm.ClearRallyPointsAsync(true, () => {
+      transfers++;
+      return Task.FromResult(true);
+    });
+
+    Assert.Equal(1, transfers);
+    Assert.Contains("already in progress", vm.Status, StringComparison.OrdinalIgnoreCase);
+    Assert.Single(vm.Waypoints);
+    releaseFirst.SetResult(true);
+    await first;
+    Assert.Empty(vm.Waypoints);
+  }
+
+  [Theory]
+  [InlineData(null, false)]
+  [InlineData("not-an-altitude", false)]
+  [InlineData("NaN", false)]
+  [InlineData("123.5", true)]
+  public void Rally_altitude_prompt_rejects_cancel_and_invalid_values(string? text, bool expected) {
+    Assert.Equal(expected, FlightPlannerView.TryParseRallyAltitude(text, out _));
+  }
+
+  [AvaloniaFact]
+  [Obsolete]
+  public void Planner_map_exposes_the_six_official_rally_shortcuts() {
+    var view = new FlightPlannerView();
+    var map = Assert.IsType<FlightPlannerMap>(view.FindControl<FlightPlannerMap>("Map"));
+    var menu = Assert.IsType<ContextMenu>(map.ContextMenu);
+    var rally = Assert.Single(menu.Items.OfType<MenuItem>(), item => Equals(item.Header, "Rally Points"));
+
+    Assert.Equal(new[] {
+      "Set Rally Point", "Download", "Upload", "Clear Rally Points",
+      "Save Rally to File", "Load Rally from File",
+    }, rally.Items.OfType<MenuItem>().Select(item => item.Header?.ToString()));
+  }
+
+  [AvaloniaFact]
+  [Obsolete]
+  public void Planner_switch_docking_recreates_both_official_panel_arrangements() {
+    var view = new FlightPlannerView();
+    var layout = Assert.IsType<AvaloniaGrid>(view.FindControl<AvaloniaGrid>("PlannerLayoutGrid"));
+    var map = Assert.IsType<FlightPlannerMap>(view.FindControl<FlightPlannerMap>("Map"));
+    var waypoints = Assert.IsType<AvaloniaGrid>(view.FindControl<AvaloniaGrid>("WaypointPanel"));
+    var actions = Assert.IsType<Border>(view.FindControl<Border>("ActionPanel"));
+    var horizontal = Assert.IsType<GridSplitter>(
+        view.FindControl<GridSplitter>("HorizontalDockSplitter"));
+    var vertical = Assert.IsType<GridSplitter>(
+        view.FindControl<GridSplitter>("VerticalDockSplitter"));
+    var actionItems = Assert.IsType<StackPanel>(view.FindControl<StackPanel>("ActionItemsPanel"));
+    var actionScroller = Assert.IsType<ScrollViewer>(view.FindControl<ScrollViewer>("ActionScroller"));
+
+    view.ApplyDockingLayout(false, persist: false);
+    view.Measure(new Size(1100, 640));
+    view.Arrange(new AvaloniaRect(0, 0, 1100, 640));
+    Assert.False(view.IsActionDockedBottom);
+    Assert.Equal(GridUnitType.Pixel, layout.ColumnDefinitions[2].Width.GridUnitType);
+    Assert.Equal(168, layout.ColumnDefinitions[2].Width.Value);
+    Assert.Equal((2, 0, 1, 1),
+        (AvaloniaGrid.GetRow(waypoints), AvaloniaGrid.GetColumn(waypoints),
+            AvaloniaGrid.GetRowSpan(waypoints), AvaloniaGrid.GetColumnSpan(waypoints)));
+    Assert.Equal((0, 2, 3, 1),
+        (AvaloniaGrid.GetRow(actions), AvaloniaGrid.GetColumn(actions),
+            AvaloniaGrid.GetRowSpan(actions), AvaloniaGrid.GetColumnSpan(actions)));
+    Assert.Equal(3, AvaloniaGrid.GetRowSpan(vertical));
+    Assert.Equal(1, AvaloniaGrid.GetColumnSpan(horizontal));
+    Assert.Equal(Orientation.Vertical, actionItems.Orientation);
+    Assert.Equal(ScrollBarVisibility.Auto, actionScroller.VerticalScrollBarVisibility);
+
+    view.ApplyDockingLayout(true, persist: false);
+    view.Measure(new Size(1100, 640));
+    view.Arrange(new AvaloniaRect(0, 0, 1100, 640));
+    Assert.True(view.IsActionDockedBottom);
+    Assert.Equal(GridUnitType.Star, layout.ColumnDefinitions[2].Width.GridUnitType);
+    Assert.Equal(120, layout.RowDefinitions[2].Height.Value);
+    Assert.Equal((0, 2, 1, 1),
+        (AvaloniaGrid.GetRow(waypoints), AvaloniaGrid.GetColumn(waypoints),
+            AvaloniaGrid.GetRowSpan(waypoints), AvaloniaGrid.GetColumnSpan(waypoints)));
+    Assert.Equal((2, 0, 1, 3),
+        (AvaloniaGrid.GetRow(actions), AvaloniaGrid.GetColumn(actions),
+            AvaloniaGrid.GetRowSpan(actions), AvaloniaGrid.GetColumnSpan(actions)));
+    Assert.Equal(1, AvaloniaGrid.GetRowSpan(vertical));
+    Assert.Equal(3, AvaloniaGrid.GetColumnSpan(horizontal));
+    Assert.Equal(Orientation.Horizontal, actionItems.Orientation);
+    Assert.Equal(ScrollBarVisibility.Auto, actionScroller.HorizontalScrollBarVisibility);
+
+    var menu = Assert.IsType<ContextMenu>(map.ContextMenu);
+    Assert.Single(menu.Items.OfType<MenuItem>(), item => Equals(item.Header, "Switch Docking"));
+  }
+
+  [AvaloniaFact]
+  [Obsolete]
+  public void Planner_switch_docking_persists_the_upstream_setting_values() {
+    string? saved = Settings.Instance["FP_docking"];
+    try {
+      var view = new FlightPlannerView();
+      view.ApplyDockingLayout(false, persist: false);
+
+      view.SwitchDocking();
+      Assert.Equal("Bottom", Settings.Instance["FP_docking"]);
+      Assert.True(new FlightPlannerView().IsActionDockedBottom);
+
+      view.SwitchDocking();
+      Assert.Equal("Right", Settings.Instance["FP_docking"]);
+      Assert.False(new FlightPlannerView().IsActionDockedBottom);
+    } finally {
+      Settings.Instance["FP_docking"] = saved;
+    }
+  }
+
+  [AvaloniaFact]
+  [Obsolete]
+  public void Flight_data_main_splitter_is_draggable_and_persists_official_distance() {
+    string? saved = Settings.Instance["FlightSplitter"];
+    try {
+      Settings.Instance["FlightSplitter"] = "360";
+      var view = new FlightDataView();
+      var layout = Assert.IsType<AvaloniaGrid>(
+          view.FindControl<AvaloniaGrid>("FlightDataLayoutGrid"));
+      var splitter = Assert.IsType<GridSplitter>(
+          view.FindControl<GridSplitter>("MainFlightSplitter"));
+
+      Assert.True(splitter.IsEnabled);
+      Assert.Equal(GridResizeDirection.Columns, splitter.ResizeDirection);
+      Assert.Equal(GridResizeBehavior.PreviousAndNext, splitter.ResizeBehavior);
+      Assert.Equal(GridUnitType.Pixel, layout.ColumnDefinitions[0].Width.GridUnitType);
+      Assert.Equal(360, layout.ColumnDefinitions[0].Width.Value);
+
+      view.Measure(new Size(1200, 700));
+      view.Arrange(new AvaloniaRect(0, 0, 1200, 700));
+      view.ApplyMainSplitterDistance(300);
+      view.Measure(new Size(1200, 700));
+      view.Arrange(new AvaloniaRect(0, 0, 1200, 700));
+
+      Assert.Equal(300, layout.ColumnDefinitions[0].Width.Value);
+      Assert.Equal("300", Settings.Instance["FlightSplitter"]);
+      Assert.Equal(GridUnitType.Star, layout.ColumnDefinitions[2].Width.GridUnitType);
+    } finally {
+      Settings.Instance["FlightSplitter"] = saved;
+    }
   }
 
   [Theory]
@@ -189,6 +409,7 @@ public class PlannerPortParityTests {
   }
 
   [Fact]
+  [Obsolete]
   public void Planner_route_excludes_roi_and_radius_display_units_convert_to_metres() {
     Assert.True(MissionRoute.IsNavigation((ushort)MAVLink.MAV_CMD.WAYPOINT));
     Assert.True(MissionRoute.IsNavigation((ushort)MAVLink.MAV_CMD.SPLINE_WAYPOINT));

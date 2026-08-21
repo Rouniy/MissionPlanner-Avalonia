@@ -36,20 +36,9 @@ internal sealed record SurveyGridPreviewGeometry(
     IReadOnlyList<SurveyCoveragePoint> Coverage);
 
 internal static class SurveyGridPreviewBuilder {
-  internal const double CoverageStepDegrees = 0.0001;
+  internal const double CoverageStepDegrees = OverlapCoverageBuilder.StepDegrees;
 
-  private static readonly Color[] _coverageColors = {
-    new(128, 0, 128, 140),
-    new(0, 0, 255, 140),
-    new(0, 255, 255, 140),
-    new(0, 128, 0, 140),
-    new(255, 255, 0, 140),
-    new(255, 165, 0, 140),
-    new(255, 0, 0, 140),
-    new(139, 0, 0, 140),
-  };
-
-  internal static IReadOnlyList<Color> CoverageColors => _coverageColors;
+  internal static IReadOnlyList<Color> CoverageColors => OverlapCoverageBuilder.Colors;
 
   internal static SurveyGridPreviewGeometry Build(
       SurveyGridPreviewState state,
@@ -128,71 +117,17 @@ internal static class SurveyGridPreviewBuilder {
   internal static IReadOnlyList<SurveyCoveragePoint> BuildCoverage(
       IReadOnlyList<SurveyPreviewFootprint> footprints,
       CancellationToken cancellationToken = default) {
-    if (footprints.Count == 0) {
-      return Array.Empty<SurveyCoveragePoint>();
-    }
-
-    var polygons = new List<NetTopologySuite.Geometries.Polygon>(footprints.Count);
-    foreach (SurveyPreviewFootprint footprint in footprints) {
-      cancellationToken.ThrowIfCancellationRequested();
-      Coordinate[] coordinates = footprint.Corners
-          .Where(IsValidCoordinate)
-          .Select(point => new Coordinate(point.Lng, point.Lat))
-          .ToArray();
-      if (coordinates.Length < 3) {
-        continue;
-      }
-      if (!coordinates[0].Equals2D(coordinates[^1])) {
-        coordinates = coordinates.Append(new Coordinate(coordinates[0])).ToArray();
-      }
-      var polygon = new NetTopologySuite.Geometries.Polygon(new LinearRing(coordinates));
-      if (!polygon.IsEmpty) {
-        polygons.Add(polygon);
-      }
-    }
-    if (polygons.Count == 0) {
-      return Array.Empty<SurveyCoveragePoint>();
-    }
-
-    double minLat = polygons.Min(polygon => polygon.EnvelopeInternal.MinY);
-    double maxLat = polygons.Max(polygon => polygon.EnvelopeInternal.MaxY);
-    double minLng = polygons.Min(polygon => polygon.EnvelopeInternal.MinX);
-    double maxLng = polygons.Max(polygon => polygon.EnvelopeInternal.MaxX);
-    // Preserve the official guard in GMapMarkerOverlapCount.
-    if (maxLat - minLat > 1 || maxLng - minLng > 1) {
-      return Array.Empty<SurveyCoveragePoint>();
-    }
-
-    double startLat = Math.Round(maxLat, 4);
-    double startLng = Math.Round(minLng, 4);
-    var result = new List<SurveyCoveragePoint>();
-    var factory = new GeometryFactory();
-    for (double rawLat = startLat; rawLat >= minLat; rawLat -= CoverageStepDegrees) {
-      cancellationToken.ThrowIfCancellationRequested();
-      double lat = Math.Round(rawLat, 4);
-      long column = 0;
-      for (double rawLng = startLng; rawLng <= maxLng; rawLng += CoverageStepDegrees) {
-        if ((column++ & 255) == 0) {
-          cancellationToken.ThrowIfCancellationRequested();
-        }
-        double lng = Math.Round(rawLng, 4);
-        var point = factory.CreatePoint(new Coordinate(lng, lat));
-        int count = 0;
-        foreach (NetTopologySuite.Geometries.Polygon polygon in polygons) {
-          if (polygon.EnvelopeInternal.Contains(lng, lat) && polygon.Covers(point)) {
-            count++;
-          }
-        }
-        if (count > 0) {
-          result.Add(new SurveyCoveragePoint(lat, lng, count));
-        }
-      }
-    }
-    return result;
+    IReadOnlyList<IReadOnlyList<(double Lat, double Lng)>> input = footprints
+        .Select(footprint => (IReadOnlyList<(double Lat, double Lng)>)footprint.Corners
+            .Select(point => (point.Lat, point.Lng)).ToArray())
+        .ToArray();
+    return OverlapCoverageBuilder.Build(input, cancellationToken)
+        .Select(point => new SurveyCoveragePoint(point.Lat, point.Lng, point.Count))
+        .ToArray();
   }
 
   internal static Color CoverageColor(int count) =>
-      _coverageColors[Math.Clamp(count - 1, 0, _coverageColors.Length - 1)];
+      OverlapCoverageBuilder.ColorForCount(count);
 
   private static IReadOnlyList<PointLatLngAlt> ProjectFootprint(
       PointLatLngAlt camera, double yaw, double horizontalFov, double verticalFov) =>

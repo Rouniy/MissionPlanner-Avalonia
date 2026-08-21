@@ -15,13 +15,16 @@
     <PackageVersion Include="Mapsui.Avalonia" Version="5.1.0" />
     <PackageVersion Include="Mapsui.Tiling" Version="5.1.0" />
     <PackageVersion Include="Mapsui.Nts" Version="5.1.0" />
+    <PackageVersion Include="SkiaSharp" Version="3.119.2" />
     <PackageVersion Include="Projektanker.Icons.Avalonia" Version="9.6.2" />
     <PackageVersion Include="Projektanker.Icons.Avalonia.FontAwesome" Version="9.6.2" />
     <PackageVersion Include="System.IO.Ports" Version="9.0.0" />
     <PackageVersion Include="Tmds.DBus.Protocol" Version="0.21.3" />
-    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.6.2" />
+    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.7.0" />
+    <PackageVersion Include="SSH.NET" Version="2026.0.0" />
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageVersion Include="MetadataExtractor" Version="2.9.3" />
+    <PackageVersion Include="NetTopologySuite.IO.Esri.Shapefile" Version="1.2.0" />
     <PackageVersion Include="DotNetZip.NetStandard" Version="1.12.0" />
     <PackageVersion Include="ScottPlot.Avalonia" Version="5.0.56" />
     <PackageVersion Include="MoonSharp" Version="2.0.0" />

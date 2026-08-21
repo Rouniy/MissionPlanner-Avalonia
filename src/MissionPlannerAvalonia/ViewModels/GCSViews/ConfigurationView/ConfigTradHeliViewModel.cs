@@ -1,13 +1,21 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MissionPlannerAvalonia.Services;
 
 namespace MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView;
 
-// ponytail: live ZedGraph collective curve + HS3/HS4 servo-input bars are telemetry visualizations only, not ported; all writable params are present.
-public partial class ConfigTradHeliViewModel : ParamPageBase {
+public partial class ConfigTradHeliViewModel : ParamPageBase,
+    IActivationAware, IDeactivationAware, IDisposable {
   private bool _suppressSwash;
+  private readonly DispatcherTimer _visualizationTimer;
+  private HeliInputRange _collectiveRange = new(2200, 800);
+  private HeliInputRange _rudderRange = new(2200, 800);
+  private (double P0, double P40, double P60, double P100, double Expo) _lastCurve =
+      (double.NaN, double.NaN, double.NaN, double.NaN, double.NaN);
 
   [ObservableProperty]
   private bool _swashIsCcpm = true;
@@ -15,17 +23,67 @@ public partial class ConfigTradHeliViewModel : ParamPageBase {
   [ObservableProperty]
   private string _servoStatus = "";
 
+  [ObservableProperty]
+  private IReadOnlyList<HeliCurvePoint> _stabilizeCurve = [];
+
+  [ObservableProperty]
+  private IReadOnlyList<HeliCurvePoint> _acroCurve = [];
+
+  [ObservableProperty]
+  private double _collectiveCursorPercent;
+
+  [ObservableProperty]
+  private double _collectiveInput = 1500;
+
+  [ObservableProperty]
+  private double _rudderInput = 1500;
+
+  [ObservableProperty]
+  private double _collectiveObservedMinimum = 1500;
+
+  [ObservableProperty]
+  private double _collectiveObservedMaximum = 1500;
+
+  [ObservableProperty]
+  private double _rudderObservedMinimum = 1500;
+
+  [ObservableProperty]
+  private double _rudderObservedMaximum = 1500;
+
+  [ObservableProperty]
+  private string _collectiveRangeText = "Collective range: waiting for manual mode";
+
+  [ObservableProperty]
+  private string _rudderRangeText = "Rudder range: waiting for manual mode";
+
+  [ObservableProperty]
+  private bool _manualServoActive;
+
+  [ObservableProperty]
+  private double _servo1Position;
+
+  [ObservableProperty]
+  private double _servo2Position;
+
+  [ObservableProperty]
+  private double _servo3Position;
+
   public ConfigTradHeliViewModel() {
     Title = "Heli Setup";
     Intro = "Traditional helicopter swashplate and rotor speed setup. Remove blades before testing servos.";
     Setup();
     ReadSwash();
+    _visualizationTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+    _visualizationTimer.Tick += (_, _) => PumpVisualization();
+    PumpVisualization();
   }
 
   protected override void OnRefreshed() {
     Fields.Clear();
     Setup();
     ReadSwash();
+    _lastCurve = (double.NaN, double.NaN, double.NaN, double.NaN, double.NaN);
+    PumpVisualization();
   }
 
   private string Pick(params string[] names) {
@@ -96,6 +154,80 @@ public partial class ConfigTradHeliViewModel : ParamPageBase {
       SwashIsCcpm = (int)Math.Round(comPort.MAV.param["H_SWASH_TYPE"].Value) == 0;
     }
     _suppressSwash = false;
+  }
+
+  public void Activate() {
+    ResetObservedRanges();
+    PumpVisualization();
+    _visualizationTimer.Start();
+  }
+
+  public void Deactivate() => _visualizationTimer.Stop();
+
+  public void Dispose() => _visualizationTimer.Stop();
+
+  private void ResetObservedRanges() {
+    _collectiveRange = new HeliInputRange(2200, 800);
+    _rudderRange = new HeliInputRange(2200, 800);
+    CollectiveRangeText = "Collective range: waiting for manual mode";
+    RudderRangeText = "Rudder range: waiting for manual mode";
+  }
+
+  private void PumpVisualization() {
+    double point0 = ReadParameter("IM_STAB_COL_1", "IM_STB_COL_1") ?? 0;
+    double point40 = ReadParameter("IM_STAB_COL_2", "IM_STB_COL_2") ?? 400;
+    double point60 = ReadParameter("IM_STAB_COL_3", "IM_STB_COL_3") ?? 600;
+    double point100 = ReadParameter("IM_STAB_COL_4", "IM_STB_COL_4") ?? 1000;
+    double expo = ReadParameter("IM_ACRO_COL_EXP") ?? 0;
+    var curve = (point0, point40, point60, point100, expo);
+    if (curve != _lastCurve) {
+      _lastCurve = curve;
+      StabilizeCurve = HeliVisualization.BuildStabilizeCurve(
+          point0, point40, point60, point100);
+      AcroCurve = HeliVisualization.BuildAcroCurve(expo);
+    }
+
+    var state = comPort.MAV.cs;
+    CollectiveInput = state.ch3in;
+    RudderInput = state.ch4in;
+    double collectiveMinimum = ReadParameter("H_COL_MIN") ?? 1000;
+    double collectiveMaximum = ReadParameter("H_COL_MAX") ?? 2000;
+    CollectiveCursorPercent = HeliVisualization.MapCollectiveCursor(
+        state.ch6out, collectiveMinimum, collectiveMaximum);
+
+    ManualServoActive = (ReadParameter("H_SV_MAN") ?? 0) != 0;
+    _collectiveRange = HeliVisualization.CaptureRange(
+        _collectiveRange, CollectiveInput, ManualServoActive);
+    _rudderRange = HeliVisualization.CaptureRange(
+        _rudderRange, RudderInput, ManualServoActive);
+    ApplyObservedRanges();
+
+    Servo1Position = ReadParameter("H_SV1_POS") ?? 0;
+    Servo2Position = ReadParameter("H_SV2_POS") ?? 0;
+    Servo3Position = ReadParameter("H_SV3_POS") ?? 0;
+  }
+
+  private void ApplyObservedRanges() {
+    if (_collectiveRange.HasSamples) {
+      CollectiveObservedMinimum = _collectiveRange.Minimum;
+      CollectiveObservedMaximum = _collectiveRange.Maximum;
+      CollectiveRangeText = $"Collective observed: {_collectiveRange.Minimum:0}–{_collectiveRange.Maximum:0} µs";
+    }
+    if (_rudderRange.HasSamples) {
+      RudderObservedMinimum = _rudderRange.Minimum;
+      RudderObservedMaximum = _rudderRange.Maximum;
+      RudderRangeText = $"Rudder observed: {_rudderRange.Minimum:0}–{_rudderRange.Maximum:0} µs";
+    }
+  }
+
+  private double? ReadParameter(params string[] names) {
+    foreach (string name in names) {
+      if (comPort.MAV.param.ContainsKey(name)) {
+        double value = comPort.MAV.param[name].Value;
+        return double.IsFinite(value) ? value : null;
+      }
+    }
+    return null;
   }
 
   [System.Obsolete]

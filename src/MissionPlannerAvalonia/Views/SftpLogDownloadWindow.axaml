@@ -1,0 +1,80 @@
+<Window
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  mc:Ignorable="d"
+  d:DesignWidth="900"
+  d:DesignHeight="680"
+  x:Class="MissionPlannerAvalonia.Views.SftpLogDownloadWindow"
+  x:DataType="vm:SftpLogDownloadViewModel"
+  Background="{DynamicResource MpControlBg}"
+  Width="900"
+  Height="680"
+  MinWidth="760"
+  MinHeight="560"
+  WindowStartupLocation="CenterOwner"
+  Title="Download DataFlash Logs over SFTP"
+>
+  <Grid Margin="14" RowDefinitions="Auto,Auto,*,Auto,120" RowSpacing="10">
+    <Border Grid.Row="0" BorderBrush="#666" BorderThickness="1" Padding="10">
+      <Grid ColumnDefinitions="2*,80,1.5*,1.5*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="5">
+        <TextBlock Grid.Row="0" Grid.Column="0" Text="SSH host" Foreground="#BBB" />
+        <TextBlock Grid.Row="0" Grid.Column="1" Text="Port" Foreground="#BBB" />
+        <TextBlock Grid.Row="0" Grid.Column="2" Text="Username" Foreground="#BBB" />
+        <TextBlock Grid.Row="0" Grid.Column="3" Text="Password (never saved)" Foreground="#BBB" />
+        <TextBox x:Name="SftpHost" Grid.Row="1" Grid.Column="0" Text="{Binding Host}" />
+        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Port}" />
+        <TextBox Grid.Row="1" Grid.Column="2" Text="{Binding Username}" />
+        <TextBox x:Name="SftpPassword" Grid.Row="1" Grid.Column="3" Text="{Binding Password}" PasswordChar="●" />
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="Remote directory" Foreground="#BBB"
+                   VerticalAlignment="Center" />
+        <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding RemoteDirectory}" />
+      </Grid>
+    </Border>
+
+    <WrapPanel Grid.Row="1" Orientation="Horizontal">
+      <Button Content="Refresh List" Command="{Binding RefreshLogsCommand}"
+              IsEnabled="{Binding !IsBusy}" Margin="0,0,8,0" />
+      <Button Content="Download Selected…" Command="{Binding DownloadSelectedCommand}"
+              IsEnabled="{Binding !IsBusy}" Margin="0,0,8,0" />
+      <Button Content="Download All…" Command="{Binding DownloadAllCommand}"
+              IsEnabled="{Binding !IsBusy}" Margin="0,0,8,0" />
+      <CheckBox Content="Create KML" IsChecked="{Binding CreateKmlAfterDownload}"
+                VerticalAlignment="Center" Margin="0,0,12,0" />
+      <Button Content="Delete Selected…" Command="{Binding DeleteSelectedCommand}"
+              IsEnabled="{Binding !IsBusy}" Foreground="#FF9999" Margin="0,0,8,0" />
+      <Button Content="Delete All…" Command="{Binding DeleteAllCommand}"
+              IsEnabled="{Binding !IsBusy}" Foreground="#FF7777" Margin="0,0,8,0" />
+      <Button Content="Cancel" Command="{Binding CancelCommand}" IsEnabled="{Binding IsBusy}" />
+    </WrapPanel>
+
+    <Border Grid.Row="2" BorderBrush="#666" BorderThickness="1">
+      <DataGrid x:Name="RemoteLogGrid" ItemsSource="{Binding Logs}" GridLinesVisibility="Horizontal"
+                AutoGenerateColumns="False" CanUserResizeColumns="True">
+        <DataGrid.Columns>
+          <DataGridTemplateColumn Header="Get" Width="55">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate x:DataType="vm:SftpLogDownloadRow">
+                <CheckBox IsChecked="{Binding IsSelected}" HorizontalAlignment="Center" />
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
+          <DataGridTextColumn Header="Remote filename" Binding="{Binding Name}" Width="2*" IsReadOnly="True" />
+          <DataGridTextColumn Header="Modified" Binding="{Binding TimeText}" Width="1.4*" IsReadOnly="True" />
+          <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" Width="*" IsReadOnly="True" />
+        </DataGrid.Columns>
+      </DataGrid>
+    </Border>
+
+    <Grid Grid.Row="3" RowDefinitions="Auto,Auto" RowSpacing="5">
+      <ProgressBar Grid.Row="0" Minimum="0" Maximum="100" Value="{Binding Progress}" Height="16" />
+      <TextBlock Grid.Row="1" Foreground="#DDD" Text="{Binding Status}" TextWrapping="Wrap" />
+    </Grid>
+
+    <TextBox Grid.Row="4" Text="{Binding ActivityLog}" IsReadOnly="True"
+             AcceptsReturn="True" TextWrapping="Wrap" ScrollViewer.VerticalScrollBarVisibility="Auto"
+             FontFamily="monospace" FontSize="11" Watermark="SFTP activity" />
+  </Grid>
+</Window>

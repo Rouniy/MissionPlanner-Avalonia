@@ -1,0 +1,86 @@
+<Window
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  mc:Ignorable="d"
+  d:DesignWidth="1180"
+  d:DesignHeight="620"
+  x:Class="MissionPlannerAvalonia.Views.OfflineMagFitWindow"
+  x:DataType="vm:OfflineMagFitViewModel"
+  Title="Offline Magnetometer Calibration (MagFit)"
+  Width="1180"
+  Height="620"
+  MinWidth="900"
+  MinHeight="460"
+  WindowStartupLocation="CenterOwner"
+  Background="{DynamicResource MpControlBg}"
+>
+  <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto" RowSpacing="10">
+    <StackPanel Grid.Row="0" Spacing="5">
+      <TextBlock Classes="pagetitle" Text="Offline Magnetometer Calibration (MagFit)" />
+      <TextBlock
+        Classes="fieldlbl"
+        TextWrapping="Wrap"
+        Text="Port of Mission Planner MagCalib.ProcessLog. It removes offsets recorded in the log, fits a sphere or full soft-iron ellipsoid, and reports each detected compass separately."
+      />
+    </StackPanel>
+
+    <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+      <TextBox Grid.Column="0" Text="{Binding SourcePath}" Watermark="Select .tlog, .bin or .log" IsReadOnly="True" />
+      <Button Grid.Column="1" Content="Browse…" Command="{Binding BrowseCommand}" IsEnabled="{Binding !IsBusy}" />
+      <Button Grid.Column="2" Content="Analyze" Command="{Binding AnalyzeCommand}" IsEnabled="{Binding !IsBusy}" MinWidth="90" />
+      <Button Grid.Column="3" Content="Cancel" Command="{Binding CancelCommand}" IsEnabled="{Binding IsBusy}" MinWidth="90" />
+    </Grid>
+
+    <Grid Grid.Row="2" ColumnDefinitions="Auto,100,Auto,*,Auto" ColumnSpacing="8">
+      <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Minimum throttle for .tlog (%)" VerticalAlignment="Center" />
+      <NumericUpDown Grid.Column="1" Value="{Binding ThrottleThreshold}" Minimum="0" Maximum="100" Increment="1" FormatString="0" IsEnabled="{Binding !IsBusy}" />
+      <CheckBox Grid.Column="2" Content="Fit soft-iron ellipsoid (DIA/ODI)" IsChecked="{Binding UseEllipsoid}" VerticalAlignment="Center" IsEnabled="{Binding !IsBusy}" />
+      <TextBlock Grid.Column="3" Classes="fieldlbl" Text="BIN/LOG analysis uses all MAG samples, matching the official workflow." VerticalAlignment="Center" />
+      <ProgressBar Grid.Column="4" Width="150" Minimum="0" Maximum="100" Value="{Binding Progress}" VerticalAlignment="Center" />
+    </Grid>
+
+    <DataGrid
+      Grid.Row="3"
+      ItemsSource="{Binding Results}"
+      AutoGenerateColumns="False"
+      IsReadOnly="True"
+      GridLinesVisibility="All"
+      CanUserResizeColumns="True"
+    >
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="Compass" Binding="{Binding CompassName}" Width="90" />
+        <DataGridTextColumn Header="Model" Binding="{Binding ModelName}" Width="80" />
+        <DataGridTextColumn Header="Samples" Binding="{Binding UsedSamples}" Width="75" />
+        <DataGridTextColumn Header="Coverage" Binding="{Binding CoverageText}" Width="85" />
+        <DataGridTextColumn Header="Logged OFS X, Y, Z" Binding="{Binding LoggedOffsets}" Width="155" />
+        <DataGridTextColumn Header="New OFS X, Y, Z" Binding="{Binding Offsets}" Width="155" />
+        <DataGridTextColumn Header="DIA X, Y, Z" Binding="{Binding Diagonals}" Width="155" />
+        <DataGridTextColumn Header="ODI X, Y, Z" Binding="{Binding OffDiagonals}" Width="155" />
+        <DataGridTextColumn Header="RMS" Binding="{Binding RmsError, StringFormat=0.00}" Width="70" />
+      </DataGrid.Columns>
+    </DataGrid>
+
+    <Grid Grid.Row="4" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+      <StackPanel Grid.Column="0" Spacing="5">
+        <Border Background="#33A03030" BorderBrush="#C05050" BorderThickness="1" CornerRadius="4" Padding="8">
+          <TextBlock
+            TextWrapping="Wrap"
+            Text="Safety: analyze first, inspect coverage and RMS, then apply only to the same disarmed vehicle that produced the log. Applying is never automatic."
+          />
+        </Border>
+        <TextBlock Text="{Binding Status}" Foreground="#9CDCFE" TextWrapping="Wrap" />
+      </StackPanel>
+      <Button
+        Grid.Column="1"
+        Content="Apply to connected vehicle…"
+        Command="{Binding ApplyCommand}"
+        IsEnabled="{Binding CanApply}"
+        VerticalAlignment="Bottom"
+        MinWidth="210"
+      />
+    </Grid>
+  </Grid>
+</Window>

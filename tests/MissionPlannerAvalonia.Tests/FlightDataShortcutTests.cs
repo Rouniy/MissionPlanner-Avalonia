@@ -34,6 +34,10 @@ public class FlightDataShortcutTests {
     Assert.True(MainWindow.ShouldPreserveFocusedInput(new NumericUpDown(), Key.OemPlus));
     Assert.True(MainWindow.ShouldPreserveFocusedInput(new Button(), Key.Space));
     Assert.False(MainWindow.ShouldPreserveFocusedInput(new TextBox(), Key.F5));
+    var terminalInput = new TextBox();
+    terminalInput.Classes.Add("ssh-terminal-input");
+    Assert.True(MainWindow.ShouldPreserveFocusedInput(terminalInput, Key.F5));
+    Assert.True(MainWindow.ShouldPreserveFocusedInput(terminalInput, Key.F12));
     Assert.False(MainWindow.ShouldPreserveFocusedInput(null, Key.X));
   }
 }

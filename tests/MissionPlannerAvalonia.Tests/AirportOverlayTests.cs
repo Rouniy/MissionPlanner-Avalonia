@@ -1,10 +1,14 @@
 using Avalonia.Headless.XUnit;
+using Mapsui;
 using Mapsui.Nts;
 using Mapsui.Projections;
+using Mapsui.Rendering;
+using Mapsui.Rendering.Skia;
 using Mapsui.Styles;
 using MissionPlannerAvalonia.Controls;
 using MissionPlannerAvalonia.Services;
 using NetTopologySuite.Geometries;
+using SkiaSharp;
 
 namespace MissionPlannerAvalonia.Tests;
 
@@ -32,12 +36,45 @@ public class AirportOverlayTests {
     var style = Assert.IsType<VectorStyle>(Assert.Single(feature.Styles));
     Assert.Null(style.Line);
     Assert.Null(style.Outline);
-    Assert.Equal(new Color(255, 0, 0, 25), style.Fill?.Color);
+    Assert.NotNull(style.Fill);
+    Color fill = style.Fill.Color!.Value;
+    Assert.Equal(1, style.Opacity);
+    Assert.Equal(25, fill.A);
+    Assert.Equal(255, fill.R);
+    Assert.Equal(0, fill.G);
+    Assert.Equal(0, fill.B);
 
     var center = SphericalMercator.FromLonLat(airport.Lng, airport.Lat);
     double projectedRadius = polygon.ExteriorRing.Coordinates[0].X - center.x;
     double physicalRadius = projectedRadius * Math.Cos(airport.Lat * Math.PI / 180);
     Assert.InRange(physicalRadius, 8999.9, 9000.1);
+  }
+
+  [Fact]
+  public void Airport_circle_preserves_the_lower_layer_through_translucent_red() {
+    var airport = new AirportMapItem(34.8751, 33.6249, "Larnaca", 9000);
+    GeometryFeature feature = AirportOverlayController.BuildRadiusFeature(airport);
+    var layer = new Mapsui.Layers.MemoryLayer { Features = [feature], Style = null };
+    MRect extent = Assert.IsType<MRect>(feature.Extent);
+    var viewport = new Viewport(extent.Centroid.X, extent.Centroid.Y,
+        extent.Width / 80, 0, 100, 100);
+    var renderer = new MapRenderer();
+    var renderService = new RenderService();
+    Color lowerLayerColor = Color.FromArgb(255, 20, 100, 220);
+
+    using Stream png = renderer.RenderToBitmapStream(viewport, [layer], renderService,
+        lowerLayerColor, 1, [], RenderFormat.Png, 100);
+    png.Position = 0;
+    using SKBitmap bitmap = Assert.IsType<SKBitmap>(SKBitmap.Decode(png));
+    SKColor center = bitmap.GetPixel(bitmap.Width / 2, bitmap.Height / 2);
+    SKColor outside = bitmap.GetPixel(5, 5);
+
+    Assert.Equal(new SKColor(20, 100, 220), outside);
+    Assert.Equal(255, center.Alpha);
+    // Source-over at alpha 25/255 should retain about 90% of the lower-layer color.
+    Assert.InRange(center.Red, 41, 45);
+    Assert.InRange(center.Green, 88, 92);
+    Assert.InRange(center.Blue, 196, 200);
   }
 
   [AvaloniaFact]
@@ -51,8 +88,9 @@ public class AirportOverlayTests {
       int propagationStatus = Array.IndexOf(names, "Propagation status / scale");
       Assert.True(propagationStatus >= 0);
       Assert.True(airport > propagationStatus);
-      Assert.Equal(AirportService.MaximumVisibleResolution,
-          map.Layers.ElementAt(airport).MaxVisible, 8);
+      var airportLayer = map.Layers.ElementAt(airport);
+      Assert.Null(airportLayer.Style);
+      Assert.Equal(AirportService.MaximumVisibleResolution, airportLayer.MaxVisible, 8);
     }
   }
 

@@ -503,6 +503,9 @@ public partial class ConfigCompassViewModel : ParamPageBase, IDisposable {
   private double _largeVehicleHeading;
 
   [RelayCommand]
+  private void OfflineMagFit() => Views.OfflineMagFitWindow.OpenWindow();
+
+  [RelayCommand]
   private async Task StartMagCal() {
     if (!IsConnected) {
       await Dialogs.Alert("Error", "Connect to a vehicle first.");

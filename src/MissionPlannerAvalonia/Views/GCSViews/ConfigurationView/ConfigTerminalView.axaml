@@ -4,6 +4,7 @@
   xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
   xmlns:cv="using:MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView"
+  xmlns:controls="using:MissionPlannerAvalonia.Controls"
   mc:Ignorable="d"
   d:DesignWidth="800"
   d:DesignHeight="640"
@@ -11,7 +12,7 @@
   x:DataType="cv:ConfigTerminalViewModel"
   Background="{DynamicResource MpControlBg}"
 >
-  <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" Margin="16">
+  <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Margin="16">
     <TextBlock Grid.Row="0" Classes="pagetitle" Text="Terminal" />
     <TextBlock
       Grid.Row="1"
@@ -38,27 +39,65 @@
         Grid.Column="2"
         Content="Stop"
         Command="{Binding StopSessionCommand}"
-        IsEnabled="{Binding SessionOpen}"
       />
     </Grid>
 
-    <TextBox
+    <Grid
       Grid.Row="3"
-      Text="{Binding Output}"
-      IsReadOnly="True"
-      AcceptsReturn="True"
-      TextWrapping="NoWrap"
-      FontFamily="Consolas,Menlo,monospace"
-      Background="{DynamicResource MpBg}"
-      Foreground="#DDDDDD"
-      VerticalContentAlignment="Top"
-    />
+      ColumnDefinitions="2*,90,*,*"
+      ColumnSpacing="8"
+      Margin="0,0,0,10"
+      IsVisible="{Binding IsSshSelected}"
+    >
+      <StackPanel Grid.Column="0" Spacing="3">
+        <TextBlock Text="Host" Classes="fieldlbl" />
+        <TextBox Text="{Binding SshHost}" Watermark="192.168.1.10 or host:port" />
+      </StackPanel>
+      <StackPanel Grid.Column="1" Spacing="3">
+        <TextBlock Text="Port" Classes="fieldlbl" />
+        <TextBox Text="{Binding SshPort}" />
+      </StackPanel>
+      <StackPanel Grid.Column="2" Spacing="3">
+        <TextBlock Text="Username" Classes="fieldlbl" />
+        <TextBox Text="{Binding SshUsername}" />
+      </StackPanel>
+      <StackPanel Grid.Column="3" Spacing="3">
+        <TextBlock Text="Password" Classes="fieldlbl" />
+        <TextBox Text="{Binding SshPassword}" PasswordChar="●" />
+      </StackPanel>
+    </Grid>
 
-    <Grid Grid.Row="4" ColumnDefinitions="*,Auto,Auto" Margin="0,12,0,0">
+    <Border
+      Grid.Row="4"
+      Background="#101010"
+      BorderBrush="{DynamicResource MpBorderBrush}"
+      BorderThickness="1"
+      Padding="8"
+    >
+      <ScrollViewer
+        HorizontalScrollBarVisibility="Auto"
+        VerticalScrollBarVisibility="Auto"
+      >
+        <controls:AnsiTerminalView
+          x:Name="TerminalOutput"
+          Screen="{Binding TerminalScreen}"
+          PlainText="{Binding Output}"
+          ShowCursor="{Binding IsSshSession}"
+          TextWrapping="NoWrap"
+          FontFamily="Consolas,Menlo,monospace"
+          Background="#101010"
+          Foreground="#DDDDDD"
+        />
+      </ScrollViewer>
+    </Border>
+
+    <Grid Grid.Row="5" ColumnDefinitions="*,Auto,Auto" Margin="0,12,0,0">
       <TextBox
+        x:Name="TerminalInput"
+        Classes="ssh-terminal-input"
         Grid.Column="0"
         Text="{Binding Input}"
-        Watermark="Type a command…"
+        Watermark="Type a command or interact with the SSH terminal…"
         FontFamily="Consolas,Menlo,monospace"
         Margin="0,0,8,0"
       />

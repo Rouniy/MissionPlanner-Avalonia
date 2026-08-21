@@ -29,6 +29,19 @@ public class BackstageLifecycleTests {
     Assert.Same(backstage.AdvancedTool, backstage.SelectedPage);
   }
 
+  [Fact]
+  public void Resetting_connected_page_discards_old_vehicle_view_model() {
+    var page = new BackstagePage(
+        "Vehicle params", () => new LifecycleViewModel(), requiresConnection: true);
+    var first = Assert.IsType<LifecycleViewModel>(page.Content);
+
+    Assert.Same(first, page.ResetContent());
+    var second = Assert.IsType<LifecycleViewModel>(page.Content);
+
+    Assert.NotSame(first, second);
+    Assert.Equal(1, first.DeactivationCount);
+  }
+
   private sealed class TestBackstage : BackstageViewModel {
     public TestBackstage() {
       Add("First", () => new LifecycleViewModel());

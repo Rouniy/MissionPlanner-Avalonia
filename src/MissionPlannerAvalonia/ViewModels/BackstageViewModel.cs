@@ -55,6 +55,18 @@ public partial class BackstagePage : ObservableObject {
 
   public ViewModelBase Content => _content ??= _factory();
   public ViewModelBase? CreatedContent => _content;
+
+  internal ViewModelBase? ResetContent() {
+    var previous = _content;
+    _content = null;
+    if (previous is IDeactivationAware lifecycle) {
+      lifecycle.Deactivate();
+    }
+    if (previous is IDisposable disposable) {
+      disposable.Dispose();
+    }
+    return previous;
+  }
 }
 
 public partial class BackstageViewModel : ViewModelBase, IDeactivationAware, IDisposable {
@@ -97,9 +109,24 @@ public partial class BackstageViewModel : ViewModelBase, IDeactivationAware, IDi
 
   private void OnConnectionChanged() {
     if (Avalonia.Threading.Dispatcher.UIThread.CheckAccess()) {
-      RefreshVisibility();
+      RefreshForConnectionChange();
     } else {
-      Avalonia.Threading.Dispatcher.UIThread.Post(RefreshVisibility);
+      Avalonia.Threading.Dispatcher.UIThread.Post(RefreshForConnectionChange);
+    }
+  }
+
+  private void RefreshForConnectionChange() {
+    var selected = SelectedPage;
+    bool resetSelected = selected?.RequiresConnection == true;
+    foreach (var page in Pages.Where(page => page.RequiresConnection)) {
+      page.ResetContent();
+    }
+    RefreshVisibility();
+    if (resetSelected && ReferenceEquals(SelectedPage, selected)) {
+      CurrentContent = selected!.Content;
+      if (ParamLoading.ParametersReady && CurrentContent is IActivationAware activation) {
+        activation.Activate();
+      }
     }
   }
 
@@ -136,7 +163,8 @@ public partial class BackstageViewModel : ViewModelBase, IDeactivationAware, IDi
     if (newValue != null) {
       newValue.IsSelected = true;
       CurrentContent = newValue.Content;
-      if (CurrentContent is IActivationAware activation) {
+      if ((!newValue.RequiresConnection || ParamLoading.ParametersReady)
+          && CurrentContent is IActivationAware activation) {
         activation.Activate();
       }
       if (_persistKey != null && !newValue.IsSub) {

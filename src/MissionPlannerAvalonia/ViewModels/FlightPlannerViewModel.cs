@@ -23,6 +23,7 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
   private readonly MAVLinkInterface _comPort = AppState.comPort;
   private bool _recomputing;
   private bool _restoringUndo;
+  private bool _clearingRallyPoints;
   private int _undoMutationDepth;
   private readonly List<MissionSnapshot> _undoHistory = [];
 
@@ -714,6 +715,7 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
 #pragma warning restore CS0612
   }
 
+  [Obsolete]
   internal async Task ReadAncillaryOnConnectAsync() {
     if (!IsConnected) {
       return;
@@ -769,6 +771,7 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
     }
   }
 
+  [Obsolete]
   private Task<List<WpRow>> DownloadRowsAsync(
       MAVLink.MAV_MISSION_TYPE type, byte sysid, byte compid) => Task.Run(async () => {
         var list = new List<WpRow>();
@@ -932,7 +935,16 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
     if (type == MAVLink.MAV_MISSION_TYPE.MISSION && !await ConfirmMissionSafetyAsync(rows)) {
       return;
     }
-    Status = $"Writing {rows.Count} {MissionType.ToLowerInvariant()} point(s)…";
+    string typeName = MissionType.ToLowerInvariant();
+    Status = $"Writing {rows.Count} {typeName} point(s)…";
+    if (await WriteRowsToVehicleAsync(type, rows)) {
+      Status = $"Wrote {rows.Count} {typeName} point(s).";
+    }
+  }
+
+#pragma warning disable CS0612 // Mission Planner's legacy upload APIs are still required here.
+  private async Task<bool> WriteRowsToVehicleAsync(
+      MAVLink.MAV_MISSION_TYPE type, IReadOnlyList<WpRow> rows) {
     try {
       await Task.Run(async () => {
         if (UseMissionMavFtp) {
@@ -970,11 +982,13 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
               [.. rows.Select(r => r.ToLocationwp())]);
         }
       });
-      Status = $"Wrote {rows.Count} {MissionType.ToLowerInvariant()} point(s).";
+      return true;
     } catch (Exception ex) {
       Status = "Write failed: " + ex.Message;
+      return false;
     }
   }
+#pragma warning restore CS0612
 
   private void UploadRowsMavFtp(MAVLink.MAV_MISSION_TYPE type, IReadOnlyList<WpRow> rows) {
     byte[] payload = BuildMissionFtpPayload(type, rows, HomeLat, HomeLng, HomeAlt,
@@ -1430,6 +1444,9 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
         case ".kmz":
           LoadKmlMission(path, append);
           return;
+        case ".shp":
+          await LoadShapefileMissionAsync(path, append);
+          return;
       }
 
       var lines = await File.ReadAllLinesAsync(path);
@@ -1502,6 +1519,34 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
     }
     Status = $"{(append ? "Appended" : "Loaded")} {rows.Count} KML waypoint(s) and " +
         $"{content.Pois.Count} POI(s) from {Path.GetFileName(path)}.";
+  }
+
+  private async Task LoadShapefileMissionAsync(string path, bool append) {
+    Services.ShapefileMissionImport import = await Task.Run(() =>
+        Services.ShapefileImportService.ReadMission(path));
+    var rows = import.Points.Select((point, index) => new WpRow {
+      Seq = index,
+      Command = (ushort)(SplineDefault
+          ? MAVLink.MAV_CMD.SPLINE_WAYPOINT
+          : MAVLink.MAV_CMD.WAYPOINT),
+      Frame = DefaultFrameId,
+      Lat = point.Lat,
+      Lng = point.Lng,
+      Alt = point.Alt,
+    }).ToList();
+    if (rows.Count == 0) {
+      throw new InvalidDataException("No point geometry found in the shapefile.");
+    }
+    if (MissionType != "Mission") {
+      MissionType = "Mission";
+    }
+    ReplaceOrAppend(rows, append);
+    string projection = import.ProjectionName == null
+        ? "raw longitude/latitude"
+        : import.ProjectionName;
+    string sorting = import.SortedByWaypointAttribute ? ", sorted by wp" : "";
+    Status = $"{(append ? "Appended" : "Loaded")} {rows.Count} SHP waypoint(s) " +
+        $"from {Path.GetFileName(path)} ({projection}{sorting}).";
   }
 
   private static string ToWplLine(WpRow row, int sequence, bool current) =>
@@ -1998,6 +2043,16 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
     }
   }
 
+  public void AddRallyPointAt(double lat, double lng, double altitudeMetres) {
+    if (MissionType != "Rally") {
+      MissionType = "Rally";
+    }
+    using var undo = BeginUndoMutation();
+    AddCommandRow(MAVLink.MAV_CMD.RALLY_POINT, lat, lng, altitudeMetres,
+        frame: (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT);
+    Status = "Rally point added.";
+  }
+
   [ObservableProperty]
   private bool _splineDefault;
 
@@ -2067,6 +2122,7 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
     Status = $"WP circle: {n} point(s).";
   }
 
+  [Obsolete]
   public async Task CreateSplineCircle(double lat, double lng) {
     if (await Ask("Radius", $"Radius ({CurrentState.DistanceUnit})", "50") is not { } s1
         || !int.TryParse(s1, out var radius)) {
@@ -2113,6 +2169,7 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
     Status = "Spline circle added.";
   }
 
+  [Obsolete]
   public async Task CreateCircleSurvey(double lat, double lng) {
     if (await Ask("", $"Start altitude ({CurrentState.AltUnit})", "10") is not { } s1
         || !int.TryParse(s1, out var startalt)) {
@@ -2407,6 +2464,55 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private void ClearMission() {
+    using var undo = BeginUndoMutation();
+    Waypoints.Clear();
+    WaypointsChanged?.Invoke();
+  }
+
+  public Task ClearRallyPointsAsync() => ClearRallyPointsAsync(
+      IsConnected,
+      () => WriteRowsToVehicleAsync(
+          MAVLink.MAV_MISSION_TYPE.RALLY, Array.Empty<WpRow>()));
+
+  internal async Task ClearRallyPointsAsync(bool connected, Func<Task<bool>> clearVehicle) {
+    if (_clearingRallyPoints) {
+      Status = "Rally-point clear is already in progress.";
+      return;
+    }
+    _clearingRallyPoints = true;
+    try {
+      await ClearRallyPointsCoreAsync(connected, clearVehicle);
+    } finally {
+      _clearingRallyPoints = false;
+    }
+  }
+
+  private async Task ClearRallyPointsCoreAsync(bool connected, Func<Task<bool>> clearVehicle) {
+    if (MissionType != "Rally") {
+      MissionType = "Rally";
+    }
+
+    if (!connected) {
+      ClearCurrentRallyPoints();
+      Status = "Cleared local rally points; connect and Upload to clear the vehicle.";
+      return;
+    }
+
+    Status = "Clearing rally points on the vehicle…";
+    if (!await clearVehicle()) {
+      string detail = Status.StartsWith("Write failed:", StringComparison.Ordinal)
+          ? " " + Status
+          : string.Empty;
+      Status = "Rally points were not cleared; the local list was kept. " +
+          "Download from the vehicle to verify its state." + detail;
+      return;
+    }
+
+    ClearCurrentRallyPoints();
+    Status = "Cleared rally points on the vehicle.";
+  }
+
+  private void ClearCurrentRallyPoints() {
     using var undo = BeginUndoMutation();
     Waypoints.Clear();
     WaypointsChanged?.Invoke();

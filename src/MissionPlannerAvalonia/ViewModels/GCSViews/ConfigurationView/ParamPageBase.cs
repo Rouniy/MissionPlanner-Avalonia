@@ -46,7 +46,12 @@ public partial class ParamPageBase : ViewModelBase {
     }
 
     try {
-      await Task.Run(() => comPort.getParamListMavftp(comPort.MAV.sysid, comPort.MAV.compid));
+      bool loaded = await AppState.ParameterLoads.LoadLatestAsync(
+          comPort.MAV.sysid, comPort.MAV.compid);
+      if (!loaded) {
+        return;
+      }
+      AppState.RaiseConnectionChanged();
     } catch (System.Exception ex) {
       await Services.Dialogs.Alert("Refresh failed", ex.Message);
       return;

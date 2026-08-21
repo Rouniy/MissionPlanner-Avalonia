@@ -18,6 +18,8 @@ public partial class FlightDataView : UserControl {
   [Obsolete]
   public FlightDataView() {
     InitializeComponent();
+    _flightDataLayout = this.FindControl<Avalonia.Controls.Grid>("FlightDataLayoutGrid");
+    RestoreMainSplitterDistance();
     var hud = this.FindControl<HudControl>("Hud");
     if (hud != null) {
       hud.IndicatorClicked += OnHudIndicatorClicked;
@@ -171,7 +173,51 @@ public partial class FlightDataView : UserControl {
   private readonly MapView? _fdMap;
   private readonly LivePlot? _tuningPlot;
   private readonly TabControl? _fdTabs;
+  private readonly Avalonia.Controls.Grid? _flightDataLayout;
   private FlightDataViewModel? _mapVm;
+
+  private void OnMainSplitterDragCompleted(object? sender, VectorEventArgs e) {
+    if (_flightDataLayout?.ColumnDefinitions.Count >= 3) {
+      SaveMainSplitterDistance(_flightDataLayout.ColumnDefinitions[0].ActualWidth);
+    }
+  }
+
+  private void RestoreMainSplitterDistance() {
+    if (!Settings.Instance.ContainsKey("FlightSplitter") ||
+        !double.TryParse(Settings.Instance["FlightSplitter"], NumberStyles.Float,
+            CultureInfo.InvariantCulture, out double distance)) {
+      return;
+    }
+    ApplyMainSplitterDistance(distance, persist: false);
+  }
+
+  internal void ApplyMainSplitterDistance(double distance, bool persist = true) {
+    if (_flightDataLayout == null || _flightDataLayout.ColumnDefinitions.Count < 3 ||
+        double.IsNaN(distance) || double.IsInfinity(distance)) {
+      return;
+    }
+
+    ColumnDefinition left = _flightDataLayout.ColumnDefinitions[0];
+    ColumnDefinition right = _flightDataLayout.ColumnDefinitions[2];
+    double maximum = _flightDataLayout.Bounds.Width > 0
+        ? Math.Max(left.MinWidth,
+            _flightDataLayout.Bounds.Width - right.MinWidth -
+            _flightDataLayout.ColumnDefinitions[1].ActualWidth)
+        : 2000;
+    distance = Math.Clamp(distance, left.MinWidth, maximum);
+    left.Width = new GridLength(distance, GridUnitType.Pixel);
+    if (persist) {
+      SaveMainSplitterDistance(distance);
+    }
+  }
+
+  private static void SaveMainSplitterDistance(double distance) {
+    if (distance <= 0 || double.IsNaN(distance) || double.IsInfinity(distance)) {
+      return;
+    }
+    Settings.Instance["FlightSplitter"] =
+        Math.Round(distance).ToString(CultureInfo.InvariantCulture);
+  }
 
   private void BindMap() {
     if (_fdMap == null || ReferenceEquals(_mapVm, DataContext)) {
@@ -348,6 +394,13 @@ public partial class FlightDataView : UserControl {
     menu.Items.Add(Item("Point Camera Here", vm => vm.PointCameraHere(map.LastClickLatLng.Lat, map.LastClickLatLng.Lng)));
     menu.Items.Add(Item("Point Camera Coords…", vm => vm.PointCameraCoords()));
     menu.Items.Add(Item("Trigger Camera NOW", vm => vm.TriggerCameraNow()));
+    var cameraOverlap = new MenuItem {
+      Header = "Camera Overlap on/off",
+      ToggleType = MenuItemToggleType.CheckBox,
+      IsChecked = map.CameraOverlapEnabled,
+    };
+    cameraOverlap.Click += (_, _) => map.CameraOverlapEnabled = cameraOverlap.IsChecked;
+    menu.Items.Add(cameraOverlap);
     menu.Items.Add(new Separator());
     menu.Items.Add(Item("Add POI Here…", vm => vm.AddPoiHere(map.LastClickLatLng.Lat, map.LastClickLatLng.Lng)));
     menu.Items.Add(Item("Add POI at Coords…", vm => vm.AddPoiCoords()));
@@ -355,6 +408,9 @@ public partial class FlightDataView : UserControl {
     menu.Items.Add(Item("Clear All POIs…", vm => vm.ClearPois()));
     menu.Items.Add(Item("Load POIs…", vm => vm.LoadPois()));
     menu.Items.Add(Item("Save POIs…", vm => vm.SavePois()));
+    var clearImportedOverlay = new MenuItem { Header = "Clear Imported Map Overlay" };
+    clearImportedOverlay.Click += (_, _) => Services.ImportedOverlayStore.ClearFlightData();
+    menu.Items.Add(clearImportedOverlay);
     menu.Items.Add(new Separator());
     menu.Items.Add(Item("Open Flight Planner", vm => vm.OpenFlightPlanner()));
     menu.Items.Add(new Separator());

@@ -174,7 +174,8 @@ public partial class ConfigBasicTuningViewModel : ViewModelBase {
   [Obsolete]
   private async Task Refresh() {
     if (Connected) {
-      await Task.Run(() => _comPort.getParamList());
+      await AppState.ParameterLoads.LoadLatestAsync(_comPort.MAV.sysid, _comPort.MAV.compid);
+      AppState.RaiseConnectionChanged();
     }
 
     Load();

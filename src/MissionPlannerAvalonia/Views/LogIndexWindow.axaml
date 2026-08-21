@@ -1,0 +1,72 @@
+<Window
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  mc:Ignorable="d"
+  d:DesignWidth="1380"
+  d:DesignHeight="760"
+  x:Class="MissionPlannerAvalonia.Views.LogIndexWindow"
+  x:DataType="vm:LogIndexViewModel"
+  Background="{DynamicResource MpControlBg}"
+  Width="1380"
+  Height="760"
+  MinWidth="900"
+  MinHeight="520"
+  WindowStartupLocation="CenterOwner"
+  Title="Flight Log Index">
+  <Grid Margin="12" RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="8">
+    <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+      <TextBlock Grid.Column="0" Text="Directory" VerticalAlignment="Center" Foreground="#BBB" />
+      <TextBox Grid.Column="1" Text="{Binding RootDirectory}" IsReadOnly="True" />
+      <Button Grid.Column="2" x:Name="DefaultDirectoryButton" Content="Default Log Dir" IsEnabled="{Binding !IsBusy}" />
+      <Button Grid.Column="3" x:Name="ChooseDirectoryButton" Content="Custom Directory…" IsEnabled="{Binding !IsBusy}" />
+      <Button Grid.Column="4" x:Name="RefreshButton" Content="Refresh" IsEnabled="{Binding !IsBusy}" />
+      <Button Grid.Column="5" x:Name="CancelButton" Content="Cancel" IsEnabled="{Binding IsBusy}" />
+    </Grid>
+
+    <TextBlock Grid.Row="1" Text="Double-click a row to open it in Log Browser. Ctrl/Shift select multiple rows."
+               Foreground="#AAA" />
+
+    <Border Grid.Row="2" BorderBrush="#666" BorderThickness="1">
+      <DataGrid x:Name="LogGrid" ItemsSource="{Binding Rows}" AutoGenerateColumns="False"
+                IsReadOnly="True" SelectionMode="Extended" GridLinesVisibility="Horizontal"
+                CanUserResizeColumns="True" CanUserSortColumns="True" RowHeight="78">
+        <DataGrid.Columns>
+          <DataGridTemplateColumn Header="Map" Width="130" CanUserSort="False">
+            <DataGridTemplateColumn.CellTemplate>
+              <DataTemplate x:DataType="vm:LogIndexRow">
+                <Image Source="{Binding Thumbnail}" Width="120" Height="70" Stretch="UniformToFill" />
+              </DataTemplate>
+            </DataGridTemplateColumn.CellTemplate>
+          </DataGridTemplateColumn>
+          <DataGridTextColumn Header="Date" Binding="{Binding DateText}" SortMemberPath="DateSort" Width="145" />
+          <DataGridTextColumn Header="Directory" Binding="{Binding Directory}" Width="220" />
+          <DataGridTextColumn Header="Frame" Binding="{Binding Frame}" Width="115" />
+          <DataGridTextColumn Header="Aircraft / sysid" Binding="{Binding SystemIdText}" SortMemberPath="SystemIdSort" Width="105" />
+          <DataGridTextColumn Header="Duration" Binding="{Binding DurationText}" SortMemberPath="DurationSeconds" Width="85" />
+          <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="180" />
+          <DataGridTextColumn Header="Size" Binding="{Binding SizeText}" SortMemberPath="SizeBytes" Width="80" />
+          <DataGridTextColumn Header="Home" Binding="{Binding HomeText}" Width="230" />
+          <DataGridTextColumn Header="Time in air" Binding="{Binding TimeInAirText}" SortMemberPath="TimeInAirSeconds" Width="90" />
+          <DataGridTextColumn Header="Distance" Binding="{Binding DistanceText}" SortMemberPath="DistanceMeters" Width="85" />
+          <DataGridTextColumn Header="CAM" Binding="{Binding CameraMessagesText}" SortMemberPath="CameraMessages" Width="60" />
+          <DataGridTextColumn Header="Read warning" Binding="{Binding ErrorText}" Width="220" />
+        </DataGrid.Columns>
+      </DataGrid>
+    </Border>
+
+    <Grid Grid.Row="3" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+      <TextBlock Grid.Column="0" Text="{Binding SelectedSummary}" Foreground="#DDD" VerticalAlignment="Center" />
+      <Button Grid.Column="1" x:Name="DeleteButton" Content="Delete Selected…"
+              IsEnabled="{Binding !IsBusy}" Foreground="#FF8888" />
+    </Grid>
+
+    <Grid Grid.Row="4" RowDefinitions="Auto,Auto" RowSpacing="5">
+      <ProgressBar Grid.Row="0" Minimum="0" Maximum="{Binding ProgressMaximum}"
+                   Value="{Binding Progress}" Height="15" />
+      <TextBlock Grid.Row="1" Text="{Binding Status}" Foreground="#9CDCFE" TextWrapping="Wrap" />
+    </Grid>
+  </Grid>
+</Window>

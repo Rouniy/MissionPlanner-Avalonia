@@ -60,6 +60,7 @@
     <PackageReference Include="Mapsui.Avalonia" />
     <PackageReference Include="Mapsui.Tiling" />
     <PackageReference Include="Mapsui.Nts" />
+    <PackageReference Include="SkiaSharp" />
     <PackageReference Include="Projektanker.Icons.Avalonia" />
     <PackageReference Include="Projektanker.Icons.Avalonia.FontAwesome" />
     <PackageReference Include="System.IO.Ports" />
@@ -68,7 +69,9 @@
     <PackageReference Include="MoonSharp" />
     <PackageReference Include="LibVLCSharp.Avalonia" />
     <PackageReference Include="BouncyCastle.Cryptography" />
+    <PackageReference Include="SSH.NET" />
     <PackageReference Include="MetadataExtractor" />
+    <PackageReference Include="NetTopologySuite.IO.Esri.Shapefile" />
   </ItemGroup>
 
   <!-- The official VideoLAN.LibVLC.Mac package contains an x86-64 dylib only. Keep the
@@ -89,6 +92,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../external/MissionPlanner/ExtLibs/ArduPilot/MissionPlanner.ArduPilot.csproj" />
+    <ProjectReference Include="../../external/MissionPlanner/ExtLibs/alglibnet/alglibnet.csproj" />
     <ProjectReference Include="../../external/MissionPlanner/ExtLibs/DroneCAN/DroneCAN.csproj" />
     <ProjectReference Include="../Px4Uploader/Px4Uploader.csproj" />
   </ItemGroup>

@@ -184,9 +184,6 @@
         <CheckBox Content="Password Protect" IsChecked="{Binding PasswordProtect, Mode=TwoWay}" Margin="0,0,12,0" />
         <CheckBox Content="Auto Param Commit" IsChecked="{Binding AutoParamCommit, Mode=TwoWay}" Margin="0,0,12,0" />
         <CheckBox Content="Params Background Load" IsChecked="{Binding ParamsBg, Mode=TwoWay}" Margin="0,0,12,0" />
-        <CheckBox Content="Reuse Recent Param Cache" IsChecked="{Binding UseCachedParams, Mode=TwoWay}"
-                  ToolTip.Tip="Skip the live parameter download when this vehicle has a cache newer than one hour"
-                  Margin="0,0,12,0" />
         <CheckBox Content="Slow Machine" IsChecked="{Binding SlowMachine, Mode=TwoWay}" Margin="0,0,12,0" />
         <CheckBox Content="Use GDI+ (WinForms only)" IsChecked="{Binding GdiPlus, Mode=TwoWay}"
                   IsEnabled="False" ToolTip.Tip="Avalonia uses Skia on every supported platform"

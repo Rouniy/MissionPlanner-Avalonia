@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Input;
 using Avalonia.Threading;
@@ -16,6 +18,12 @@ using Mapsui.UI.Avalonia;
 using MissionPlanner.Utilities;
 using MissionPlannerAvalonia.Services;
 using NetTopologySuite.Geometries;
+using DrawingContext = Avalonia.Media.DrawingContext;
+using FormattedText = Avalonia.Media.FormattedText;
+using MediaBrushes = Avalonia.Media.Brushes;
+using MediaColor = Avalonia.Media.Color;
+using SolidColorBrush = Avalonia.Media.SolidColorBrush;
+using Typeface = Avalonia.Media.Typeface;
 
 namespace MissionPlannerAvalonia.Controls;
 
@@ -24,6 +32,8 @@ public class MapView : MapControl {
   private readonly WritableLayer _track = new() { Name = "Track" };
   private readonly WritableLayer _missionRoute = new() { Name = "Mission route" };
   private readonly WritableLayer _missionMarkers = new() { Name = "Mission waypoints" };
+  private readonly WritableLayer _importedOverlay = new() { Name = "Imported map overlay" };
+  private readonly WritableLayer _importedOverlayRaster = new() { Name = "Imported map raster" };
   private readonly WritableLayer _fence = new() { Name = "GeoFence" };
   private readonly WritableLayer _rally = new() { Name = "Rally points" };
   private readonly WritableLayer _movingBase = new() { Name = "Moving base" };
@@ -31,6 +41,8 @@ public class MapView : MapControl {
   private readonly WritableLayer _poi = new() { Name = "POI" };
   private readonly WritableLayer _photoMarkers = new() { Name = "Camera feedback" };
   private readonly WritableLayer _photoFootprints = new() { Name = "Camera footprints" };
+  private readonly WritableLayer _photoOverlap = new() { Name = "Camera overlap count" };
+  private readonly WritableLayer _cameraTarget = new() { Name = "Camera target" };
   private readonly WritableLayer _vehicle = new() { Name = "Vehicle" };
   private readonly WritableLayer _traffic = new() { Name = "ADS-B / AIS traffic" };
   private readonly DispatcherTimer _timer;
@@ -46,6 +58,16 @@ public class MapView : MapControl {
   private double _lastPhotoHfov = double.NaN;
   private double _lastPhotoVfov = double.NaN;
   private double _lastPhotoMinimumInterval = double.NaN;
+  private CancellationTokenSource? _photoOverlapCancellation;
+  private long _photoOverlapRevision;
+  private bool _cameraOverlapEnabled;
+  private bool _overlapHasPhotos;
+  private bool _gimbalProjectionRunning;
+  private bool _gimbalEligible;
+  private bool _gimbalTargetVisible;
+  private long _gimbalProjectionRevision;
+  private DateTime _nextGimbalProjectionUtc = DateTime.MinValue;
+  private bool _attached;
   private DateTime _nextOperationalOverlayUpdateUtc = DateTime.MinValue;
   private int _lastGuidedX;
   private int _lastGuidedY;
@@ -58,6 +80,26 @@ public class MapView : MapControl {
   public event Action<double, double>? MapLeftClicked;
 
   public bool AutoPan { get; set; }
+
+  public bool CameraOverlapEnabled {
+    get => _cameraOverlapEnabled;
+    set {
+      if (_cameraOverlapEnabled == value) {
+        return;
+      }
+      _cameraOverlapEnabled = value;
+      // Upstream removes photo markers when the checkbox is turned off; the next map pass
+      // reconstructs them from MAV.camerapoints.
+      if (!value) {
+        _photoMarkers.Clear();
+        _photoMarkers.DataHasChanged();
+        ClearCameraOverlap();
+      }
+      _lastPhotoCount = -1;
+      _lastPhotoTime = 0;
+      InvalidateVisual();
+    }
+  }
 
   public static readonly StyledProperty<int> ZoomLevelProperty =
       AvaloniaProperty.Register<MapView, int>(nameof(ZoomLevel), 16);
@@ -94,19 +136,24 @@ public class MapView : MapControl {
     map.Layers.Add(_missionRoute);
     map.Layers.Add(_fence);
     map.Layers.Add(_missionMarkers);
+    map.Layers.Add(_importedOverlay);
+    map.Layers.Add(_importedOverlayRaster);
     map.Layers.Add(_rally);
     map.Layers.Add(_poi);
     map.Layers.Add(_track);
     map.Layers.Add(_photoFootprints);
+    map.Layers.Add(_photoOverlap);
     map.Layers.Add(_photoMarkers);
     map.Layers.Add(_traffic);
     map.Layers.Add(_guidedTarget);
     map.Layers.Add(_movingBase);
+    map.Layers.Add(_cameraTarget);
     _vehicle.Style = MavMarker.Vehicle(0);
     map.Layers.Add(_vehicle);
 
     map.Navigator.Limiter = new Mapsui.Limiting.ViewportLimiterKeepWithinExtent();
     Map = map;
+    ApplyImportedOverlay();
     _airports = new AirportOverlayController(this, alwaysShow: false);
     _propagation = new PropagationOverlayController(this);
 
@@ -115,6 +162,7 @@ public class MapView : MapControl {
       UpdateVehicle();
       UpdatePropagation();
       UpdateCameraFeedback();
+      UpdateGimbalTarget();
       UpdateTraffic();
       UpdateGuidedTarget();
       if (DateTime.UtcNow >= _nextOperationalOverlayUpdateUtc) {
@@ -127,22 +175,48 @@ public class MapView : MapControl {
 
   protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e) {
     base.OnAttachedToVisualTree(e);
+    _attached = true;
+    if (_cameraOverlapEnabled) {
+      // Detaching cancels an in-flight overlap calculation. Force a rebuild even
+      // when the camera-point collection did not change while this view was hidden.
+      _lastPhotoCount = -1;
+    }
     RestoreLastViewport();
     MapTileSourceFactory.AccessModeChanged += OnTileAccessModeChanged;
     MapTileSourceFactory.MapTypeChanged += OnMapTypeChanged;
+    ImportedOverlayStore.FlightDataChanged += OnImportedOverlayChanged;
+    ApplyImportedOverlay();
     _airports.Resume();
     _propagation.Resume();
     _timer.Start();
   }
 
   protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e) {
+    _attached = false;
+    _gimbalProjectionRevision++;
+    CancelCameraOverlap();
     SaveLastViewport();
     _timer.Stop();
     _airports.Suspend();
     _propagation.Suspend();
     MapTileSourceFactory.AccessModeChanged -= OnTileAccessModeChanged;
     MapTileSourceFactory.MapTypeChanged -= OnMapTypeChanged;
+    ImportedOverlayStore.FlightDataChanged -= OnImportedOverlayChanged;
     base.OnDetachedFromVisualTree(e);
+  }
+
+  private void OnImportedOverlayChanged() {
+    if (Dispatcher.UIThread.CheckAccess()) {
+      ApplyImportedOverlay();
+    } else {
+      Dispatcher.UIThread.Post(ApplyImportedOverlay);
+    }
+  }
+
+  private void ApplyImportedOverlay() {
+    ImportedMapOverlayRenderer.Populate(
+        _importedOverlay, _importedOverlayRaster, ImportedOverlayStore.FlightData);
+    RefreshGraphics();
   }
 
   private void RestoreLastViewport() {
@@ -688,17 +762,21 @@ public class MapView : MapControl {
         : double.MinValue;
     for (int i = firstNewMarker; i < points.Length; i++) {
       var point = points[i];
+      double seconds = point.time_usec / 1_000_000.0;
+      double timeSinceLastShot = previousSeconds == double.MinValue
+          ? 0
+          : seconds - previousSeconds;
+      AppState.comPort.MAV.cs.timesincelastshot = timeSinceLastShot;
+      bool tooSoon = minimumInterval > 0 && previousSeconds != double.MinValue &&
+                     timeSinceLastShot < minimumInterval;
+      previousSeconds = seconds;
+
       double lat = point.lat / 1e7;
       double lng = point.lng / 1e7;
       if (!double.IsFinite(lat) || !double.IsFinite(lng) ||
           lat is < -90 or > 90 || lng is < -180 or > 180 || (lat == 0 && lng == 0)) {
         continue;
       }
-
-      double seconds = point.time_usec / 1_000_000.0;
-      bool tooSoon = minimumInterval > 0 && previousSeconds != double.MinValue &&
-                     seconds - previousSeconds < minimumInterval;
-      previousSeconds = seconds;
 
       var (x, y) = SphericalMercator.FromLonLat(lng, lat);
       var marker = new PointFeature(new MPoint(x, y));
@@ -741,6 +819,14 @@ public class MapView : MapControl {
       });
       _photoFootprints.Add(polygon);
     }
+
+    if (_cameraOverlapEnabled) {
+      _overlapHasPhotos = points.Length > 0;
+      StartCameraOverlap(points, hfov, vfov);
+    } else {
+      _overlapHasPhotos = false;
+      ClearCameraOverlap();
+    }
     _lastPhotoCount = points.Length;
     _lastPhotoTime = newest;
     _lastPhotoHfov = hfov;
@@ -748,6 +834,187 @@ public class MapView : MapControl {
     _lastPhotoMinimumInterval = minimumInterval;
     _photoMarkers.DataHasChanged();
     _photoFootprints.DataHasChanged();
+    InvalidateVisual();
+  }
+
+  private void StartCameraOverlap(MAVLink.mavlink_camera_feedback_t[] points,
+                                  double hfov, double vfov) {
+    CancelCameraOverlap();
+    long revision = ++_photoOverlapRevision;
+    _photoOverlap.Clear();
+    _photoOverlap.DataHasChanged();
+    var cancellation = new CancellationTokenSource();
+    _photoOverlapCancellation = cancellation;
+    CancellationToken token = cancellation.Token;
+
+    _ = Task.Run(() => {
+      IReadOnlyList<IReadOnlyList<(double Lat, double Lng)>> footprints =
+          CameraOverlapProjection.BuildFootprints(points, hfov, vfov, token);
+      return OverlapCoverageBuilder.Build(footprints, token);
+    }, token)
+        .ContinueWith(task => {
+          if (task.IsFaulted) {
+            _ = task.Exception;
+          }
+          if (task.Status != TaskStatus.RanToCompletion || token.IsCancellationRequested) {
+            return;
+          }
+          Dispatcher.UIThread.Post(() => {
+            if (!_attached || token.IsCancellationRequested ||
+                revision != _photoOverlapRevision || !_cameraOverlapEnabled) {
+              return;
+            }
+            DrawCameraOverlap(task.Result);
+          });
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+  }
+
+  private void DrawCameraOverlap(IReadOnlyList<OverlapCoveragePoint> coverage) {
+    _photoOverlap.Clear();
+    foreach (OverlapCoveragePoint point in coverage) {
+      _photoOverlap.Add(CameraOverlapFeature(point));
+    }
+    _photoOverlap.DataHasChanged();
+    RefreshGraphics();
+    InvalidateVisual();
+  }
+
+  private void ClearCameraOverlap() {
+    CancelCameraOverlap();
+    _overlapHasPhotos = false;
+    _photoOverlap.Clear();
+    _photoOverlap.DataHasChanged();
+  }
+
+  private void CancelCameraOverlap() {
+    CancellationTokenSource? cancellation = _photoOverlapCancellation;
+    _photoOverlapCancellation = null;
+    _photoOverlapRevision++;
+    if (cancellation == null) {
+      return;
+    }
+    cancellation.Cancel();
+    cancellation.Dispose();
+  }
+
+  internal static GeometryFeature CameraOverlapFeature(OverlapCoveragePoint point) {
+    var center = SphericalMercator.FromLonLat(point.Lng, point.Lat);
+    double cosine = Math.Abs(Math.Cos(point.Lat * Math.PI / 180));
+    double radius = 2.5 / Math.Max(0.01, cosine);
+    var coordinates = new Coordinate[9];
+    for (int index = 0; index < 8; index++) {
+      double angle = index * Math.PI * 2 / 8;
+      coordinates[index] = new Coordinate(
+          center.x + Math.Cos(angle) * radius,
+          center.y + Math.Sin(angle) * radius);
+    }
+    coordinates[^1] = coordinates[0];
+    Color color = OverlapCoverageBuilder.ColorForCount(point.Count);
+    var feature = new GeometryFeature {
+      Geometry = new Polygon(new LinearRing(coordinates)),
+    };
+    feature.Styles.Add(new VectorStyle {
+      Fill = new Brush(color),
+      Line = null,
+      Outline = null,
+    });
+    return feature;
+  }
+
+  private void UpdateGimbalTarget() {
+    float? stabilizeTilt = MountParameter("MNT_STAB_TILT");
+    float? stabilizeRoll = MountParameter("MNT_STAB_ROLL");
+    float? mountType = MountParameter("MNT_TYPE");
+    bool hasStabilizePan = HasMountParameter("MNT_STAB_PAN");
+    bool eligible = GimbalTargetProjection.ShouldProject(
+        stabilizeTilt, stabilizeRoll, mountType, hasStabilizePan);
+    if (!eligible) {
+      if (_gimbalEligible) {
+        _gimbalEligible = false;
+        _gimbalProjectionRevision++;
+      }
+      ClearGimbalTarget();
+      return;
+    }
+
+    _gimbalEligible = true;
+    if (_gimbalProjectionRunning || DateTime.UtcNow < _nextGimbalProjectionUtc) {
+      return;
+    }
+    _gimbalProjectionRunning = true;
+    _nextGimbalProjectionUtc = DateTime.UtcNow.AddSeconds(1);
+    long revision = ++_gimbalProjectionRevision;
+    var comPort = AppState.comPort;
+    _ = Task.Run(() => GimbalPoint.ProjectPoint(comPort))
+        .ContinueWith(task => {
+          if (task.IsFaulted) {
+            _ = task.Exception;
+          }
+          Dispatcher.UIThread.Post(() => {
+            _gimbalProjectionRunning = false;
+            if (!_attached || revision != _gimbalProjectionRevision || !_gimbalEligible) {
+              return;
+            }
+            if (task.Status != TaskStatus.RanToCompletion ||
+                !GimbalTargetProjection.IsValid(task.Result)) {
+              ClearGimbalTarget();
+              return;
+            }
+            DrawGimbalTarget(task.Result);
+          });
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+  }
+
+  private static float? MountParameter(string name) {
+    try {
+      var parameters = AppState.comPort.MAV.param;
+      return parameters.ContainsKey(name) ? (float)parameters[name] : null;
+    } catch {
+      // Parameters can be replaced while the background parameter download completes.
+      return null;
+    }
+  }
+
+  private static bool HasMountParameter(string name) {
+    try {
+      return AppState.comPort.MAV.param.ContainsKey(name);
+    } catch {
+      return false;
+    }
+  }
+
+  private void DrawGimbalTarget(PointLatLngAlt point) {
+    AppState.comPort.MAV.cs.GimbalPoint = point;
+    var (x, y) = SphericalMercator.FromLonLat(point.Lng, point.Lat);
+    var feature = new PointFeature(new MPoint(x, y));
+    feature.Styles.Add(new SymbolStyle {
+      SymbolType = SymbolType.Ellipse,
+      Fill = new Brush(new Color(0x2F, 0x81, 0xF7)),
+      Outline = new Pen(Color.White, 1),
+      SymbolScale = 0.55,
+    });
+    feature.Styles.Add(new LabelStyle {
+      Text = "Camera Target",
+      ForeColor = Color.White,
+      BackColor = new Brush(new Color(0, 0, 0, 150)),
+      Font = new Font { Size = 10 },
+      Offset = new Offset(0, 13),
+    });
+    _cameraTarget.Clear();
+    _cameraTarget.Add(feature);
+    _cameraTarget.DataHasChanged();
+    _gimbalTargetVisible = true;
+  }
+
+  private void ClearGimbalTarget() {
+    if (!_gimbalTargetVisible) {
+      return;
+    }
+    _cameraTarget.Clear();
+    _cameraTarget.DataHasChanged();
+    _gimbalTargetVisible = false;
   }
 
   private static readonly VectorStyle _trackStyle = new() {
@@ -903,6 +1170,29 @@ public class MapView : MapControl {
     Map.Navigator.CenterOn(pt);
   }
 
+  public override void Render(DrawingContext context) {
+    base.Render(context);
+    if (!_cameraOverlapEnabled || !_overlapHasPhotos) {
+      return;
+    }
+
+    const double diameter = 20;
+    const double radius = diameter / 2;
+    for (int index = 0; index < OverlapCoverageBuilder.Colors.Count; index++) {
+      Color color = OverlapCoverageBuilder.Colors[index];
+      var fill = new SolidColorBrush(MediaColor.FromArgb(
+          (byte)color.A, (byte)color.R, (byte)color.G, (byte)color.B));
+      var center = new Avalonia.Point(20, 100 + index * (diameter + 5));
+      context.DrawEllipse(fill, null, center, radius, radius);
+      var text = new FormattedText(
+          (index + 1).ToString(CultureInfo.InvariantCulture),
+          CultureInfo.InvariantCulture, global::Avalonia.Media.FlowDirection.LeftToRight,
+          Typeface.Default, 12, MediaBrushes.White);
+      context.DrawText(text, new Avalonia.Point(
+          center.X - text.Width / 2, center.Y - text.Height / 2));
+    }
+  }
+
   public void ClearTrack() {
     _track.Clear();
     _trackPts.Clear();
@@ -916,6 +1206,7 @@ public class MapView : MapControl {
     _photoMarkers.DataHasChanged();
     _photoFootprints.Clear();
     _photoFootprints.DataHasChanged();
+    ClearCameraOverlap();
     _lastPhotoCount = 0;
     _lastPhotoTime = 0;
   }
@@ -984,4 +1275,43 @@ internal static class CameraFeedbackProjection {
       return Array.Empty<(double, double)>();
     }
   }
+}
+
+internal static class CameraOverlapProjection {
+  internal static IReadOnlyList<IReadOnlyList<(double Lat, double Lng)>> BuildFootprints(
+      IReadOnlyList<MAVLink.mavlink_camera_feedback_t> points,
+      double hfov,
+      double vfov,
+      CancellationToken cancellationToken = default,
+      Func<MAVLink.mavlink_camera_feedback_t, double, double,
+          IReadOnlyList<(double Lat, double Lng)>>? projector = null) {
+    projector ??= CameraFeedbackProjection.Project;
+    var result = new List<IReadOnlyList<(double Lat, double Lng)>>();
+    var seen = new HashSet<ulong>();
+    foreach (MAVLink.mavlink_camera_feedback_t point in points) {
+      cancellationToken.ThrowIfCancellationRequested();
+      // GMapMarkerOverlapCount receives only unique GMapMarkerPhoto footprints with this roll gate.
+      if (!seen.Add(point.time_usec) || Math.Abs(point.roll) >= 25) {
+        continue;
+      }
+      IReadOnlyList<(double Lat, double Lng)> footprint = projector(point, hfov, vfov);
+      if (footprint.Count >= 3) {
+        result.Add(footprint);
+      }
+    }
+    return result;
+  }
+}
+
+internal static class GimbalTargetProjection {
+  internal static bool ShouldProject(float? stabilizeTilt, float? stabilizeRoll,
+                                     float? mountType, bool hasStabilizePan) =>
+      stabilizeTilt.HasValue && stabilizeRoll.HasValue && mountType.HasValue &&
+      (hasStabilizePan && stabilizeTilt.Value == 1 && stabilizeRoll.Value == 0 ||
+       mountType.Value == 4);
+
+  internal static bool IsValid(PointLatLngAlt? point) =>
+      point != null && double.IsFinite(point.Lat) && double.IsFinite(point.Lng) &&
+      point.Lat is >= -90 and <= 90 && point.Lng is >= -180 and <= 180 &&
+      (point.Lat != 0 || point.Lng != 0);
 }

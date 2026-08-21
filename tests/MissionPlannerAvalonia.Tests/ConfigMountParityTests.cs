@@ -22,15 +22,9 @@ public class ConfigMountParityTests {
     Assert.Equal(expected, ConfigParamLoadingViewModel.HasAllParameters(received, reported));
   }
 
-  [Theory]
-  [InlineData(false, 0, 20_000, false)]
-  [InlineData(true, 1, 20_000, false)]
-  [InlineData(true, 0, 9_999, false)]
-  [InlineData(true, 0, 10_000, true)]
-  public void Empty_parameter_download_only_times_out_while_connected(
-      bool connected, int reported, long noProgressMilliseconds, bool expected) {
-    Assert.Equal(expected, ConfigParamLoadingViewModel.ShouldDismissEmptyDownload(
-        connected, reported, noProgressMilliseconds));
+  [Fact]
+  public void Empty_parameter_download_never_exposes_stale_configuration_fields() {
+    Assert.False(ConfigParamLoadingViewModel.HasAllParameters(0, 0));
   }
 
   [Theory]

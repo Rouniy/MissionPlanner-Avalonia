@@ -64,7 +64,8 @@ public partial class ConfigUserDefinedViewModel : ViewModelBase {
   [RelayCommand]
   private async Task Refresh() {
     if (IsConnected) {
-      await Task.Run(() => _comPort.getParamList());
+      await AppState.ParameterLoads.LoadLatestAsync(_comPort.MAV.sysid, _comPort.MAV.compid);
+      AppState.RaiseConnectionChanged();
     }
 
     LoadOptions();

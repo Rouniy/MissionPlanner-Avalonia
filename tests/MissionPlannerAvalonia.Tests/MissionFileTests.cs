@@ -203,6 +203,36 @@ public class MissionFileTests {
   }
 
   [AvaloniaFact]
+  public async Task Legacy_rally_round_trip_preserves_fields_and_uses_the_rally_store() {
+    using var vm = new FlightPlannerViewModel { VerifyHeight = false };
+    vm.AddRallyPointAt(40.5, 28.5, 60);
+    vm.Waypoints[0].P1 = 30;
+    vm.Waypoints[0].P2 = 270;
+    vm.Waypoints[0].P3 = 3;
+    vm.MissionType = "Mission";
+    vm.AddWaypointAt(40, 28);
+
+    string path = Path.Combine(Path.GetTempPath(), $"mp_test_{Guid.NewGuid():N}.ral");
+    try {
+      await vm.SaveFileAsync(path);
+      var loaded = new FlightPlannerViewModel();
+
+      await loaded.LoadFileAsync(path);
+
+      Assert.Equal("Rally", loaded.MissionType);
+      var rally = Assert.Single(loaded.Waypoints);
+      Assert.Equal((ushort)MAVLink.MAV_CMD.RALLY_POINT, rally.Command);
+      Assert.Equal((byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT, rally.Frame);
+      Assert.Equal((40.5, 28.5, 60d), (rally.Lat, rally.Lng, rally.Alt));
+      Assert.Equal((30d, 270d, 3d), (rally.P1, rally.P2, rally.P3));
+    } finally {
+      if (File.Exists(path)) {
+        File.Delete(path);
+      }
+    }
+  }
+
+  [AvaloniaFact]
   public async Task Json_mission_round_trip_preserves_home_frame_and_commands() {
     var vm = new FlightPlannerViewModel {
       HomeLat = 40.0,

@@ -8,6 +8,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using MissionPlanner.Utilities;
 using MissionPlannerAvalonia.Services;
 using MissionPlannerAvalonia.ViewModels;
 
@@ -17,6 +18,8 @@ public partial class LogBrowseView : UserControl {
   public LogBrowseView() {
     InitializeComponent();
     OpenBtn.Click += OnOpen;
+    IndexBtn.Click += (_, _) => LogIndexWindow.OpenWindow(Settings.Instance.LogDir);
+    MagFitBtn.Click += (_, _) => OfflineMagFitWindow.OpenWindow(Vm?.CurrentPath);
     GraphBtn.Click += (s, e) => OnGraphAxis(false);
     GraphRightBtn.Click += (s, e) => OnGraphAxis(true);
     RemoveBtn.Click += OnRemove;

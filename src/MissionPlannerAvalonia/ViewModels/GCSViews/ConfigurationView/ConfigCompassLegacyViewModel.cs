@@ -216,6 +216,9 @@ public partial class ConfigCompassLegacyViewModel : ParamPageBase, IDisposable {
   }
 
   [RelayCommand]
+  private void OfflineMagFit() => Views.OfflineMagFitWindow.OpenWindow();
+
+  [RelayCommand]
   private async Task StartMagCal() {
     if (!IsConnected) {
       await Dialogs.Alert("Error", "Connect to a vehicle first.");

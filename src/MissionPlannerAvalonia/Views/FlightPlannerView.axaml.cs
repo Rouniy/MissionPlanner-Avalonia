@@ -20,12 +20,17 @@ public partial class FlightPlannerView : UserControl {
   private bool _polygonDrawMode;
   private int _noFlyLoadVersion;
   private bool _tilePrefetchRunning;
+  private bool _actionDockBottom;
 
   private const int _pColIndex = 2;
+  private const string _dockingSetting = "FP_docking";
 
   [Obsolete]
   public FlightPlannerView() {
     InitializeComponent();
+    ApplyDockingLayout(
+        MissionPlanner.Utilities.Settings.Instance[_dockingSetting] == "Bottom",
+        persist: false);
     Map.WaypointDragMoved += OnWaypointDragged;
     Map.WaypointDragCommitted += OnWaypointDragged;
     Map.MapClicked += OnMapClicked;
@@ -42,6 +47,69 @@ public partial class FlightPlannerView : UserControl {
       Services.NoFlyOverlay.VisibilityChanged -= OnNoFlyVisibilityChanged;
       Vm?.SavePlannerSettings();
     };
+  }
+
+  internal bool IsActionDockedBottom => _actionDockBottom;
+
+  internal void SwitchDocking() => ApplyDockingLayout(!_actionDockBottom, persist: true);
+
+  internal void ApplyDockingLayout(bool actionBottom, bool persist) {
+    _actionDockBottom = actionBottom;
+
+    var columns = PlannerLayoutGrid.ColumnDefinitions;
+    columns[0].Width = new GridLength(1, GridUnitType.Star);
+    columns[0].MinWidth = 180;
+    columns[1].Width = new GridLength(4);
+    columns[1].MinWidth = 4;
+    columns[2].Width = actionBottom
+        ? new GridLength(1, GridUnitType.Star)
+        : new GridLength(168);
+    columns[2].MinWidth = actionBottom ? 180 : 120;
+
+    var rows = PlannerLayoutGrid.RowDefinitions;
+    rows[0].Height = new GridLength(1, GridUnitType.Star);
+    rows[0].MinHeight = 140;
+    rows[1].Height = new GridLength(4);
+    rows[1].MinHeight = 4;
+    rows[2].Height = new GridLength(actionBottom ? 120 : 210);
+    rows[2].MinHeight = actionBottom ? 80 : 120;
+
+    static void Place(Control control, int row, int column,
+        int rowSpan = 1, int columnSpan = 1) {
+      Grid.SetRow(control, row);
+      Grid.SetColumn(control, column);
+      Grid.SetRowSpan(control, rowSpan);
+      Grid.SetColumnSpan(control, columnSpan);
+    }
+
+    Place(Map, 0, 0);
+    if (actionBottom) {
+      Place(WaypointPanel, 0, 2);
+      Place(VerticalDockSplitter, 0, 1);
+      Place(HorizontalDockSplitter, 1, 0, columnSpan: 3);
+      Place(ActionPanel, 2, 0, columnSpan: 3);
+    } else {
+      Place(WaypointPanel, 2, 0);
+      Place(HorizontalDockSplitter, 1, 0);
+      Place(VerticalDockSplitter, 0, 1, rowSpan: 3);
+      Place(ActionPanel, 0, 2, rowSpan: 3);
+    }
+
+    ActionItemsPanel.Orientation = actionBottom ? Orientation.Horizontal : Orientation.Vertical;
+    ActionScroller.HorizontalScrollBarVisibility = actionBottom
+        ? Avalonia.Controls.Primitives.ScrollBarVisibility.Auto
+        : Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
+    ActionScroller.VerticalScrollBarVisibility = actionBottom
+        ? Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled
+        : Avalonia.Controls.Primitives.ScrollBarVisibility.Auto;
+
+    PlannerLayoutGrid.InvalidateMeasure();
+    Map.InvalidateMeasure();
+    WpGrid.InvalidateMeasure();
+    if (persist) {
+      MissionPlanner.Utilities.Settings.Instance[_dockingSetting] =
+          actionBottom ? "Bottom" : "Right";
+    }
   }
 
   private async void LoadAutoNoFly() {
@@ -199,6 +267,24 @@ public partial class FlightPlannerView : UserControl {
     fenceGeometry.Items.Add(Item("Exclusion Circle Here",
         (vm, lat, lng) => _ = vm.AddFenceCircle(lat, lng, false)));
     AddFenceOnly(fenceGeometry);
+    var rallyPoints = new MenuItem { Header = "Rally Points" };
+    rallyPoints.Items.Add(Item("Set Rally Point",
+        (vm, lat, lng) => _ = SetRallyPointAsync(vm, lat, lng)));
+    rallyPoints.Items.Add(Item("Download", (vm, _, _) => {
+      vm.MissionType = "Rally";
+      vm.ReadWaypointsCommand.Execute(null);
+    }));
+    rallyPoints.Items.Add(Item("Upload", (vm, _, _) => {
+      vm.MissionType = "Rally";
+      vm.WriteWaypointsCommand.Execute(null);
+    }));
+    rallyPoints.Items.Add(Item("Clear Rally Points",
+        (vm, _, _) => _ = vm.ClearRallyPointsAsync()));
+    rallyPoints.Items.Add(Item("Save Rally to File",
+        (_, _, _) => _ = SaveRallyFile()));
+    rallyPoints.Items.Add(Item("Load Rally from File",
+        (_, _, _) => _ = PickAndLoadRallyFile()));
+    menu.Items.Add(rallyPoints);
     AddMissionOnly(new Separator());
     AddMissionOnly(Item("Insert at Current Position", (vm, _, _) => vm.InsertAtCurrentPosition()));
     AddMissionOnly(Item("Insert Spline WP", (vm, lat, lng) => vm.AddSplineWp(lat, lng)));
@@ -237,6 +323,9 @@ public partial class FlightPlannerView : UserControl {
     poi.Items.Add(Item("POI at Coords", (vm, _, _) => _ = vm.AddPoiAtCoords()));
     poi.Items.Add(Item("Clear POIs", (vm, _, _) => vm.ClearPois()));
     menu.Items.Add(poi);
+    var switchDocking = new MenuItem { Header = "Switch Docking" };
+    switchDocking.Click += (_, _) => SwitchDocking();
+    menu.Items.Add(switchDocking);
     menu.Opening += (_, _) => {
       var profile = Services.DisplayViewService.Current;
       bool mission = Vm?.MissionType is null or "Mission";
@@ -259,9 +348,9 @@ public partial class FlightPlannerView : UserControl {
     var noflyClear = new MenuItem { Header = "Clear NoFly Overlay" };
     noflyClear.Click += (_, _) => Map.SetNoFlyLayer(null);
     menu.Items.Add(noflyClear);
-    var kmlOverlay = new MenuItem { Header = "Load KML Overlay…" };
-    kmlOverlay.Click += OnLoadKmlOverlay;
-    menu.Items.Add(kmlOverlay);
+    var mapOverlay = new MenuItem { Header = "Load Map Overlay (KML/SHP/DXF)…" };
+    mapOverlay.Click += OnLoadMapOverlay;
+    menu.Items.Add(mapOverlay);
     menu.Items.Add(new Separator());
     var poly = new MenuItem { Header = "Polygon" };
     var draw = new MenuItem { Header = "Draw" };
@@ -282,6 +371,9 @@ public partial class FlightPlannerView : UserControl {
     var loadPolygon = new MenuItem { Header = "Load .poly…" };
     loadPolygon.Click += OnLoadPolygon;
     poly.Items.Add(loadPolygon);
+    var loadShpPolygon = new MenuItem { Header = "From SHP…" };
+    loadShpPolygon.Click += OnLoadShapefilePolygon;
+    poly.Items.Add(loadShpPolygon);
     var savePolygon = new MenuItem { Header = "Save .poly…" };
     savePolygon.Click += OnSavePolygon;
     poly.Items.Add(savePolygon);
@@ -341,6 +433,7 @@ public partial class FlightPlannerView : UserControl {
   private static readonly FilePickerFileType _wpType = new("Mission Planner files") {
     Patterns = new[] {
       "*.waypoints", "*.txt", "*.mission", "*.plan", "*.fen", "*.ral", "*.poly", "*.kml", "*.kmz",
+      "*.shp",
     },
   };
 
@@ -360,8 +453,12 @@ public partial class FlightPlannerView : UserControl {
     Patterns = new[] { "*.poly" },
   };
 
-  private static readonly FilePickerFileType _kmlType = new("KML/KMZ") {
-    Patterns = new[] { "*.kml", "*.kmz" },
+  private static readonly FilePickerFileType _shapefileType = new("ESRI Shapefile") {
+    Patterns = new[] { "*.shp" },
+  };
+
+  private static readonly FilePickerFileType _mapOverlayType = new("Map overlays") {
+    Patterns = new[] { "*.kml", "*.kmz", "*.shp", "*.dxf" },
   };
 
   private void WireViewModel() {
@@ -446,6 +543,64 @@ public partial class FlightPlannerView : UserControl {
 
   private async void OnLoadAndAppendFile(object? sender, RoutedEventArgs e) {
     await PickAndLoadFile(true);
+  }
+
+  private static async Task SetRallyPointAsync(FlightPlannerViewModel vm, double lat, double lng) {
+    string? input = await Services.Dialogs.InputBox(
+        "Altitude", $"Altitude ({MissionPlanner.CurrentState.AltUnit})",
+        vm.DefaultAltDisplay.ToString("0.##", CultureInfo.CurrentCulture));
+    if (input == null) {
+      return;
+    }
+    if (!TryParseRallyAltitude(input, out double displayAltitude)) {
+      await Services.Dialogs.Alert("Rally Point", "Invalid altitude.");
+      return;
+    }
+
+    vm.AddRallyPointAt(lat, lng, FlightPlannerViewModel.FromDisplayAltitude(displayAltitude));
+  }
+
+  internal static bool TryParseRallyAltitude(string? input, out double displayAltitude) {
+    const NumberStyles styles = NumberStyles.Float;
+    bool parsed = double.TryParse(input, styles, CultureInfo.CurrentCulture, out displayAltitude)
+                  || double.TryParse(input, styles, CultureInfo.InvariantCulture, out displayAltitude);
+    return parsed && double.IsFinite(displayAltitude);
+  }
+
+  private async Task PickAndLoadRallyFile() {
+    var top = TopLevel.GetTopLevel(this);
+    if (top is null || Vm is null) {
+      return;
+    }
+
+    var files = await top.StorageProvider.OpenFilePickerAsync(
+        new FilePickerOpenOptions {
+          Title = "Load Rally from File",
+          AllowMultiple = false,
+          FileTypeFilter = new[] { _rallyType },
+        });
+    var file = files.FirstOrDefault();
+    if (file?.TryGetLocalPath() is { } path) {
+      await Vm.LoadFileAsync(path);
+    }
+  }
+
+  private async Task SaveRallyFile() {
+    var top = TopLevel.GetTopLevel(this);
+    if (top is null || Vm is null) {
+      return;
+    }
+
+    var file = await top.StorageProvider.SaveFilePickerAsync(
+        new FilePickerSaveOptions {
+          Title = "Save Rally to File",
+          DefaultExtension = "ral",
+          SuggestedFileName = "rally.ral",
+          FileTypeChoices = new[] { _rallyType },
+        });
+    if (file?.TryGetLocalPath() is { } path) {
+      await Vm.SaveFileAsync(path);
+    }
   }
 
   private async Task PickAndLoadFile(bool append) {
@@ -561,13 +716,45 @@ public partial class FlightPlannerView : UserControl {
     }
   }
 
+  private async void OnLoadShapefilePolygon(object? sender, RoutedEventArgs e) {
+    var top = TopLevel.GetTopLevel(this);
+    if (top is null || Vm is null) {
+      return;
+    }
+    var files = await top.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions {
+      Title = "Load Polygon from SHP",
+      AllowMultiple = false,
+      FileTypeFilter = new[] { _shapefileType },
+    });
+    if (files.FirstOrDefault()?.TryGetLocalPath() is not { } path) {
+      return;
+    }
+    try {
+      Services.ShapefilePolygonImport import = await Task.Run(() =>
+          Services.ShapefileImportService.ReadPolygon(path));
+      if (import.Points.Count < 3) {
+        Vm.Status = "No polygon with at least three vertices found in the shapefile.";
+        return;
+      }
+      Vm.ReplaceDrawnPolygon(import.Points.Select(point =>
+          new MissionPlanner.Utilities.PointLatLngAlt(point.Lat, point.Lng, point.Alt)).ToList());
+      string projection = import.ProjectionName == null
+          ? "raw longitude/latitude"
+          : import.ProjectionName;
+      Vm.Status = $"Loaded SHP polygon with {import.Points.Count} vertices from " +
+          $"{import.FeatureCount} feature(s) ({projection}).";
+    } catch (Exception ex) {
+      Vm.Status = "SHP polygon load failed: " + ex.Message;
+    }
+  }
+
   private void OnViewKml(object? sender, RoutedEventArgs e) {
     if (Vm != null) {
       Vm.Status = Vm.GenerateMissionKmlAndOpen();
     }
   }
 
-  private async void OnLoadKmlOverlay(object? sender, RoutedEventArgs e) {
+  private async void OnLoadMapOverlay(object? sender, RoutedEventArgs e) {
     var top = TopLevel.GetTopLevel(this);
     if (top is null) {
       return;
@@ -575,9 +762,9 @@ public partial class FlightPlannerView : UserControl {
 
     var files = await top.StorageProvider.OpenFilePickerAsync(
         new FilePickerOpenOptions {
-          Title = "Load KML Overlay",
+          Title = "Load Map Overlay",
           AllowMultiple = false,
-          FileTypeFilter = new[] { _kmlType },
+          FileTypeFilter = new[] { _mapOverlayType },
         }
     );
     if (files.FirstOrDefault()?.TryGetLocalPath() is not { } path) {
@@ -585,19 +772,63 @@ public partial class FlightPlannerView : UserControl {
     }
 
     try {
-      var track = Services.KmlMissionReader.Read(path).Overlay
-          .Select(point => (point.Lat, point.Lng)).ToList();
-      if (track.Count >= 2) {
-        Map.ShowKmlTrack(track);
-        if (Vm != null) {
-          Vm.Status = $"KML/KMZ overlay loaded ({track.Count} point(s)).";
+      string extension = Path.GetExtension(path).ToLowerInvariant();
+      int? signedUtmZone = null;
+      if (extension == ".dxf") {
+        string? zoneText = await PromptAsync("DXF coordinate system",
+            "Signed UTM zone (1..60 north, -1..-60 south); leave blank for longitude/latitude",
+            "");
+        if (zoneText == null) {
+          return;
         }
-      } else if (Vm != null) {
-        Vm.Status = "No line or polygon geometry found in the KML/KMZ file.";
+        if (!string.IsNullOrWhiteSpace(zoneText)) {
+          if (!int.TryParse(zoneText, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                  out int zone)) {
+            if (Vm != null) {
+              Vm.Status = "DXF load failed: UTM zone must be an integer.";
+            }
+            return;
+          }
+          signedUtmZone = zone;
+        }
+      }
+
+      // Match upstream clear-first parsing, but preserve the current overlay when
+      // the port-specific DXF coordinate-system prompt is cancelled or invalid.
+      Map.ShowMapOverlay(Services.ImportedMapOverlay.Empty);
+      Services.ImportedOverlayStore.ClearFlightData();
+      Services.ImportedMapOverlay overlay = await Task.Run(() => extension switch {
+        ".dxf" => Services.DxfOverlayReader.Read(path, signedUtmZone),
+        ".shp" => Services.ShapefileImportService.ReadOverlay(path),
+        ".kml" or ".kmz" => Services.KmlMissionReader.ReadOverlay(path),
+        _ => throw new InvalidDataException("Unsupported map overlay format."),
+      });
+      if (!overlay.HasContent) {
+        if (Vm != null) {
+          Vm.Status = "No supported geometry found in the map overlay.";
+        }
+        return;
+      }
+      Map.ShowMapOverlay(overlay);
+      Map.ZoomToMapOverlay();
+      bool copiedToFlightData = false;
+      if (extension is ".kml" or ".kmz"
+          && await Services.Dialogs.Confirm("Map Overlay",
+              "Do you want to load this into the Flight Data screen?")) {
+        // Official Mission Planner copies KML polygons/routes, but not point markers or
+        // GroundOverlay images, into its separate Flight Data overlay.
+        Services.ImportedOverlayStore.CopyRoutesToFlightData(overlay);
+        copiedToFlightData = true;
+      }
+      if (Vm != null) {
+        Vm.Status = $"{extension.TrimStart('.').ToUpperInvariant()} overlay loaded " +
+            $"({overlay.Routes.Count} route(s), {overlay.Markers.Count} marker(s), " +
+            $"{overlay.Rasters.Count} raster(s), {overlay.PointCount} point(s))" +
+            (copiedToFlightData ? "; routes shown on Flight Data." : ".");
       }
     } catch (Exception ex) {
       if (Vm != null) {
-        Vm.Status = "KML load failed: " + ex.Message;
+        Vm.Status = "Map overlay load failed: " + ex.Message;
       }
     }
   }

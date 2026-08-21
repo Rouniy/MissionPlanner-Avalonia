@@ -9,6 +9,8 @@ public static class AppState {
 
   internal static Services.JoystickControlService JoystickControl { get; }
 
+  internal static Services.VehicleParameterLoadCoordinator ParameterLoads { get; }
+
   internal static Services.TrafficService Traffic { get; }
 
   public static event System.Action? ConnectionChanged;
@@ -30,6 +32,7 @@ public static class AppState {
     // MAVLink/communications component.
     global::System.CustomMessageBox.ShowEvent += Services.Dialogs.ShowUpstreamMessage;
     comPort = new MAVLinkInterface();
+    ParameterLoads = new Services.VehicleParameterLoadCoordinator(comPort);
     JoystickControl = new Services.JoystickControlService(comPort);
     Traffic = new Services.TrafficService(comPort, applySavedSettings: true);
 
