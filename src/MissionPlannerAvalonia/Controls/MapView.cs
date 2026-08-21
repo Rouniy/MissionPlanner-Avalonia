@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Avalonia;
 using Avalonia.Input;
 using Avalonia.Threading;
@@ -19,6 +20,12 @@ namespace MissionPlannerAvalonia.Controls;
 
 public class MapView : MapControl {
   private readonly WritableLayer _track = new() { Name = "Track" };
+  private readonly WritableLayer _missionRoute = new() { Name = "Mission route" };
+  private readonly WritableLayer _missionMarkers = new() { Name = "Mission waypoints" };
+  private readonly WritableLayer _fence = new() { Name = "GeoFence" };
+  private readonly WritableLayer _rally = new() { Name = "Rally points" };
+  private readonly WritableLayer _guidedTarget = new() { Name = "Guided target" };
+  private readonly WritableLayer _poi = new() { Name = "POI" };
   private readonly WritableLayer _photoMarkers = new() { Name = "Camera feedback" };
   private readonly WritableLayer _photoFootprints = new() { Name = "Camera footprints" };
   private readonly WritableLayer _vehicle = new() { Name = "Vehicle" };
@@ -35,6 +42,11 @@ public class MapView : MapControl {
   private double _lastPhotoHfov = double.NaN;
   private double _lastPhotoVfov = double.NaN;
   private double _lastPhotoMinimumInterval = double.NaN;
+  private DateTime _nextOperationalOverlayUpdateUtc = DateTime.MinValue;
+  private int _lastGuidedX;
+  private int _lastGuidedY;
+  private float _lastGuidedZ;
+  private bool _guidedWasVisible;
 
   public (double Lat, double Lng) LastClickLatLng { get; private set; }
 
@@ -79,10 +91,16 @@ public class MapView : MapControl {
     );
     map.Layers.Add(new TileLayer(esri) { Name = "Satellite" });
 
+    map.Layers.Add(_missionRoute);
+    map.Layers.Add(_fence);
+    map.Layers.Add(_missionMarkers);
+    map.Layers.Add(_rally);
+    map.Layers.Add(_poi);
     map.Layers.Add(_track);
     map.Layers.Add(_photoFootprints);
     map.Layers.Add(_photoMarkers);
     map.Layers.Add(_traffic);
+    map.Layers.Add(_guidedTarget);
     _vehicle.Style = MavMarker.Vehicle(0);
     map.Layers.Add(_vehicle);
 
@@ -94,6 +112,11 @@ public class MapView : MapControl {
       UpdateVehicle();
       UpdateCameraFeedback();
       UpdateTraffic();
+      UpdateGuidedTarget();
+      if (DateTime.UtcNow >= _nextOperationalOverlayUpdateUtc) {
+        UpdateOperationalOverlays();
+        _nextOperationalOverlayUpdateUtc = DateTime.UtcNow.AddSeconds(2);
+      }
     };
   }
 
@@ -139,6 +162,280 @@ public class MapView : MapControl {
       Map.Navigator.CenterOn(pt);
     }
   }
+
+  private void UpdateOperationalOverlays() {
+    var mav = AppState.comPort.MAV;
+    if (mav == null) {
+      ClearOperationalOverlays();
+      return;
+    }
+
+    UpdateMissionOverlay(mav.wps.OrderBy(item => item.Key).ToArray(), mav.cs);
+    UpdateFenceOverlay(mav.fencepoints.OrderBy(item => item.Key).ToArray());
+    UpdateRallyOverlay(mav.rallypoints.OrderBy(item => item.Key).ToArray());
+    UpdatePoiOverlay();
+  }
+
+  private void ClearOperationalOverlays() {
+    foreach (var layer in new[] { _missionRoute, _missionMarkers, _fence, _rally, _poi }) {
+      layer.Clear();
+      layer.DataHasChanged();
+    }
+  }
+
+  private void UpdateMissionOverlay(
+      IReadOnlyList<KeyValuePair<int, MAVLink.mavlink_mission_item_int_t>> items,
+      MissionPlanner.CurrentState cs) {
+    _missionRoute.Clear();
+    _missionMarkers.Clear();
+
+    var route = new List<Coordinate>();
+    var home = cs.HomeLocation;
+    if (home == null || !ValidLatLng(home.Lat, home.Lng)) {
+      home = cs.PlannedHomeLocation;
+    }
+    if (home != null && ValidLatLng(home.Lat, home.Lng)) {
+      var projected = SphericalMercator.FromLonLat(home.Lng, home.Lat);
+      route.Add(new Coordinate(projected.x, projected.y));
+      _missionMarkers.Add(BuildLabeledMarker(
+          home.Lat, home.Lng, "H", Color.FromArgb(255, 0, 190, 0), Color.White));
+    }
+
+    foreach (var pair in items) {
+      // ArduPilot exposes the planned home as mission item zero; upstream FlightData removes it
+      // and draws CurrentState.HomeLocation separately.
+      if (pair.Key == 0 || !TryGlobalPosition(pair.Value, out double lat, out double lng)) {
+        continue;
+      }
+      var projected = SphericalMercator.FromLonLat(lng, lat);
+      route.Add(new Coordinate(projected.x, projected.y));
+      bool current = pair.Key == cs.wpno;
+      _missionMarkers.Add(BuildLabeledMarker(
+          lat, lng, pair.Key.ToString(),
+          current ? Color.FromArgb(255, 40, 220, 80) : Color.FromArgb(255, 255, 204, 0),
+          Color.Black));
+    }
+
+    if (route.Count >= 2) {
+      var feature = new GeometryFeature { Geometry = new LineString(route.ToArray()) };
+      feature.Styles.Add(new VectorStyle {
+        Line = new Pen(Color.FromArgb(255, 255, 220, 30), 3),
+      });
+      _missionRoute.Add(feature);
+    }
+    _missionRoute.DataHasChanged();
+    _missionMarkers.DataHasChanged();
+  }
+
+  private void UpdateFenceOverlay(
+      IReadOnlyList<KeyValuePair<int, MAVLink.mavlink_mission_item_int_t>> items) {
+    _fence.Clear();
+    int index = 0;
+    while (index < items.Count) {
+      var pair = items[index];
+      var command = (MAVLink.MAV_CMD)pair.Value.command;
+      if (command is MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION
+          or MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_EXCLUSION) {
+        int declaredCount = Math.Max(1, (int)Math.Round(pair.Value.param1));
+        var vertices = new List<(int Seq, double Lat, double Lng)>();
+        int next = index;
+        while (next < items.Count && vertices.Count < declaredCount
+               && items[next].Value.command == pair.Value.command) {
+          if (TryGlobalPosition(items[next].Value, out double lat, out double lng)) {
+            vertices.Add((items[next].Key, lat, lng));
+          }
+          next++;
+        }
+        AddFencePolygon(vertices, command == MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION);
+        index = Math.Max(index + 1, next);
+        continue;
+      }
+
+      if (TryGlobalPosition(pair.Value, out double pointLat, out double pointLng)) {
+        if (command is MAVLink.MAV_CMD.FENCE_CIRCLE_INCLUSION
+            or MAVLink.MAV_CMD.FENCE_CIRCLE_EXCLUSION) {
+          bool inclusion = command == MAVLink.MAV_CMD.FENCE_CIRCLE_INCLUSION;
+          AddFenceCircle(pointLat, pointLng, Math.Abs(pair.Value.param1), inclusion);
+        }
+        _fence.Add(BuildLabeledMarker(
+            pointLat, pointLng, command == MAVLink.MAV_CMD.FENCE_RETURN_POINT ? "F" : $"F{pair.Key}",
+            command == MAVLink.MAV_CMD.FENCE_RETURN_POINT
+                ? Color.White
+                : Color.FromArgb(255, 255, 70, 70),
+            Color.Black));
+      }
+      index++;
+    }
+    _fence.DataHasChanged();
+  }
+
+  private void AddFencePolygon(
+      IReadOnlyList<(int Seq, double Lat, double Lng)> vertices, bool inclusion) {
+    if (vertices.Count < 3) {
+      foreach (var vertex in vertices) {
+        _fence.Add(BuildLabeledMarker(vertex.Lat, vertex.Lng, $"F{vertex.Seq}",
+            Color.FromArgb(255, 255, 70, 70), Color.Black));
+      }
+      return;
+    }
+
+    var coordinates = vertices.Select(vertex => {
+      var point = SphericalMercator.FromLonLat(vertex.Lng, vertex.Lat);
+      return new Coordinate(point.x, point.y);
+    }).ToList();
+    coordinates.Add(coordinates[0]);
+    var lineColor = inclusion
+        ? Color.FromArgb(255, 30, 160, 255)
+        : Color.FromArgb(255, 255, 60, 60);
+    var fillColor = inclusion
+        ? Color.FromArgb(35, 30, 160, 255)
+        : Color.FromArgb(45, 255, 60, 60);
+    var polygon = new GeometryFeature {
+      Geometry = new Polygon(new LinearRing(coordinates.ToArray())),
+    };
+    polygon.Styles.Add(new VectorStyle {
+      Fill = new Brush(fillColor),
+      Line = new Pen(lineColor, 2),
+      Outline = new Pen(lineColor, 2),
+    });
+    _fence.Add(polygon);
+    foreach (var vertex in vertices) {
+      _fence.Add(BuildLabeledMarker(vertex.Lat, vertex.Lng, $"F{vertex.Seq}", lineColor, Color.Black));
+    }
+  }
+
+  private void AddFenceCircle(double lat, double lng, double radiusM, bool inclusion) {
+    if (!double.IsFinite(radiusM) || radiusM <= 0) {
+      return;
+    }
+    var center = SphericalMercator.FromLonLat(lng, lat);
+    double projectedRadius = radiusM / Math.Max(0.01, Math.Cos(lat * Math.PI / 180.0));
+    const int segments = 64;
+    var coordinates = new Coordinate[segments + 1];
+    for (int i = 0; i <= segments; i++) {
+      double angle = Math.PI * 2 * i / segments;
+      coordinates[i] = new Coordinate(
+          center.x + Math.Cos(angle) * projectedRadius,
+          center.y + Math.Sin(angle) * projectedRadius);
+    }
+    var lineColor = inclusion
+        ? Color.FromArgb(255, 30, 160, 255)
+        : Color.FromArgb(255, 255, 60, 60);
+    var fillColor = inclusion
+        ? Color.FromArgb(25, 30, 160, 255)
+        : Color.FromArgb(40, 255, 60, 60);
+    var circle = new GeometryFeature {
+      Geometry = new Polygon(new LinearRing(coordinates)),
+    };
+    circle.Styles.Add(new VectorStyle {
+      Fill = new Brush(fillColor),
+      Line = new Pen(lineColor, 2) { PenStyle = PenStyle.Dash },
+      Outline = new Pen(lineColor, 2) { PenStyle = PenStyle.Dash },
+    });
+    _fence.Add(circle);
+  }
+
+  private void UpdateRallyOverlay(
+      IReadOnlyList<KeyValuePair<int, MAVLink.mavlink_mission_item_int_t>> items) {
+    _rally.Clear();
+    foreach (var pair in items) {
+      if (!TryGlobalPosition(pair.Value, out double lat, out double lng)) {
+        continue;
+      }
+      var marker = BuildLabeledMarker(
+          lat, lng, $"R{pair.Key}", Color.FromArgb(255, 60, 220, 80), Color.Black);
+      marker.Styles.Add(new LabelStyle {
+        Text = $"{pair.Value.z:0} m",
+        ForeColor = Color.White,
+        BackColor = new Brush(Color.FromArgb(150, 0, 0, 0)),
+        Font = new Font { Size = 9 },
+        Offset = new Offset(0, 15),
+      });
+      _rally.Add(marker);
+    }
+    _rally.DataHasChanged();
+  }
+
+  private void UpdatePoiOverlay() {
+    _poi.Clear();
+    foreach (var point in Services.PoiStore.All.ToArray()) {
+      if (!ValidLatLng(point.Lat, point.Lng)) {
+        continue;
+      }
+      _poi.Add(BuildLabeledMarker(
+          point.Lat, point.Lng, point.Name, Color.FromArgb(255, 255, 64, 255), Color.White));
+    }
+    _poi.DataHasChanged();
+  }
+
+  private void UpdateGuidedTarget() {
+    var mav = AppState.comPort.MAV;
+    var guided = mav.GuidedMode;
+    bool hasPosition = TryGlobalPosition(guided, out double lat, out double lng);
+    bool visible = string.Equals(mav.cs.mode, "Guided", StringComparison.OrdinalIgnoreCase)
+        && hasPosition;
+    if (visible == _guidedWasVisible && (!visible
+        || (guided.x == _lastGuidedX && guided.y == _lastGuidedY && guided.z.Equals(_lastGuidedZ)))) {
+      return;
+    }
+
+    _guidedTarget.Clear();
+    if (visible) {
+      var marker = BuildLabeledMarker(
+          lat, lng, "GUIDED", Color.FromArgb(255, 30, 130, 255), Color.White);
+      marker.Styles.Add(new LabelStyle {
+        Text = $"{guided.z:0} m",
+        ForeColor = Color.White,
+        BackColor = new Brush(Color.FromArgb(160, 0, 0, 0)),
+        Font = new Font { Size = 9 },
+        Offset = new Offset(0, 16),
+      });
+      _guidedTarget.Add(marker);
+    }
+    _guidedTarget.DataHasChanged();
+    _guidedWasVisible = visible;
+    _lastGuidedX = guided.x;
+    _lastGuidedY = guided.y;
+    _lastGuidedZ = guided.z;
+  }
+
+  private static PointFeature BuildLabeledMarker(
+      double lat, double lng, string label, Color fill, Color textColor) {
+    var projected = SphericalMercator.FromLonLat(lng, lat);
+    var marker = new PointFeature(new MPoint(projected.x, projected.y));
+    marker.Styles.Add(new SymbolStyle {
+      SymbolType = SymbolType.Ellipse,
+      Fill = new Brush(fill),
+      Outline = new Pen(Color.Black, 1),
+      SymbolScale = 0.65,
+    });
+    marker.Styles.Add(new LabelStyle {
+      Text = label ?? "",
+      ForeColor = textColor,
+      BackColor = new Brush(Color.Transparent),
+      Font = new Font { Size = 10, Bold = true },
+    });
+    return marker;
+  }
+
+  internal static bool TryGlobalPosition(
+      MAVLink.mavlink_mission_item_int_t item, out double lat, out double lng) {
+    var frame = (MAVLink.MAV_FRAME)item.frame;
+    bool global = frame is MAVLink.MAV_FRAME.GLOBAL
+        or MAVLink.MAV_FRAME.GLOBAL_INT
+        or MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT
+        or MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT_INT
+        or MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT
+        or MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT_INT;
+    lat = item.x / 1e7;
+    lng = item.y / 1e7;
+    return global && ValidLatLng(lat, lng);
+  }
+
+  private static bool ValidLatLng(double lat, double lng) =>
+      double.IsFinite(lat) && double.IsFinite(lng)
+      && lat is >= -90 and <= 90 && lng is >= -180 and <= 180
+      && (lat != 0 || lng != 0);
 
   private void UpdateMapRotation(MissionPlanner.CurrentState cs) {
     var settings = MissionPlanner.Utilities.Settings.Instance;

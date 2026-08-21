@@ -290,14 +290,42 @@
         </TabItem>
 
         <TabItem Header="Messages">
-          <TextBox
-            Text="{Binding StatusText}"
-            AcceptsReturn="True"
-            IsReadOnly="True"
-            TextWrapping="Wrap"
-            Background="{DynamicResource MpBorderBrush}"
-            Foreground="WhiteSmoke"
-          />
+          <Grid Margin="4" RowDefinitions="Auto,2*,Auto,*" RowSpacing="3">
+            <TextBlock Grid.Row="0" Text="Vehicle messages" FontWeight="SemiBold" />
+            <TextBox
+              Grid.Row="1"
+              Text="{Binding StatusText, Mode=OneWay}"
+              AcceptsReturn="True"
+              IsReadOnly="True"
+              TextWrapping="Wrap"
+              Background="{DynamicResource MpBorderBrush}"
+              Foreground="WhiteSmoke"
+            />
+            <TextBlock Grid.Row="2" Text="Ground-station actions" FontWeight="SemiBold" />
+            <TextBox
+              Grid.Row="3"
+              Text="{Binding Messages, Mode=OneWay}"
+              AcceptsReturn="True"
+              IsReadOnly="True"
+              TextWrapping="Wrap"
+              Background="{DynamicResource MpBorderBrush}"
+              Foreground="#9BD"
+            />
+          </Grid>
+        </TabItem>
+
+        <TabItem Header="Simple Actions">
+          <Grid Margin="16" ColumnDefinitions="*,*,*" ColumnSpacing="12">
+            <Button Grid.Column="0" Content="LOITER" FontSize="22" FontWeight="Bold"
+                    Command="{Binding QuickLoiterCommand}"
+                    ToolTip.Tip="Hold position / enter Loiter mode" />
+            <Button Grid.Column="1" Content="RTL" FontSize="22" FontWeight="Bold"
+                    Command="{Binding QuickRtlCommand}"
+                    ToolTip.Tip="Return to launch" />
+            <Button Grid.Column="2" Content="AUTO" FontSize="22" FontWeight="Bold"
+                    Command="{Binding QuickAutoCommand}"
+                    ToolTip.Tip="Continue the uploaded mission in Auto mode" />
+          </Grid>
         </TabItem>
 
         <TabItem Header="PreFlight">
@@ -344,6 +372,48 @@
                      Heading="{Binding Yaw}" NavHeading="{Binding NavBearing}"
                      WpDist="{Binding WpDist}" />
           </Grid>
+        </TabItem>
+
+        <TabItem Header="Transponder">
+          <StackPanel Margin="10" Spacing="8">
+            <Button Content="Connect to Transponder" HorizontalAlignment="Left"
+                    Command="{Binding ConnectTransponderCommand}" />
+            <TextBlock Text="{Binding TransponderStatus}" Foreground="{DynamicResource MpAccentBrush}" />
+            <Grid ColumnDefinitions="Auto,160" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+              <TextBlock Grid.Row="0" Grid.Column="0" Text="Squawk" VerticalAlignment="Center" />
+              <NumericUpDown Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="7777"
+                             Value="{Binding Squawk, Mode=TwoWay}" />
+              <TextBlock Grid.Row="1" Grid.Column="0" Text="FlightID" VerticalAlignment="Center" />
+              <TextBox Grid.Row="1" Grid.Column="1" MaxLength="8" Text="{Binding FlightId, Mode=TwoWay}" />
+            </Grid>
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Button Content="STBY" Width="60" Command="{Binding TransponderStandbyCommand}" />
+              <Button Content="ALT" Width="60" Command="{Binding TransponderAltCommand}" />
+              <Button Content="ON" Width="60" Command="{Binding TransponderOnCommand}" />
+              <Button Content="IDENT" Width="60" Command="{Binding TransponderIdentCommand}" />
+            </StackPanel>
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+              <StackPanel Grid.Column="0" Spacing="2">
+                <TextBlock Text="Mode" FontWeight="Bold" />
+                <CheckBox Content="Mode A" IsChecked="{Binding ModeA, Mode=TwoWay}" />
+                <CheckBox Content="Mode C" IsChecked="{Binding ModeC, Mode=TwoWay}" />
+                <CheckBox Content="Mode S" IsChecked="{Binding ModeS, Mode=TwoWay}" />
+                <CheckBox Content="1090ES ADS-B OUT" IsChecked="{Binding ModeEs, Mode=TwoWay}" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Spacing="2">
+                <TextBlock Text="Faults" FontWeight="Bold" />
+                <CheckBox Content="Maint. Req." IsChecked="{Binding XpdrMaintReq}" IsHitTestVisible="False" />
+                <CheckBox Content="GPS Unavail." IsChecked="{Binding XpdrGpsUnavailable}" IsHitTestVisible="False" />
+                <CheckBox Content="GPS No Fix" IsChecked="{Binding XpdrGpsNoFix}" IsHitTestVisible="False" />
+                <CheckBox Content="TX Sys. Fail." IsChecked="{Binding XpdrTxSystemFailure}" IsHitTestVisible="False" />
+                <CheckBox Content="Airborne" IsChecked="{Binding XpdrAirborne}" IsHitTestVisible="False" />
+              </StackPanel>
+            </Grid>
+            <StackPanel Orientation="Horizontal" Spacing="16">
+              <TextBlock Text="{Binding XpdrNic, StringFormat='NIC: {0}'}" />
+              <TextBlock Text="{Binding XpdrNacp, StringFormat='NACp: {0}'}" />
+            </StackPanel>
+          </StackPanel>
         </TabItem>
 
         <TabItem Header="Status">
@@ -427,6 +497,37 @@
           </ScrollViewer>
         </TabItem>
 
+        <TabItem Header="Aux Function">
+          <ScrollViewer>
+            <ItemsControl ItemsSource="{Binding AuxOptions}" Margin="6">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:AuxFunctionRow">
+                  <Grid ColumnDefinitions="64,280,64,64,64,*" ColumnSpacing="6" Margin="0,2">
+                    <Border Grid.Column="0" Background="#5A5A5A" CornerRadius="3">
+                      <TextBlock Text="{Binding Label}" Foreground="White" FontSize="11"
+                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding Functions}"
+                              SelectedItem="{Binding SelectedFunction, Mode=TwoWay}"
+                              HorizontalAlignment="Stretch" />
+                    <Button Grid.Column="2" Content="Low"
+                            Command="{Binding $parent[ItemsControl].((vm:FlightDataViewModel)DataContext).SetAuxFunctionCommand}"
+                            CommandParameter="{Binding Index, StringFormat='{}{0}:0'}" />
+                    <Button Grid.Column="3" Content="Middle"
+                            Command="{Binding $parent[ItemsControl].((vm:FlightDataViewModel)DataContext).SetAuxFunctionCommand}"
+                            CommandParameter="{Binding Index, StringFormat='{}{0}:1'}" />
+                    <Button Grid.Column="4" Content="High"
+                            Command="{Binding $parent[ItemsControl].((vm:FlightDataViewModel)DataContext).SetAuxFunctionCommand}"
+                            CommandParameter="{Binding Index, StringFormat='{}{0}:2'}" />
+                    <TextBlock Grid.Column="5" Text="{Binding Status}" VerticalAlignment="Center"
+                               Foreground="{DynamicResource MpAccentBrush}" TextTrimming="CharacterEllipsis" />
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </TabItem>
+
         <TabItem Header="Scripts">
           <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,*,Auto,*">
             <TextBlock Grid.Row="0" Text="{Binding ScriptStatus, StringFormat=Lua Script Status: {0}}"
@@ -457,7 +558,9 @@
               <Slider Orientation="Vertical" Height="160" Minimum="-90" Maximum="45"
                       Value="{Binding Tilt, Mode=TwoWay}" HorizontalAlignment="Center" />
               <Button Content="Reset Position" FontSize="11" Command="{Binding ResetPositionCommand}" />
-              <Button Content="Video Control" FontSize="11" Command="{Binding TriggerCameraCommand}" />
+              <Button Content="Open Video Stream…" FontSize="11"
+                      Command="{Binding SetVideoSourceCommand}" CommandParameter="custom" />
+              <Button Content="Trigger Camera" FontSize="11" Command="{Binding TriggerCameraCommand}" />
             </StackPanel>
             <StackPanel Grid.Column="1" Spacing="14" VerticalAlignment="Top">
               <StackPanel Spacing="2">
@@ -540,71 +643,6 @@
           </Grid>
         </TabItem>
 
-        <TabItem Header="Transponder">
-          <StackPanel Margin="10" Spacing="8">
-            <Button Content="Connect to Transponder" HorizontalAlignment="Left"
-                    Command="{Binding ConnectTransponderCommand}" />
-            <TextBlock Text="{Binding TransponderStatus}" Foreground="{DynamicResource MpAccentBrush}" />
-            <Grid ColumnDefinitions="Auto,160" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="6">
-              <TextBlock Grid.Row="0" Grid.Column="0" Text="Squawk" VerticalAlignment="Center" />
-              <NumericUpDown Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="7777"
-                             Value="{Binding Squawk, Mode=TwoWay}" />
-              <TextBlock Grid.Row="1" Grid.Column="0" Text="FlightID" VerticalAlignment="Center" />
-              <TextBox Grid.Row="1" Grid.Column="1" MaxLength="8" Text="{Binding FlightId, Mode=TwoWay}" />
-            </Grid>
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <Button Content="STBY" Width="60" Command="{Binding TransponderStandbyCommand}" />
-              <Button Content="ALT" Width="60" Command="{Binding TransponderAltCommand}" />
-              <Button Content="ON" Width="60" Command="{Binding TransponderOnCommand}" />
-              <Button Content="IDENT" Width="60" Command="{Binding TransponderIdentCommand}" />
-            </StackPanel>
-            <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
-              <StackPanel Grid.Column="0" Spacing="2">
-                <TextBlock Text="Mode" FontWeight="Bold" />
-                <CheckBox Content="Mode A" IsChecked="{Binding ModeA, Mode=TwoWay}" />
-                <CheckBox Content="Mode C" IsChecked="{Binding ModeC, Mode=TwoWay}" />
-                <CheckBox Content="Mode S" IsChecked="{Binding ModeS, Mode=TwoWay}" />
-                <CheckBox Content="1090ES ADS-B OUT" IsChecked="{Binding ModeEs, Mode=TwoWay}" />
-              </StackPanel>
-              <StackPanel Grid.Column="1" Spacing="2">
-                <TextBlock Text="Faults" FontWeight="Bold" />
-                <CheckBox Content="Maint. Req." IsChecked="{Binding XpdrMaintReq}" IsHitTestVisible="False" />
-                <CheckBox Content="GPS Unavail." IsChecked="{Binding XpdrGpsUnavailable}" IsHitTestVisible="False" />
-                <CheckBox Content="GPS No Fix" IsChecked="{Binding XpdrGpsNoFix}" IsHitTestVisible="False" />
-                <CheckBox Content="TX Sys. Fail." IsChecked="{Binding XpdrTxSystemFailure}" IsHitTestVisible="False" />
-                <CheckBox Content="Airborne" IsChecked="{Binding XpdrAirborne}" IsHitTestVisible="False" />
-              </StackPanel>
-            </Grid>
-            <StackPanel Orientation="Horizontal" Spacing="16">
-              <TextBlock Text="{Binding XpdrNic, StringFormat='NIC: {0}'}" />
-              <TextBlock Text="{Binding XpdrNacp, StringFormat='NACp: {0}'}" />
-            </StackPanel>
-          </StackPanel>
-        </TabItem>
-
-        <TabItem Header="Aux Function">
-          <ScrollViewer>
-            <ItemsControl ItemsSource="{Binding AuxOptions}" Margin="6">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate x:DataType="vm:AuxRow">
-                  <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2">
-                    <Border Background="#5A5A5A" Width="40">
-                      <TextBlock Text="{Binding Channel}" Foreground="White" FontSize="11"
-                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
-                    </Border>
-                    <ComboBox Width="240" IsVisible="{Binding Field.IsCombo}"
-                              ItemsSource="{Binding Field.Options}"
-                              SelectedItem="{Binding Field.SelectedOption}" />
-                    <NumericUpDown Width="240" IsVisible="{Binding Field.IsNumeric}"
-                                   Value="{Binding Field.Value}" FormatString="0" />
-                    <TextBlock Text="{Binding Field.Status}" VerticalAlignment="Center"
-                               Foreground="{DynamicResource MpAccentBrush}" />
-                  </StackPanel>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-          </ScrollViewer>
-        </TabItem>
       </TabControl>
     </Grid>
 
@@ -646,8 +684,16 @@
           </StackPanel>
         </Border>
 
-        <TextBlock HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="8"
-                   Foreground="#CCCCCC" FontSize="11" Text="GPS Track (Black)" />
+        <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="8" Width="430"
+                Background="#99000000" CornerRadius="4" Padding="7,4">
+          <StackPanel Spacing="2">
+            <TextBlock Foreground="White" FontSize="11" Text="{Binding MissionProgressText}"
+                       TextTrimming="CharacterEllipsis" />
+            <ProgressBar Minimum="0" Maximum="100" Value="{Binding MissionProgress}" Height="7" />
+            <TextBlock HorizontalAlignment="Right" Foreground="#CCCCCC" FontSize="9"
+                       Text="GPS track: yellow" />
+          </StackPanel>
+        </Border>
 
         <Border IsVisible="{Binding Tuning}" VerticalAlignment="Bottom" Height="210"
                 Margin="0,0,0,26" Background="#CC1B1B1B">

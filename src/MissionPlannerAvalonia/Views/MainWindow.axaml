@@ -161,26 +161,33 @@
           />
         </Button>
 
-        <StackPanel
+        <Grid
           Grid.Column="3"
-          Orientation="Horizontal"
+          RowDefinitions="Auto,Auto"
           VerticalAlignment="Center"
-          Spacing="6"
           Margin="8,0,12,0"
           DataContext="{Binding Connection}"
         >
-          <ComboBox
-            Width="180"
-            ItemsSource="{Binding Ports}"
-            SelectedItem="{Binding SelectedPort}"
-            PlaceholderText="serial port"
-          />
-          <ComboBox Width="90" ItemsSource="{Binding Bauds}" SelectedItem="{Binding SelectedBaud}" />
-          <CheckBox Content="Auto" IsChecked="{Binding AutoConnect}" VerticalAlignment="Center"
-                    ToolTip.Tip="Connect to the saved endpoint when the application starts" />
-          <Button Content="⟳" Command="{Binding RefreshPortsCommand}" ToolTip.Tip="Refresh ports" />
-          <Button Content="{Binding ConnectText}" Command="{Binding ToggleConnectCommand}" MinWidth="110" />
-        </StackPanel>
+          <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6">
+            <ComboBox
+              Width="180"
+              ItemsSource="{Binding Ports}"
+              SelectedItem="{Binding SelectedPort}"
+              PlaceholderText="serial port"
+            />
+            <ComboBox Width="90" ItemsSource="{Binding Bauds}" SelectedItem="{Binding SelectedBaud}" />
+            <CheckBox Content="Auto" IsChecked="{Binding AutoConnect}" VerticalAlignment="Center"
+                      ToolTip.Tip="Connect to the saved endpoint when the application starts" />
+            <Button Content="⟳" Command="{Binding RefreshPortsCommand}" ToolTip.Tip="Refresh ports" />
+            <Button Content="{Binding ConnectText}" Command="{Binding ToggleConnectCommand}" MinWidth="110" />
+          </StackPanel>
+          <Grid Grid.Row="1" ColumnDefinitions="*,120" ColumnSpacing="6" Margin="0,2,0,0">
+            <TextBlock Text="{Binding Status}" FontSize="10" TextTrimming="CharacterEllipsis"
+                       VerticalAlignment="Center" ToolTip.Tip="{Binding Status}" />
+            <ProgressBar Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding Progress}"
+                         Height="4" VerticalAlignment="Center" />
+          </Grid>
+        </Grid>
       </Grid>
     </Border>
 

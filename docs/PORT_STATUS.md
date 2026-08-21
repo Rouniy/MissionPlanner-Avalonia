@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 172 tests verified; the existing Linux packages predate the latest planner undo and hotkey round |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 210 tests verified; the existing Linux packages predate the latest planner, Flight Data and map rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -134,6 +134,16 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   from the map context menu.
 - Flight Data restores upstream Ctrl+1…Ctrl+0 action-tab selection and tlog playback/speed keyboard
   controls; the log context action is labelled for its actual convert/extract feature set.
+- Flight Data now renders the loaded mission and current waypoint, Home, inclusion/exclusion fence
+  polygons and circles, rally points, Guided target, POIs, camera feedback and a live mission-distance
+  progress strip. Its context menu restores POI add/delete/clear, coordinate-based POI creation and
+  Point Camera Coords.
+- The complete 19-item upstream flight-action selector and Simple Actions tab are present. Command
+  implementations match upstream for calibration, safety, engine, scripting, high-latency, ADS-B
+  IDENT and system time; flight termination and SD-card formatting add explicit destructive-action
+  warnings. Ground-station action output and connection status/progress are now visible.
+- Aux Function is a port of the seven upstream `DO_AUX_FUNCTION` presets with Low/Middle/High
+  switch levels. It no longer misinterprets that tab as an editor for `RC7_OPTION`…`RC13_OPTION`.
 - Fence inclusion/exclusion polygons and circles can be created from the Avalonia planner.
 - libVLC startup now resolves versioned Linux `libvlc.so.5`, reports live playback errors, retains
   media for its full native lifetime, and accepts direct MRLs plus common RTP/GStreamer input.
@@ -163,7 +173,7 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 172 passed, 0 failed.
+- Automated tests: 210 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 156 MB.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The `.deb` target was rebuilt from the then-current 158-test source on 2026-08-21; package structure,
@@ -244,10 +254,10 @@ not remove required Windows-native files from `win-x64` builds.
 | NativeAOT runtime | All | Linux links to a 66 MB ELF but fails in log4net `Assembly.GetCallingAssembly()`; MAVLink/XML/fastJSON also require dynamic code. Experimental only. |
 | Mission transfer over MAVFTP | All | Write Fast now uses the upstream-style pipelined `MISSION_ITEM_INT` upload; mission transfer over MAVFTP (`chk_usemavftp`) remains absent. |
 | HUD recording and pop-out UI | All | "Record Video Stream" records the libVLC stream; upstream HUD-to-AVI frame capture, fixed aspect override, and undock/pop-out of HUD/map/tab panels are absent. |
-| Flight Data map extras | All | Camera feedback markers/footprints are ported. POI actions on the Flight Data map, Point Camera Coords, and the mission `DistanceBar` strip remain absent (POI is available in the planner). |
+| Flight Data map extras | All | Mission/Home/current-WP, fence, rally, Guided target, POIs, camera feedback and mission-distance progress are ported. Marine AIS targets, OA/proximity objects on the map, optional airport overlays, live gimbal/camera target and photo-overlap count remain absent. |
 | Pre-flight checklist engine | All | Only the manual checklist and six fixed automatic checks exist; the upstream configurable rule engine (`checklistDefault.xml`, condition types, colours, editor) is absent. |
 | DisplayView profiles | All | `DisplayViewExtensions.custompath` is set, but no screen consumes `DisplayConfiguration` to show/hide individual widgets (tab-level Customize is ported). |
-| Planner map tools | All | Tile prefetch (area and along-WP-path), offset polygon, Tracker Home from map, rally set/get/save/clear vehicle actions, and KML/KMZ/DXF support beyond the current flattened `.kml` track overlay are not ported. |
+| Planner map tools | All | Tile prefetch (area and along-WP-path), offset polygon, Tracker Home from map, dedicated legacy rally shortcuts, and KML/KMZ/DXF support beyond the current flattened `.kml` track overlay are not ported. Rally data itself is read, written and cleared through the Mission Type selector. |
 | Full Parameter List extras | All | Reset-to-default is ported. The ArduPilot GitHub parameter-file browser/comparison remains absent. |
 | ADS-B connection settings | All | The toggle controls MAVLink traffic rendering. The upstream external ADS-B server/port connection and configuration prompt are not implemented. |
 | SSH terminal | All | The upstream companion-computer SSH terminal (`Renci.SshNet`) is not ported; the terminal is MAVLink NSH only. |
@@ -255,7 +265,7 @@ not remove required Windows-native files from `win-x64` builds.
 | Log tooling extras | All | OSD video rendering from tlog, LogIndex with map thumbnails, log download over SCP, interactive tlog graphing and MAVLink Inspector "Graph It" are not ported. |
 | Geo-reference gaps | All | GPS EXIF and TRIG matching are ported. Shutter lag, Estimate Offset, AMSL base altitude and KML network-link export remain absent. |
 | Geomagnetic K-index | All | The upstream K-index fetch and warning is not ported. |
-| Remaining developer utilities | All | The safe portable subset of `temp.cs` is now a native Developer Tools page. Translation/resource editor, OpenGL 3D terrain view, MicroDrones serial downlink, vehicle default-settings loader, DevopsUI, custom GDAL/DEM browser and optical-flow live calibration image still need dedicated Avalonia implementations. |
+| Remaining developer utilities | All | The safe portable subset of `temp.cs` is now a native Developer Tools page. Translation/resource editor, OpenGL 3D terrain view, MicroDrones serial downlink, vehicle default-settings loader, DevopsUI and custom GDAL/DEM browser still need dedicated Avalonia implementations. PX4Flow live image assembly is already port-native. |
 | CoT advanced identity fields | All | CoT 2.0 transport, type, UID and callsign are ported. Upstream's per-system TAKV/contact endpoint/VMF identity grid is not yet exposed. |
 
 ## Intentionally disabled or replaced
@@ -274,7 +284,7 @@ not remove required Windows-native files from `win-x64` builds.
 | Usage analytics | This port has no analytics sender; the Config page states that analytics are disabled rather than presenting a preference with no runtime consumer. |
 | Windows SimpleBLE/libusb DLLs in Linux packages | Explicitly filtered only for Linux; shipping PE native libraries on Linux would not provide BLE/USB support. |
 | NativeAOT as release format | Disabled by default on every target. Supported releases are self-contained CoreCLR builds. |
-| Developer crash/flight commands | The upstream developer form's autopilot lockup, automatic arm/takeoff and flight-termination actions are intentionally not exposed. They can crash or command a live aircraft and are not required for normal diagnostics. |
+| Developer crash/flight commands | The upstream developer form's autopilot lockup and automatic arm/takeoff shortcuts remain intentionally absent. The normal Flight Data action selector's upstream flight-termination command is ported, but only behind an explicit irreversible-action warning. |
 
 ## Native-platform acceptance still required
 

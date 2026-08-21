@@ -157,6 +157,7 @@ public partial class FlightDataView : UserControl {
     }
     if (_mapVm != null) {
       _mapVm.TrackClearRequested -= _fdMap.ClearTrack;
+      _mapVm.ActionTabShortcutRequested -= SelectVisibleActionTab;
       _mapVm.PropertyChanged -= OnMapVmChanged;
       _mapVm.TuningSampled -= OnTuningSampled;
       _mapVm.TuningFieldsChanged -= OnTuningFieldsChanged;
@@ -165,9 +166,20 @@ public partial class FlightDataView : UserControl {
     if (_mapVm != null) {
       _fdMap.AutoPan = _mapVm.AutoPan;
       _mapVm.TrackClearRequested += _fdMap.ClearTrack;
+      _mapVm.ActionTabShortcutRequested += SelectVisibleActionTab;
       _mapVm.PropertyChanged += OnMapVmChanged;
       _mapVm.TuningSampled += OnTuningSampled;
       _mapVm.TuningFieldsChanged += OnTuningFieldsChanged;
+    }
+  }
+
+  private void SelectVisibleActionTab(int ordinal) {
+    if (_fdTabs == null || ordinal < 0) {
+      return;
+    }
+    var visibleTabs = TabItemsOf(_fdTabs).Where(tab => tab.IsVisible).ToList();
+    if (ordinal < visibleTabs.Count) {
+      _fdTabs.SelectedItem = visibleTabs[ordinal];
     }
   }
 
@@ -312,7 +324,13 @@ public partial class FlightDataView : UserControl {
     menu.Items.Add(Item("Fly To Coords", vm => vm.FlyToCoords()));
     menu.Items.Add(new Separator());
     menu.Items.Add(Item("Point Camera Here", vm => vm.PointCameraHere(map.LastClickLatLng.Lat, map.LastClickLatLng.Lng)));
+    menu.Items.Add(Item("Point Camera Coords…", vm => vm.PointCameraCoords()));
     menu.Items.Add(Item("Trigger Camera NOW", vm => vm.TriggerCameraNow()));
+    menu.Items.Add(new Separator());
+    menu.Items.Add(Item("Add POI Here…", vm => vm.AddPoiHere(map.LastClickLatLng.Lat, map.LastClickLatLng.Lng)));
+    menu.Items.Add(Item("Add POI at Coords…", vm => vm.AddPoiCoords()));
+    menu.Items.Add(Item("Delete Nearest POI…", vm => vm.DeleteNearestPoi(map.LastClickLatLng.Lat, map.LastClickLatLng.Lng)));
+    menu.Items.Add(Item("Clear All POIs…", vm => vm.ClearPois()));
     menu.Items.Add(new Separator());
     menu.Items.Add(Item("Set Home Here", vm => vm.SetHomeHere(map.LastClickLatLng.Lat, map.LastClickLatLng.Lng)));
     menu.Items.Add(Item("Set EKF Origin Here", vm => vm.SetEkfOriginHere(map.LastClickLatLng.Lat, map.LastClickLatLng.Lng)));
@@ -323,13 +341,34 @@ public partial class FlightDataView : UserControl {
 
   private readonly ITemplate<Panel?>? _defaultTabPanel;
 
+  private const string _hiddenTabsKey = "tabcontrolactions_avalonia_hidden";
+
+  private static readonly Dictionary<string, string> _upstreamTabHeaders =
+      new(StringComparer.OrdinalIgnoreCase) {
+        ["tabQuick"] = "Quick",
+        ["tabActions"] = "Actions",
+        ["tabActionsSimple"] = "Simple Actions",
+        ["tabPagemessages"] = "Messages",
+        ["tabPagePreFlight"] = "PreFlight",
+        ["tabGauges"] = "Gauges",
+        ["tabStatus"] = "Status",
+        ["tabServo"] = "Servo/Relay",
+        ["tabScripts"] = "Scripts",
+        ["tabPayload"] = "Payload Control",
+        ["tabTLogs"] = "Telemetry Logs",
+        ["tablogbrowse"] = "DataFlash Logs",
+        ["tabTransponder"] = "Transponder",
+        ["tabAuxFunction"] = "Aux Function",
+      };
+
   private static IEnumerable<TabItem> TabItemsOf(TabControl tabs) => tabs.Items.OfType<TabItem>();
 
   private static string HeaderOf(TabItem ti) => ti.Header?.ToString() ?? "";
 
   private void ApplyTabSettings(TabControl tabs) {
-    var hidden = HiddenTabSet();
-    foreach (var ti in TabItemsOf(tabs)) {
+    var items = TabItemsOf(tabs).ToList();
+    var hidden = HiddenTabSet(items.Select(HeaderOf).ToList());
+    foreach (var ti in items) {
       ti.IsVisible = !hidden.Contains(HeaderOf(ti));
     }
     if (TabMultiLineSetting()) {
@@ -337,15 +376,67 @@ public partial class FlightDataView : UserControl {
     }
   }
 
-  private static HashSet<string> HiddenTabSet() {
-    var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    if (Settings.Instance.ContainsKey("tabcontrolactions")) {
-      foreach (var h in (Settings.Instance["tabcontrolactions"] ?? "")
-                   .Split(';', StringSplitOptions.RemoveEmptyEntries)) {
-        set.Add(h.Trim());
-      }
+  private static HashSet<string> HiddenTabSet(IReadOnlyList<string> headers) {
+    bool hasAvaloniaSetting = Settings.Instance.ContainsKey(_hiddenTabsKey);
+    string? avaloniaSetting = hasAvaloniaSetting ? Settings.Instance[_hiddenTabsKey] : null;
+    string? legacySetting = Settings.Instance.ContainsKey("tabcontrolactions")
+        ? Settings.Instance["tabcontrolactions"]
+        : null;
+    var hidden = ResolveHiddenTabs(headers, avaloniaSetting, legacySetting);
+
+    if (!hasAvaloniaSetting && legacySetting != null) {
+      // Early Avalonia builds reused the upstream key but stored hidden display captions in it.
+      // Keep a port-specific key going forward and repair the original key to its upstream
+      // contract (ordered internal names of visible tabs), preserving settings interoperability.
+      SaveTabSettings(headers, hidden);
     }
-    return set;
+    return hidden;
+  }
+
+  internal static HashSet<string> ResolveHiddenTabs(
+      IReadOnlyList<string> headers, string? avaloniaHidden, string? legacySetting) {
+    var knownHeaders = new HashSet<string>(headers, StringComparer.OrdinalIgnoreCase);
+    if (avaloniaHidden != null) {
+      return ParseTabs(avaloniaHidden)
+          .Where(knownHeaders.Contains)
+          .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    var legacy = ParseTabs(legacySetting).ToList();
+    bool upstreamVisibleFormat = legacy.Any(_upstreamTabHeaders.ContainsKey);
+    if (!upstreamVisibleFormat) {
+      // Compatibility with early Avalonia builds, where this value was a list of hidden headers.
+      return legacy.Where(knownHeaders.Contains)
+          .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    var visible = legacy
+        .Select(name => _upstreamTabHeaders.TryGetValue(name, out var header) ? header : null)
+        .Where(header => header != null)
+        .Cast<string>()
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    return headers.Where(header => !visible.Contains(header))
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+  }
+
+  internal static string EncodeUpstreamVisibleTabs(
+      IReadOnlyList<string> headers, IReadOnlySet<string> hidden) {
+    var namesByHeader = _upstreamTabHeaders
+        .ToDictionary(pair => pair.Value, pair => pair.Key, StringComparer.OrdinalIgnoreCase);
+    return string.Join(";", headers
+        .Where(header => !hidden.Contains(header) && namesByHeader.ContainsKey(header))
+        .Select(header => namesByHeader[header]));
+  }
+
+  private static IEnumerable<string> ParseTabs(string? value) =>
+      (value ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries)
+      .Select(tab => tab.Trim())
+      .Where(tab => tab.Length > 0);
+
+  private static void SaveTabSettings(
+      IReadOnlyList<string> headers, IReadOnlySet<string> hidden) {
+    Settings.Instance[_hiddenTabsKey] = string.Join(";", headers.Where(hidden.Contains));
+    Settings.Instance["tabcontrolactions"] = EncodeUpstreamVisibleTabs(headers, hidden);
   }
 
   private static bool TabMultiLineSetting() =>
@@ -409,6 +500,7 @@ public partial class FlightDataView : UserControl {
         hidden.Add(HeaderOf(ti));
       }
     }
-    Settings.Instance["tabcontrolactions"] = string.Join(";", hidden);
+    var headers = map.Select(item => HeaderOf(item.Ti)).ToList();
+    SaveTabSettings(headers, hidden.ToHashSet(StringComparer.OrdinalIgnoreCase));
   }
 }

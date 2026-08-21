@@ -49,6 +49,14 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   private int _wpNo;
 
   [ObservableProperty]
+  private double _missionProgress;
+
+  [ObservableProperty]
+  private string _missionProgressText = "No mission loaded";
+
+  private long _nextMissionProgressUpdate;
+
+  [ObservableProperty]
   private double _verticalSpeed;
 
   [ObservableProperty]
@@ -141,8 +149,9 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       ServoRelayItems.Add(new RelayChannel(r));
     }
 
-    for (int ch = 7; ch <= 13; ch++) {
-      AuxOptions.Add(new AuxRow(ch, new ParamField($"RC{ch}_OPTION")));
+    var auxFunctions = LoadAuxFunctionOptions();
+    for (int index = 0; index < 7; index++) {
+      AuxOptions.Add(new AuxFunctionRow(index, auxFunctions));
     }
 
     _quickViewCount = Math.Clamp(Settings.Instance.GetInt32("quickViewCount", 6), 1, 12);
@@ -193,6 +202,10 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     AirSpeed = cs.airspeed;
     WpDist = cs.wp_dist;
     WpNo = (int)cs.wpno;
+    if (Environment.TickCount64 >= _nextMissionProgressUpdate) {
+      UpdateMissionProgress(cs);
+      _nextMissionProgressUpdate = Environment.TickCount64 + 500;
+    }
     VerticalSpeed = cs.verticalspeed;
     DistToHome = cs.DistToHome;
     var settings = Settings.Instance;
@@ -674,7 +687,65 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 
   public ObservableCollection<object> ServoRelayItems { get; } = new();
 
-  public ObservableCollection<AuxRow> AuxOptions { get; } = new();
+  public ObservableCollection<AuxFunctionRow> AuxOptions { get; } = new();
+
+  private static IReadOnlyList<ParamOption> LoadAuxFunctionOptions() {
+    try {
+      var firmware = AppState.comPort.MAV.cs.firmware.ToString();
+      return ParameterMetaDataRepository.GetParameterOptionsInt("RC6_OPTION", firmware)
+          .Select(option => new ParamOption(option.Key, $"{option.Key}: {option.Value}"))
+          .ToArray();
+    } catch {
+      return Array.Empty<ParamOption>();
+    }
+  }
+
+  [RelayCommand]
+  [Obsolete]
+  private async Task SetAuxFunction(string? spec) {
+    if (!TryParseAuxRequest(spec, out int index, out int level)) {
+      return;
+    }
+    var row = AuxOptions.FirstOrDefault(item => item.Index == index);
+    if (row?.SelectedFunction == null) {
+      if (row != null) {
+        row.Status = "Select a function.";
+      }
+      return;
+    }
+    if (!Connected) {
+      row.Status = "Not connected.";
+      return;
+    }
+
+    int function = row.SelectedFunction.Value;
+    try {
+      bool accepted = await Task.Run(() => _comPort.doCommand(
+          _comPort.MAV.sysid, _comPort.MAV.compid, MAVLink.MAV_CMD.DO_AUX_FUNCTION,
+          function, level, 0, 0, 0, 0, 0));
+      row.Status = accepted ? AuxLevelName(level) : "Command rejected.";
+      Log($"Aux {index + 1} function {function} -> {AuxLevelName(level)}");
+    } catch (Exception ex) {
+      row.Status = ex.Message;
+    }
+  }
+
+  internal static bool TryParseAuxRequest(string? spec, out int index, out int level) {
+    index = level = -1;
+    if (spec == null) {
+      return false;
+    }
+    var parts = spec.Split(':');
+    return parts.Length == 2 && int.TryParse(parts[0], out index)
+        && int.TryParse(parts[1], out level) && index is >= 0 and < 7 && level is >= 0 and <= 2;
+  }
+
+  internal static string AuxLevelName(int level) => level switch {
+    (int)MAVLink.MAV_CMD_DO_AUX_FUNCTION_SWITCH_LEVEL.LOW => "Low",
+    (int)MAVLink.MAV_CMD_DO_AUX_FUNCTION_SWITCH_LEVEL.MIDDLE => "Middle",
+    (int)MAVLink.MAV_CMD_DO_AUX_FUNCTION_SWITCH_LEVEL.HIGH => "High",
+    _ => "Unknown",
+  };
 
   [RelayCommand]
   [Obsolete]
@@ -836,6 +907,8 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private int _selectedActionTabIndex;
 
+  public event Action<int>? ActionTabShortcutRequested;
+
   public bool HasTlog => _tlog.IsOpen;
 
   private bool _seekFromUi = true;
@@ -881,7 +954,11 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 
   public void SelectActionTab(int index) {
     if (index is >= 0 and <= 9) {
-      SelectedActionTabIndex = index;
+      if (ActionTabShortcutRequested == null) {
+        SelectedActionTabIndex = index;
+      } else {
+        ActionTabShortcutRequested.Invoke(index);
+      }
     }
   }
 
@@ -1156,19 +1233,9 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   private string _logStatus = "";
 
   [RelayCommand]
-  [Obsolete]
-  private async Task DownloadDataflashLog() {
-    if (!Connected) {
-      LogStatus = "Not connected.";
-      return;
-    }
-    LogStatus = "Requesting on-board log list…";
-    try {
-      var list = await _comPort.GetLogEntry();
-      LogStatus = $"{list.Count} logs on the vehicle. Use the list to download.";
-    } catch (Exception ex) {
-      LogStatus = "Log list failed: " + ex.Message;
-    }
+  private void DownloadDataflashLog() {
+    Views.LogDownloadWindow.OpenWindow();
+    LogStatus = "Opened the MAVLink DataFlash log downloader.";
   }
 
   private bool Connected => _comPort.BaseStream?.IsOpen == true;
@@ -1293,12 +1360,19 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
             "Mission_Start",
             "Preflight_Reboot_Shutdown",
             "Trigger_Camera",
+            "System_Time",
             "Battery_Reset",
+            "ADSB_Out_Ident",
+            "Scripting_cmd_stop_and_restart",
+            "Scripting_cmd_stop",
+            "HighLatency_Enable",
+            "HighLatency_Disable",
             "Toggle_Safety_Switch",
             "Do_Parachute",
             "Engine_Start",
             "Engine_Stop",
             "Terminate_Flight",
+            "Format_SD_Card",
       };
 
   /// <summary>
@@ -1673,15 +1747,12 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     if (!Connected) {
       return;
     }
-    var s = await Services.Dialogs.InputBox("Fly To Coords", "Enter lat;lng;alt");
-    var p = s?.Split(';');
-    if (p is not { Length: >= 3 }
-        || !double.TryParse(p[0], out var lat)
-        || !double.TryParse(p[1], out var lng)
-        || !double.TryParse(p[2], out var alt)) {
+    var text = await Services.Dialogs.InputBox("Fly To Coords", "Enter lat;lng;alt");
+    if (!TryParseCoordinates(text, out double lat, out double lng, out double? parsedAlt)
+        || parsedAlt == null) {
       return;
     }
-    await GuidedGoto(lat, lng, alt, "Relative");
+    await GuidedGoto(lat, lng, parsedAlt.Value, "Relative");
   }
 
   [Obsolete]
@@ -1693,10 +1764,176 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     if (!float.TryParse(s, out var alt)) {
       return;
     }
-    await Task.Run(() => _comPort.doCommandInt(Sysid, Compid, MAVLink.MAV_CMD.DO_SET_ROI,
-        0, 0, 0, 0, (int)(lat * 1e7), (int)(lng * 1e7), alt,
-        frame: MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT));
+    await PointCameraAt(lat, lng, alt, MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT);
     Log($"Camera ROI -> {lat:0.000000},{lng:0.000000}");
+  }
+
+  [Obsolete]
+  public async Task PointCameraCoords() {
+    if (!Connected) {
+      return;
+    }
+    var text = await Services.Dialogs.InputBox(
+        "Point Camera Coords", "Enter lat;lng;alt(abs), or lat;lng");
+    if (!TryParseCoordinates(text, out double lat, out double lng, out double? altitude)) {
+      return;
+    }
+    double alt = altitude ?? MissionPlanner.Utilities.srtm.getAltitude(lat, lng).alt;
+    await PointCameraAt(lat, lng, alt, MAVLink.MAV_FRAME.GLOBAL);
+    Log($"Camera ROI -> {lat:0.000000},{lng:0.000000} @ {alt:0.0} m AMSL");
+  }
+
+  [Obsolete]
+  private Task PointCameraAt(double lat, double lng, double alt, MAVLink.MAV_FRAME frame) =>
+      Task.Run(() => _comPort.doCommandInt(Sysid, Compid, MAVLink.MAV_CMD.DO_SET_ROI,
+          0, 0, 0, 0, (int)(lat * 1e7), (int)(lng * 1e7), (float)alt, frame: frame));
+
+  public async Task AddPoiHere(double lat, double lng) {
+    if (!ValidCoordinates(lat, lng)) {
+      return;
+    }
+    var name = await Services.Dialogs.InputBox("Add POI", "Name", "POI");
+    if (name == null) {
+      return;
+    }
+    double altitude = MissionPlanner.Utilities.srtm.getAltitude(lat, lng).alt;
+    Services.PoiStore.Add(lat, lng, altitude, name);
+    Log($"POI {name} added at {lat:0.000000},{lng:0.000000}");
+  }
+
+  public async Task AddPoiCoords() {
+    var text = await Services.Dialogs.InputBox(
+        "POI at Coords", "Enter lat;lng;alt, or lat;lng");
+    if (!TryParseCoordinates(text, out double lat, out double lng, out double? altitude)) {
+      return;
+    }
+    var name = await Services.Dialogs.InputBox("POI at Coords", "Name", "POI");
+    if (name == null) {
+      return;
+    }
+    double resolvedAltitude = altitude ?? MissionPlanner.Utilities.srtm.getAltitude(lat, lng).alt;
+    Services.PoiStore.Add(lat, lng, resolvedAltitude, name);
+    Log($"POI {name} added at {lat:0.000000},{lng:0.000000}");
+  }
+
+  public async Task DeleteNearestPoi(double lat, double lng) {
+    var nearest = Services.PoiStore.All
+        .Select(point => (Point: point, Distance: DistanceMeters(lat, lng, point.Lat, point.Lng)))
+        .OrderBy(candidate => candidate.Distance)
+        .FirstOrDefault();
+    if (nearest.Point == null || nearest.Distance > 1000) {
+      await Services.Dialogs.Alert("Delete POI", "No POI was found within 1 km of this location.");
+      return;
+    }
+    if (!await Services.Dialogs.Confirm(
+        "Delete POI", $"Delete {nearest.Point.Name} ({nearest.Distance:0} m away)?")) {
+      return;
+    }
+    Services.PoiStore.Remove(nearest.Point);
+    Log($"POI {nearest.Point.Name} deleted");
+  }
+
+  public async Task ClearPois() {
+    if (Services.PoiStore.All.Count == 0
+        || !await Services.Dialogs.Confirm("Clear POIs", "Delete every saved POI?")) {
+      return;
+    }
+    Services.PoiStore.Clear();
+    Log("All POIs cleared");
+  }
+
+  internal static bool TryParseCoordinates(
+      string? text, out double lat, out double lng, out double? altitude) {
+    lat = lng = 0;
+    altitude = null;
+    var fields = text?.Split(';', StringSplitOptions.TrimEntries);
+    if (fields is not { Length: 2 or 3 }
+        || !double.TryParse(fields[0], NumberStyles.Float, CultureInfo.InvariantCulture, out lat)
+        || !double.TryParse(fields[1], NumberStyles.Float, CultureInfo.InvariantCulture, out lng)
+        || !ValidCoordinates(lat, lng)) {
+      return false;
+    }
+    if (fields.Length == 3) {
+      if (!double.TryParse(
+          fields[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double parsedAltitude)) {
+        return false;
+      }
+      altitude = parsedAltitude;
+    }
+    return true;
+  }
+
+  private static bool ValidCoordinates(double lat, double lng) =>
+      double.IsFinite(lat) && double.IsFinite(lng)
+      && lat is >= -90 and <= 90 && lng is >= -180 and <= 180
+      && (lat != 0 || lng != 0);
+
+  private static double DistanceMeters(double lat1, double lng1, double lat2, double lng2) {
+    const double radius = 6378137;
+    double dLat = (lat2 - lat1) * Math.PI / 180;
+    double dLng = (lng2 - lng1) * Math.PI / 180;
+    double a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2)
+        + Math.Cos(lat1 * Math.PI / 180) * Math.Cos(lat2 * Math.PI / 180)
+        * Math.Sin(dLng / 2) * Math.Sin(dLng / 2);
+    return radius * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+  }
+
+  private void UpdateMissionProgress(MissionPlanner.CurrentState cs) {
+    var home = cs.HomeLocation;
+    if (home == null || !ValidCoordinates(home.Lat, home.Lng)) {
+      home = cs.PlannedHomeLocation;
+    }
+    var info = CalculateMissionProgress(
+        home?.Lat ?? 0, home?.Lng ?? 0,
+        _comPort.MAV.wps.OrderBy(item => item.Key).ToArray(),
+        (int)cs.wpno, cs.wp_dist);
+    MissionProgress = info.TotalDistance > 0
+        ? Math.Clamp(info.TravelledDistance / info.TotalDistance * 100, 0, 100)
+        : 0;
+    MissionProgressText = info.ItemCount == 0
+        ? "No mission loaded"
+        : $"Mission WP {cs.wpno}/{info.ItemCount}  •  "
+          + $"{info.TravelledDistance:0} / {info.TotalDistance:0} m  •  "
+          + $"next {cs.wp_dist:0} m";
+  }
+
+  internal static MissionProgressInfo CalculateMissionProgress(
+      double homeLat, double homeLng,
+      IReadOnlyList<KeyValuePair<int, MAVLink.mavlink_mission_item_int_t>> items,
+      int currentWaypoint, double distanceToCurrentWaypoint) {
+    var points = items
+        .Where(item => item.Key != 0
+            && Controls.MapView.TryGlobalPosition(item.Value, out _, out _))
+        .Select(item => {
+          Controls.MapView.TryGlobalPosition(item.Value, out double lat, out double lng);
+          return (Seq: item.Key, Lat: lat, Lng: lng);
+        })
+        .ToArray();
+    if (points.Length == 0) {
+      return new MissionProgressInfo(0, 0, 0);
+    }
+
+    bool havePrevious = ValidCoordinates(homeLat, homeLng);
+    double previousLat = homeLat;
+    double previousLng = homeLng;
+    double total = 0;
+    double travelled = 0;
+    foreach (var point in points) {
+      if (havePrevious) {
+        double leg = DistanceMeters(previousLat, previousLng, point.Lat, point.Lng);
+        total += leg;
+        if (point.Seq <= currentWaypoint) {
+          travelled += leg;
+        }
+      }
+      previousLat = point.Lat;
+      previousLng = point.Lng;
+      havePrevious = true;
+    }
+    if (travelled > 0 && double.IsFinite(distanceToCurrentWaypoint)) {
+      travelled -= Math.Max(0, distanceToCurrentWaypoint);
+    }
+    return new MissionProgressInfo(points.Length, total, Math.Clamp(travelled, 0, total));
   }
 
   [Obsolete]
@@ -1788,9 +2025,32 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       Messages += "Not connected.\n";
       return;
     }
-    await Task.Run(() => RunAction(a));
-    Log($"Action {a} sent");
+    if (ActionRequiresConfirmation(a)
+        && !await Services.Dialogs.Confirm("Confirm Action", ActionConfirmationText(a))) {
+      Log($"Action {a} cancelled");
+      return;
+    }
+    try {
+      await Task.Run(() => RunAction(a));
+      Log($"Action {a} sent");
+    } catch (Exception ex) {
+      Log($"Action {a} failed: {ex.Message}");
+    }
   }
+
+  internal static bool ActionRequiresConfirmation(string action) => action switch {
+    "Trigger_Camera" or "System_Time" or "Scripting_cmd_stop_and_restart"
+        or "Scripting_cmd_stop" => false,
+    _ => true,
+  };
+
+  internal static string ActionConfirmationText(string action) => action switch {
+    "Terminate_Flight" =>
+        "Terminate the flight now? This command can stop the vehicle in flight and cannot be undone.",
+    "Format_SD_Card" =>
+        "Format the vehicle SD card now? All logs and other data on that card will be permanently erased.",
+    _ => $"Send the vehicle action {action}?",
+  };
 
   [Obsolete]
   private void RunAction(string a) {
@@ -1798,41 +2058,80 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     byte c = _comPort.MAV.compid;
     switch (a) {
       case "Loiter_Unlim":
-        _comPort.setMode("Loiter");
+        _comPort.doCommand(s, c, MAVLink.MAV_CMD.LOITER_UNLIM, 0, 0, 0, 0, 0, 0, 0);
         break;
       case "Return_To_Launch":
-        _comPort.setMode("RTL");
+        _comPort.doCommand(s, c, MAVLink.MAV_CMD.RETURN_TO_LAUNCH, 0, 0, 0, 0, 0, 0, 0);
         break;
       case "Preflight_Calibration":
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.PREFLIGHT_CALIBRATION, 1, 1, 0, 0, 0, 0, 0);
+        float gyro = _comPort.MAV.cs.firmware
+                     == MissionPlanner.ArduPilot.Firmwares.ArduCopter2 ? 1 : 0;
+        _comPort.doCommand(s, c, MAVLink.MAV_CMD.PREFLIGHT_CALIBRATION,
+            gyro, 0, 1, 0, 0, 0, 0);
         break;
       case "Mission_Start":
         _comPort.doCommand(s, c, MAVLink.MAV_CMD.MISSION_START, 0, 0, 0, 0, 0, 0, 0);
         break;
       case "Preflight_Reboot_Shutdown":
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.PREFLIGHT_REBOOT_SHUTDOWN, 1, 0, 0, 0, 0, 0, 0);
+        _comPort.doReboot();
         break;
       case "Trigger_Camera":
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.DO_DIGICAM_CONTROL, 0, 0, 0, 0, 1, 0, 0);
+        _comPort.setDigicamControl(true);
+        break;
+      case "System_Time":
+        _comPort.sendPacket(new MAVLink.mavlink_system_time_t {
+          time_unix_usec = (ulong)(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1000),
+          time_boot_ms = 0,
+        }, s, c);
         break;
       case "Battery_Reset":
         _comPort.doCommand(s, c, MAVLink.MAV_CMD.BATTERY_RESET, 255, 100, 0, 0, 0, 0, 0);
         break;
+      case "ADSB_Out_Ident":
+        _comPort.doCommand(s, c, MAVLink.MAV_CMD.DO_ADSB_OUT_IDENT, 0, 0, 0, 0, 0, 0, 0);
+        break;
+      case "Scripting_cmd_stop_and_restart":
+        _comPort.doCommandInt(s, c, MAVLink.MAV_CMD.SCRIPTING,
+            (int)MAVLink.SCRIPTING_CMD.STOP_AND_RESTART, 0, 0, 0, 0, 0, 0);
+        break;
+      case "Scripting_cmd_stop":
+        _comPort.doCommandInt(s, c, MAVLink.MAV_CMD.SCRIPTING,
+            (int)MAVLink.SCRIPTING_CMD.STOP, 0, 0, 0, 0, 0, 0);
+        break;
+      case "HighLatency_Enable":
+        _comPort.doHighLatency(true);
+        break;
+      case "HighLatency_Disable":
+        _comPort.doHighLatency(false);
+        break;
       case "Toggle_Safety_Switch":
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.DO_SET_SAFETY_SWITCH_STATE, 0, 0, 0, 0, 0, 0, 0);
+        if (s == 0) {
+          throw new InvalidOperationException("Cannot toggle safety for system id 0.");
+        }
+        uint customMode = _comPort.MAV.cs.sensors_enabled.motor_control
+                          && _comPort.MAV.cs.sensors_enabled.seen ? 1u : 0u;
+        _comPort.setMode(new MAVLink.mavlink_set_mode_t {
+          custom_mode = customMode,
+          target_system = s,
+        }, MAVLink.MAV_MODE_FLAG.SAFETY_ARMED);
         break;
       case "Do_Parachute":
         _comPort.doCommand(s, c, MAVLink.MAV_CMD.DO_PARACHUTE, 2, 0, 0, 0, 0, 0, 0);
         break;
       case "Engine_Start":
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.DO_ENGINE_CONTROL, 1, 0, 0, 0, 0, 0, 0);
+        _comPort.doEngineControl(s, c, true);
         break;
       case "Engine_Stop":
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.DO_ENGINE_CONTROL, 0, 0, 0, 0, 0, 0, 0);
+        _comPort.doEngineControl(s, c, false);
         break;
       case "Terminate_Flight":
         _comPort.doCommand(s, c, MAVLink.MAV_CMD.DO_FLIGHTTERMINATION, 1, 0, 0, 0, 0, 0, 0);
         break;
+      case "Format_SD_Card":
+        _comPort.doCommandInt(s, c, MAVLink.MAV_CMD.STORAGE_FORMAT, 1, 1, 0, 0, 0, 0, 0);
+        break;
+      default:
+        throw new InvalidOperationException($"Unknown action {a}.");
     }
   }
 
@@ -2393,11 +2692,40 @@ internal static class QuickWarningStyle {
   }
 }
 
-public record AuxRow(int Channel, ParamField Field);
+public partial class AuxFunctionRow : ObservableObject {
+  public AuxFunctionRow(int index, IReadOnlyList<ParamOption> functions) {
+    Index = index;
+    Label = $"Aux {index + 1}";
+    Functions = functions;
+    int saved = Settings.Instance.ContainsKey($"Aux{index}_desc")
+        && int.TryParse(Settings.Instance[$"Aux{index}_desc"], out int parsed) ? parsed : 0;
+    _selectedFunction = functions.FirstOrDefault(option => option.Value == saved)
+        ?? functions.FirstOrDefault();
+  }
+
+  public int Index { get; }
+  public string Label { get; }
+  public IReadOnlyList<ParamOption> Functions { get; }
+
+  [ObservableProperty]
+  private ParamOption? _selectedFunction;
+
+  [ObservableProperty]
+  private string _status = "";
+
+  partial void OnSelectedFunctionChanged(ParamOption? value) {
+    if (value != null) {
+      Settings.Instance[$"Aux{Index}_desc"] = value.Value.ToString(CultureInfo.InvariantCulture);
+    }
+  }
+}
 
 public sealed record MavlinkMessageOption(uint Id, string Name) {
   public override string ToString() => $"{Id}: {Name}";
 }
+
+internal readonly record struct MissionProgressInfo(
+    int ItemCount, double TotalDistance, double TravelledDistance);
 
 public class RelayChannel {
   public RelayChannel(int index) {
