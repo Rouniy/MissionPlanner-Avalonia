@@ -107,7 +107,9 @@
         SourceFile="$(_UpstreamMavStateSource)"
         DestinationFile="$(_CompatibleMavStateSource)" />
     <ItemGroup>
+      <!-- MSBuild preserves the default Compile item separator on Windows, so list both forms. -->
       <Compile Remove="Mavlink/MAVState.cs" />
+      <Compile Remove="Mavlink\MAVState.cs" />
       <Compile Include="$(_CompatibleMavStateSource)" />
     </ItemGroup>
   </Target>
