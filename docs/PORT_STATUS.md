@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 210 tests verified; the existing Linux packages predate the latest planner, Flight Data and map rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 240 tests verified; the existing Linux packages predate the latest planner, Flight Data and map rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -81,6 +81,13 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   cannot reach SITL or a real vehicle.
 - Persisted serial, TCP, UDP client/listener and WebSocket endpoints can auto-connect at normal app
   startup without reopening the endpoint prompt.
+- Serial connections restore the exact upstream baud-rate set plus arbitrary custom rates, remember
+  rates per physical port and expose the active MAVLink system/component selector. AUTO scan now has
+  visible progress and cancellation and records the actual detected port/rate instead of persisting
+  the synthetic `AUTO` endpoint.
+- A fresh one-hour parameter cache can be reused on connect, matching upstream policy. After a live
+  connection, the port refreshes version-specific parameter metadata and independently checks the
+  official ArduPilot manifest for a newer stable vehicle firmware without blocking the link UI.
 - Survey Grid now generates upstream-style mission commands: optional takeoff, speed, heading hold,
   spline starts, waypoint delay, RTL/land, distance/digicam/repeat-servo/set-servo camera control and
   per-strip trigger start/stop.
@@ -107,6 +114,9 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   heading-up map rotation, track length, distance-to-home visibility, HUD overlay visibility and
   reduced refresh rate on slow machines. Colour-type WarningEngine rules now highlight their
   matching QuickView cell with readable foreground text.
+- Map tiles support upstream-style server-only, server-and-persistent-cache and strictly offline
+  cache-only modes. Flight Data and Flight Planner share the cross-platform disk cache and apply a
+  mode change immediately without mixing providers that happen to use the same z/x/y coordinates.
 - SITL and normal/auto connection attempts share one serialization gate; delayed auto-scan cannot
   overwrite a concurrently started simulator link. Joystick shutdown also waits for an in-flight
   sender asynchronously, so releasing overrides cannot freeze the Avalonia UI.
@@ -138,6 +148,10 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   polygons and circles, rally points, Guided target, POIs, camera feedback and a live mission-distance
   progress strip. Its context menu restores POI add/delete/clear, coordinate-based POI creation and
   Point Camera Coords.
+- The main menu restores upstream auto-hide with a persistent top-edge hover target. Flight Data HUD
+  choices now survive restart (icons, Russian layout, ground palette, battery cell count, swap,
+  individual indicators and custom fields/prefixes), and the map menu can import/export both legacy
+  three-column and altitude-preserving four-column POI files and switch directly to Flight Planner.
 - The complete 19-item upstream flight-action selector and Simple Actions tab are present. Command
   implementations match upstream for calibration, safety, engine, scripting, high-latency, ADS-B
   IDENT and system time; flight termination and SD-card formatting add explicit destructive-action
@@ -173,7 +187,7 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 210 passed, 0 failed.
+- Automated tests: 240 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 156 MB.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The `.deb` target was rebuilt from the then-current 158-test source on 2026-08-21; package structure,
@@ -242,9 +256,6 @@ not remove required Windows-native files from `win-x64` builds.
 | Direct DroneCAN SLCAN adapter mode | All, hardware-specific | UI reports unsupported; MAVLink-CAN1/CAN2 works. Direct serial lifecycle needs porting and native testing. |
 | Antenna tracker interfaces other than Maestro | All, hardware-specific | Configuration rejects other drivers; port/test each driver independently. |
 | Traditional-heli live curve/servo visualization | All | Writable configuration is present; remaining ZedGraph visuals need Avalonia replacements. |
-| Persistent map tile cache | All | The Mapsui layer does not connect a persistent tile cache; the nonfunctional selector is disabled and maps currently need network access. |
-| Vehicle firmware/update metadata after connect | All | Connection/runtime parameter handling is ported, but the upstream online check for a newer ArduPilot vehicle firmware and version-specific parameter metadata download is not yet wired. |
-| Cached parameter reuse on connect | All | The port writes a cross-platform offline parameter snapshot and supports foreground/background vehicle loads, but does not yet skip a live download using upstream's one-hour `ParamCachePath` policy. |
 | Signed beta application updates | All | Stable signed updates work. The Beta Updates control is disabled until this project publishes and signs a separate beta manifest/channel. |
 | QGC Plan fence return point | All | QGC Plan has polygons/circles but no Mission Planner fence-return field. `.plan` export warns when it omits one; use legacy `.fen` when that point must round-trip. |
 | Custom theme editor and audio vario | All | Theme selection works, but the editor is absent. Upstream vario uses unsupported `Console.Beep`; it needs a native audio abstraction. |

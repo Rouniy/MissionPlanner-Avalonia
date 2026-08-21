@@ -28,9 +28,14 @@
   </Window.Resources>
 
   <DockPanel>
-    <Border DockPanel.Dock="Top" Background="{DynamicResource MpBg}" Height="64">
+    <Border DockPanel.Dock="Top" Background="{DynamicResource MpBg}"
+            Height="{Binding HeaderHeight}"
+            PointerEntered="OnHeaderPointerEntered"
+            PointerExited="OnHeaderPointerExited">
       <Border.ContextMenu>
         <ContextMenu>
+          <MenuItem Header="Auto Hide Menu" ToggleType="CheckBox"
+                    IsChecked="{Binding MenuAutoHide, Mode=TwoWay}" />
           <MenuItem Header="Full Screen" Click="OnFullScreen" />
           <MenuItem Header="Readonly" Click="OnToggleReadonly" />
           <Separator />

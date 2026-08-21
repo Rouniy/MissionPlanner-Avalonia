@@ -20,11 +20,11 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   private bool _recomputing;
   private bool _restoringUndo;
   private int _undoMutationDepth;
-  private readonly List<MissionSnapshot> _undoHistory = new();
+  private readonly List<MissionSnapshot> _undoHistory = [];
 
   public event Action? WaypointsChanged;
 
-  public ObservableCollection<WpRow> Waypoints { get; } = new();
+  public ObservableCollection<WpRow> Waypoints { get; } = [];
 
   public event Action? PoiChanged;
 
@@ -82,8 +82,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   private List<WpRow> EffectiveRows(string type) =>
-      (MissionType == type ? Waypoints.AsEnumerable() : StoreFor(type))
-      .Select(CloneRow).ToList();
+      [.. (MissionType == type ? Waypoints.AsEnumerable() : StoreFor(type)).Select(CloneRow)];
 
   [RelayCommand]
   private void Undo() {
@@ -205,7 +204,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
 
   public event Action? DrawnPolygonChanged;
 
-  public List<PointLatLngAlt> DrawnPolygon { get; } = new();
+  public List<PointLatLngAlt> DrawnPolygon { get; } = [];
 
   public void AddPolygonPoint(double lat, double lng) {
     DrawnPolygon.Add(new PointLatLngAlt(lat, lng, DefaultAlt));
@@ -317,14 +316,14 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   // ponytail: one grid + three backing stores for Mission/Fence/Rally, like upstream reusing one DataGridView per list; no per-type row class.
-  public string[] MissionTypes { get; } = { "Mission", "Fence", "Rally" };
+  public string[] MissionTypes { get; } = ["Mission", "Fence", "Rally"];
 
   [ObservableProperty]
   private string _missionType = "Mission";
 
-  private readonly List<WpRow> _missionStore = new();
-  private readonly List<WpRow> _fenceStore = new();
-  private readonly List<WpRow> _rallyStore = new();
+  private readonly List<WpRow> _missionStore = [];
+  private readonly List<WpRow> _fenceStore = [];
+  private readonly List<WpRow> _rallyStore = [];
 
   private MAVLink.MAV_MISSION_TYPE CurrentMissionType => MissionType switch {
     "Fence" => MAVLink.MAV_MISSION_TYPE.FENCE,
@@ -352,14 +351,13 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   public ObservableCollection<string> MapTypes { get; } =
-      new()
-      {
+      [
             "GoogleSatelliteMap",
             "GoogleHybridMap",
             "BingSatelliteMap",
             "OpenStreetMap",
             "EsriWorldImagery",
-      };
+      ];
 
   [ObservableProperty]
   private string _mapType = "GoogleSatelliteMap";
@@ -431,22 +429,9 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     var type = CurrentMissionType;
     Status = $"Reading {MissionType.ToLowerInvariant()}…";
     try {
-      var rows = await Task.Run(async () => {
-        var list = new List<WpRow>();
-        if (type == MAVLink.MAV_MISSION_TYPE.MISSION) {
-          ushort count = _comPort.getWPCount(type);
-          for (ushort i = 0; i < count; i++) {
-            list.Add(WpRow.From(i, _comPort.getWP(i, type)));
-          }
-        } else {
-
-          var locs = await mav_mission.download(_comPort, _comPort.MAV.sysid, _comPort.MAV.compid, type);
-          for (int i = 0; i < locs.Count; i++) {
-            list.Add(WpRow.From(i, locs[i]));
-          }
-        }
-        return list;
-      });
+      byte sysid = _comPort.MAV.sysid;
+      byte compid = _comPort.MAV.compid;
+      var rows = await DownloadRowsAsync(type, sysid, compid);
       if (type == MAVLink.MAV_MISSION_TYPE.MISSION && rows.Count > 0) {
         var home = rows[0];
         HomeLat = home.Lat;
@@ -471,6 +456,130 @@ public partial class FlightPlannerViewModel : ViewModelBase {
 #pragma warning disable CS0612 // ReadWaypoints wraps legacy upstream mission APIs.
     await ReadWaypoints();
 #pragma warning restore CS0612
+  }
+
+  internal async Task ReadAncillaryOnConnectAsync() {
+    if (!IsConnected) {
+      return;
+    }
+
+    byte sysid = _comPort.MAV.sysid;
+    byte compid = _comPort.MAV.compid;
+    await WaitForBackgroundParametersAsync(sysid, compid);
+    if (!IsSameOpenVehicle(sysid, compid)) {
+      return;
+    }
+
+    int fenceCount = 0;
+    int rallyCount = 0;
+    var errors = new List<string>();
+    var fenceRows = new List<WpRow>();
+    var rallyRows = new List<WpRow>();
+
+    if (ShouldDownloadFence()) {
+      try {
+        fenceRows = await DownloadRowsAsync(MAVLink.MAV_MISSION_TYPE.FENCE, sysid, compid);
+        fenceCount = fenceRows.Count;
+      } catch (Exception ex) {
+        errors.Add("fence: " + ex.Message);
+      }
+    }
+
+    if (IsSameOpenVehicle(sysid, compid) && ParamValue("RALLY_TOTAL") > 0) {
+      try {
+        rallyRows = await DownloadRowsAsync(MAVLink.MAV_MISSION_TYPE.RALLY, sysid, compid);
+        rallyCount = rallyRows.Count;
+        await WarnIfRallySpreadExceedsLimit(rallyRows);
+      } catch (Exception ex) {
+        errors.Add("rally: " + ex.Message);
+      }
+    }
+
+    if (!IsSameOpenVehicle(sysid, compid)) {
+      return;
+    }
+    bool storesChanged = _fenceStore.Count > 0 || _rallyStore.Count > 0 ||
+        fenceRows.Count > 0 || rallyRows.Count > 0;
+    ReplaceStore(_fenceStore, fenceRows);
+    ReplaceStore(_rallyStore, rallyRows);
+    if (storesChanged) {
+      WaypointsChanged?.Invoke();
+    }
+    if (fenceCount > 0 || rallyCount > 0) {
+      Status = $"Loaded vehicle extras: {fenceCount} fence, {rallyCount} rally point(s).";
+    }
+    if (errors.Count > 0) {
+      Status = "Connected, but ancillary mission read failed (" + string.Join("; ", errors) + ").";
+    }
+  }
+
+  private Task<List<WpRow>> DownloadRowsAsync(
+      MAVLink.MAV_MISSION_TYPE type, byte sysid, byte compid) => Task.Run(async () => {
+        var list = new List<WpRow>();
+        if (type == MAVLink.MAV_MISSION_TYPE.MISSION) {
+          ushort count = _comPort.getWPCount(sysid, compid, type);
+          for (ushort i = 0; i < count; i++) {
+            list.Add(WpRow.From(i, _comPort.getWP(sysid, compid, i, type)));
+          }
+        } else {
+          var locations = await mav_mission.download(_comPort, sysid, compid, type);
+          for (int i = 0; i < locations.Count; i++) {
+            list.Add(WpRow.From(i, locations[i]));
+          }
+        }
+        return list;
+      });
+
+  private bool ShouldDownloadFence() =>
+      ParamValue("FENCE_TOTAL") > 1 && _comPort.MAV.param.ContainsKey("FENCE_ACTION");
+
+  private bool IsSameOpenVehicle(byte sysid, byte compid) =>
+      IsConnected && _comPort.MAV.sysid == sysid && _comPort.MAV.compid == compid;
+
+  private async Task WaitForBackgroundParametersAsync(byte sysid, byte compid) {
+    if (!MissionPlanner.Utilities.Settings.Instance.GetBoolean("Params_BG", false)) {
+      return;
+    }
+
+    // Upstream performs the fence/rally checks only after its parameter read. The Avalonia port
+    // may deliberately load parameters in the background, so defer the checks until that read is
+    // complete instead of silently missing extras whose *_TOTAL parameters have not arrived yet.
+    DateTime deadline = DateTime.UtcNow.AddSeconds(60);
+    while (IsSameOpenVehicle(sysid, compid) && DateTime.UtcNow < deadline) {
+      var parameters = _comPort.MAV.param;
+      if (parameters.TotalReported > 0 && parameters.TotalReceived >= parameters.TotalReported) {
+        return;
+      }
+      await Task.Delay(250);
+    }
+  }
+
+  private double ParamValue(string name) {
+    try {
+      return _comPort.MAV.param.ContainsKey(name) ? _comPort.MAV.param[name].Value : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private async Task WarnIfRallySpreadExceedsLimit(IReadOnlyList<WpRow> rows) {
+    double limitKm = ParamValue("RALLY_LIMIT_KM");
+    if (limitKm <= 0 || rows.Count < 2) {
+      return;
+    }
+    double maximumMeters = 0;
+    foreach (var first in rows) {
+      foreach (var second in rows) {
+        maximumMeters = Math.Max(maximumMeters,
+            new PointLatLngAlt(first.Lat, first.Lng).GetDistance(
+                new PointLatLngAlt(second.Lat, second.Lng)));
+      }
+    }
+    if (maximumMeters / 1000.0 > limitKm) {
+      await Services.Dialogs.Alert("Rally point warning",
+          $"Maximum rally-point separation is {maximumMeters / 1000.0:0.00} km, " +
+          $"above RALLY_LIMIT_KM ({limitKm:0.00} km).");
+    }
   }
 
   [RelayCommand]
@@ -511,7 +620,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
           _comPort.setWPACK(type);
         } else {
           await mav_mission.upload(_comPort, _comPort.MAV.sysid, _comPort.MAV.compid, type,
-              rows.Select(r => r.ToLocationwp()).ToList());
+              [.. rows.Select(r => r.ToLocationwp())]);
         }
       });
       Status = $"Wrote {rows.Count} {MissionType.ToLowerInvariant()} point(s).";
@@ -848,7 +957,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       }
       var rows = new List<WpRow>();
       foreach (var line in lines.Skip(1)) {
-        var t = line.Split(new[] { ' ', '\t', ',' }, StringSplitOptions.RemoveEmptyEntries);
+        var t = line.Split([' ', '\t', ','], StringSplitOptions.RemoveEmptyEntries);
         if (t.Length < 12) {
           continue;
         }
@@ -905,8 +1014,8 @@ public partial class FlightPlannerViewModel : ViewModelBase {
         cruiseSpeed = 15,
         firmwareType = (int)_comPort.MAV.apname,
         hoverSpeed = 5,
-        items = missionRows.Select(ToPlanItem).ToList(),
-        plannedHomePosition = new List<double> { HomeLat, HomeLng, HomeAlt },
+        items = [.. missionRows.Select(ToPlanItem)],
+        plannedHomePosition = [HomeLat, HomeLng, HomeAlt],
         vehicleType = (int)_comPort.MAV.aptype,
         version = 2,
       },
@@ -917,10 +1026,9 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     if (isPlan) {
       format.geoFence = BuildPlanGeoFence(fenceRows);
       format.rallyPoints = new MissionFile.RallyPoints {
-        points = RowsForFile("Rally")
+        points = [.. RowsForFile("Rally")
             .Where(row => row.Command == (ushort)MAVLink.MAV_CMD.RALLY_POINT)
-            .Select(row => new List<double> { row.Lat, row.Lng, row.Alt })
-            .ToList(),
+            .Select(row => new List<double> { row.Lat, row.Lng, row.Alt })],
         version = 2,
       };
     }
@@ -964,21 +1072,21 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   private IReadOnlyList<WpRow> RowsForFile(string type) =>
-      MissionType == type ? Waypoints.ToList() : StoreFor(type).ToList();
+      MissionType == type ? Waypoints.ToList() : [.. StoreFor(type)];
 
   private static MissionFile.Item ToPlanItem(WpRow row) => new() {
     autoContinue = true,
     command = row.Command,
     doJumpId = row.Seq + 1,
     frame = row.Frame,
-    @params = new List<double?> { row.P1, row.P2, row.P3, row.P4, row.Lat, row.Lng, row.Alt },
+    @params = [row.P1, row.P2, row.P3, row.P4, row.Lat, row.Lng, row.Alt],
     type = "SimpleItem",
   };
 
   private static MissionFile.GeoFence BuildPlanGeoFence(IReadOnlyList<WpRow> rows) {
     var result = new MissionFile.GeoFence {
-      circles = new List<MissionFile.Circle>(),
-      polygons = new List<MissionFile.Polygon>(),
+      circles = [],
+      polygons = [],
       version = 2,
     };
     for (int index = 0; index < rows.Count;) {
@@ -988,7 +1096,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       if (circleInclusion || circleExclusion) {
         result.circles.Add(new MissionFile.Circle {
           circle = new MissionFile.Circle2 {
-            center = new List<double> { row.Lat, row.Lng },
+            center = [row.Lat, row.Lng],
             radius = row.P1,
           },
           inclusion = circleInclusion,
@@ -1025,7 +1133,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
 
   private static List<WpRow> ReadPlanMissionItems(IEnumerable<MissionFile.Item>? items) {
     var result = new List<WpRow>();
-    foreach (var item in items ?? Enumerable.Empty<MissionFile.Item>()) {
+    foreach (var item in items ?? []) {
       if (item.type == "ComplexItem") {
         foreach (var child in item.TransectStyleComplexItem?.Items
                      ?? Enumerable.Empty<MissionFile.Item>()) {
@@ -1040,7 +1148,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   private static WpRow FromPlanItem(MissionFile.Item item, int sequence) {
-    var values = item.@params ?? new List<double?>();
+    var values = item.@params ?? [];
     double Param(int index) => values.Count > index ? values[index] ?? 0 : 0;
     return new WpRow {
       Seq = sequence,
@@ -1059,7 +1167,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   private static List<WpRow> ReadPlanGeoFence(MissionFile.GeoFence? fence) {
     var result = new List<WpRow>();
     foreach (var polygon in fence?.polygons ?? Enumerable.Empty<MissionFile.Polygon>()) {
-      var points = polygon.polygon ?? new List<List<double>>();
+      var points = polygon.polygon ?? [];
       var validPoints = points.Where(point => point.Count >= 2).ToList();
       var command = polygon.inclusion
           ? MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION
@@ -1080,12 +1188,11 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   private static List<WpRow> ReadPlanRally(MissionFile.RallyPoints? rally) =>
-      (rally?.points ?? new List<List<double>>())
+      [.. (rally?.points ?? [])
           .Where(point => point.Count >= 2)
           .Select(point => NewFileRow(MAVLink.MAV_CMD.RALLY_POINT, point[0], point[1],
               point.Count >= 3 ? point[2] : 0,
-              frame: (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT))
-          .ToList();
+              frame: (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT))];
 
   private void MergePlanStores(List<WpRow> mission, List<WpRow> fence, List<WpRow> rally,
       bool append) {
@@ -1164,7 +1271,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     if (points.Count < 4) {
       throw new InvalidDataException("Legacy .fen needs a return point and at least 3 polygon vertices.");
     }
-    var returnPoint = points[0];
+    var (Lat, Lng) = points[0];
     points.RemoveAt(0);
     RemoveClosingPoint(points);
     if (MissionType != "Fence") {
@@ -1173,7 +1280,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     var rows = new List<WpRow>();
     if (!append || !Waypoints.Any(row =>
           row.Command == (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT)) {
-      rows.Add(NewFileRow(MAVLink.MAV_CMD.FENCE_RETURN_POINT, returnPoint.Lat, returnPoint.Lng, 0));
+      rows.Add(NewFileRow(MAVLink.MAV_CMD.FENCE_RETURN_POINT, Lat, Lng, 0));
     }
     rows.AddRange(points.Select(point =>
         NewFileRow(MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION, point.Lat, point.Lng, 0,
@@ -1203,7 +1310,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       if (trimmed.Length == 0 || trimmed.StartsWith('#')) {
         continue;
       }
-      string[] fields = trimmed.Split(new[] { ' ', '\t', ',' }, StringSplitOptions.RemoveEmptyEntries);
+      string[] fields = trimmed.Split([' ', '\t', ','], StringSplitOptions.RemoveEmptyEntries);
       if (fields.Length < 4 || !fields[0].Equals("RALLY", StringComparison.OrdinalIgnoreCase)) {
         continue;
       }
@@ -1227,7 +1334,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       if (trimmed.Length == 0 || trimmed.StartsWith('#')) {
         continue;
       }
-      string[] fields = trimmed.Split(new[] { ' ', '\t', ',' }, StringSplitOptions.RemoveEmptyEntries);
+      string[] fields = trimmed.Split([' ', '\t', ','], StringSplitOptions.RemoveEmptyEntries);
       if (fields.Length >= 2
           && double.TryParse(fields[0], NumberStyles.Any, CultureInfo.InvariantCulture, out double lat)
           && double.TryParse(fields[1], NumberStyles.Any, CultureInfo.InvariantCulture, out double lng)) {
@@ -1972,7 +2079,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
 }
 
 public partial class WpRow : ObservableObject {
-  private static readonly List<WeakReference<WpRow>> _instances = new();
+  private static readonly List<WeakReference<WpRow>> _instances = [];
 
   public WpRow() {
     lock (_instances) {
@@ -2064,7 +2171,7 @@ public partial class WpRow : ObservableObject {
     }
   }
 
-  public static readonly string[] FrameList = { "Relative", "Absolute", "Terrain" };
+  public static readonly string[] FrameList = ["Relative", "Absolute", "Terrain"];
 
   public string FrameName {
     get => Frame switch {

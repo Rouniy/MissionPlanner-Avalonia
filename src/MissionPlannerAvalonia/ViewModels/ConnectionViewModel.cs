@@ -9,6 +9,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MissionPlanner;
+using MissionPlanner.ArduPilot;
 using MissionPlanner.Comms;
 using MissionPlanner.Utilities;
 using MissionPlannerAvalonia.Views;
@@ -26,14 +27,14 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
   internal event Action? Connected;
 
-  public ObservableCollection<string> Ports { get; } = new();
+  public ObservableCollection<string> Ports { get; } = [];
   public ObservableCollection<int> Bauds { get; } =
-      new() {
+      [
         1200, 2400, 4800, 9600, 19200, 38400, 57600, 111100, 115200, 230400,
         460800, 500000, 625000, 921600, 1000000, 1500000,
-      };
+      ];
 
-  public ObservableCollection<MavSystemChoice> VehicleChoices { get; } = new();
+  public ObservableCollection<MavSystemChoice> VehicleChoices { get; } = [];
 
   [ObservableProperty]
   [NotifyPropertyChangedFor(nameof(CanEditBaud))]
@@ -133,17 +134,18 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   private Services.ProgressReporter? _connectDialog;
   private readonly SemaphoreSlim _connectGate = new(1, 1);
 
-  private readonly object _readerSync = new();
+  private readonly Lock _readerSync = new();
   private CancellationTokenSource? _readerCts;
   private int _readerGeneration;
   private DateTime _connectedAtUtc = DateTime.MinValue;
   private DateTime _lastVersionPollUtc = DateTime.MinValue;
   private bool _lastArmed;
   private int _homeRefreshRunning;
-  private bool _initializing;
+  private readonly bool _initializing;
   private bool _updatingVehicleChoices;
   private string _vehicleChoiceSignature = "";
-  private int _selectedVehicleParamLoadRunning;
+  private readonly SemaphoreSlim _selectedVehicleParamLoadGate = new(1, 1);
+  private int _selectedVehicleLoadGeneration;
 
   private int StartReader() {
     StopReader();
@@ -187,6 +189,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   }
 
   private void StopReader() {
+    Interlocked.Increment(ref _selectedVehicleLoadGeneration);
     CancellationTokenSource? cts;
     lock (_readerSync) {
       _readerGeneration++;
@@ -341,14 +344,13 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
   private void RefreshVehicleChoices() {
     var choices = _comPort.BaseStream?.IsOpen == true
-        ? _comPort.MAVlist.ToArray()
+        ? [.. _comPort.MAVlist.ToArray()
             .Where(mav => mav.sysid != 0 &&
                 mav.compid != (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_MISSIONPLANNER)
             .Select(mav => new MavSystemChoice(
                 mav.sysid, mav.compid, VehicleChoiceLabel(mav)))
             .OrderBy(choice => choice.SysId)
-            .ThenBy(choice => choice.CompId)
-            .ToArray()
+            .ThenBy(choice => choice.CompId)]
         : Array.Empty<MavSystemChoice>();
     string signature = string.Join(";", choices.Select(choice =>
         $"{choice.SysId}:{choice.CompId}:{choice.Label}"));
@@ -358,6 +360,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     _vehicleChoiceSignature = signature;
 
     Avalonia.Threading.Dispatcher.UIThread.Post(() => {
+      MavSystemChoice? fallbackSelection = null;
       _updatingVehicleChoices = true;
       try {
         VehicleChoices.Clear();
@@ -365,11 +368,22 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
           VehicleChoices.Add(choice);
         }
         HasVehicleChoices = choices.Length > 0;
-        SelectedVehicle = choices.FirstOrDefault(choice =>
+        var selected = choices.FirstOrDefault(choice =>
             choice.SysId == _comPort.sysidcurrent && choice.CompId == _comPort.compidcurrent)
             ?? choices.FirstOrDefault();
+        SelectedVehicle = selected;
+        if (selected != null &&
+            (_comPort.sysidcurrent != selected.SysId || _comPort.compidcurrent != selected.CompId)) {
+          _comPort.sysidcurrent = selected.SysId;
+          _comPort.compidcurrent = selected.CompId;
+          fallbackSelection = selected;
+        }
       } finally {
         _updatingVehicleChoices = false;
+      }
+      if (fallbackSelection != null) {
+        AppState.RaiseConnectionChanged();
+        LoadSelectedVehicleParameters(fallbackSelection);
       }
     });
   }
@@ -386,7 +400,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       component = ((MAVLink.MAV_COMPONENT)mav.compid).ToString();
       const string prefix = "MAV_COMP_ID_";
       if (component.StartsWith(prefix, StringComparison.Ordinal)) {
-        component = component.Substring(prefix.Length);
+        component = component[prefix.Length..];
       }
       component = component.Replace('_', ' ');
     }
@@ -395,25 +409,35 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
   private void LoadSelectedVehicleParameters(MavSystemChoice choice) {
     var mav = _comPort.MAVlist[choice.SysId, choice.CompId];
-    if (mav.param.TotalReceived >= mav.param.TotalReported ||
-        Interlocked.Exchange(ref _selectedVehicleParamLoadRunning, 1) != 0) {
+    if (mav.param.TotalReported > 0 && mav.param.TotalReceived >= mav.param.TotalReported) {
       return;
     }
 
+    int generation = Interlocked.Increment(ref _selectedVehicleLoadGeneration);
     Status = $"Loading parameters for {choice.Label}…";
-    _ = Task.Run(() => {
+    var lifetimeToken = _lifetimeCts.Token;
+    _ = Task.Run(async () => {
       Exception? error = null;
+      bool entered = false;
       try {
+        await _selectedVehicleParamLoadGate.WaitAsync(lifetimeToken).ConfigureAwait(false);
+        entered = true;
+        if (!IsSelectedVehicleCurrent(choice, generation)) {
+          return;
+        }
         _comPort.getParamListMavftp(choice.SysId, choice.CompId);
+      } catch (OperationCanceledException) when (lifetimeToken.IsCancellationRequested) {
+        return;
       } catch (Exception ex) {
         error = ex;
       } finally {
-        Interlocked.Exchange(ref _selectedVehicleParamLoadRunning, 0);
+        if (entered) {
+          _selectedVehicleParamLoadGate.Release();
+        }
       }
 
       Avalonia.Threading.Dispatcher.UIThread.Post(() => {
-        if (_comPort.BaseStream?.IsOpen != true ||
-            _comPort.sysidcurrent != choice.SysId || _comPort.compidcurrent != choice.CompId) {
+        if (!IsSelectedVehicleCurrent(choice, generation)) {
           return;
         }
         Status = error == null
@@ -421,6 +445,18 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
             : $"Selected {choice.Label}; parameter load failed: {error.Message}";
       });
     });
+  }
+
+  private bool IsSelectedVehicleCurrent(MavSystemChoice choice, int generation) =>
+      Volatile.Read(ref _selectedVehicleLoadGeneration) == generation &&
+      _comPort.BaseStream?.IsOpen == true &&
+      _comPort.sysidcurrent == choice.SysId && _comPort.compidcurrent == choice.CompId;
+
+  private bool IsReaderSessionActive(int generation) {
+    lock (_readerSync) {
+      return _readerGeneration == generation && _readerCts != null &&
+          _comPort.BaseStream?.IsOpen == true;
+    }
   }
 
   private DateTime NewestPacketUtc() {
@@ -496,6 +532,58 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
         Status = error == null
             ? $"Connected. {_comPort.MAV.param.Count} params loaded in background."
             : "Connected, but background parameter load failed: " + error.Message;
+      });
+    });
+  }
+
+  private void StartPostConnectMetadataCheck(int generation) {
+    string versionString = _comPort.MAV.VersionString;
+    if (string.IsNullOrWhiteSpace(versionString)) {
+      return;
+    }
+
+    _ = Task.Run(async () => {
+      Version version;
+      try {
+        version = VersionDetection.GetVersion(versionString);
+      } catch {
+        return;
+      }
+
+      // Keep metadata refresh independent from the firmware manifest. A temporary failure of one
+      // upstream endpoint must not suppress the other half of the post-connect behaviour.
+      try {
+        await ParameterMetaDataRepositoryAPMpdef.GetMetaDataVersioned(version).ConfigureAwait(false);
+      } catch (Exception ex) {
+        Console.Error.WriteLine($"Version-specific parameter metadata refresh failed: {ex.Message}");
+      }
+
+      Services.VehicleFirmwareUpdate? update = null;
+      try {
+        update = Services.VehicleFirmwarePolicy.FindNewerOfficialRelease(
+            versionString, APFirmware.GetReleaseNewest(APFirmware.RELEASE_TYPES.OFFICIAL));
+      } catch (Exception ex) {
+        Console.Error.WriteLine($"Vehicle firmware update check failed: {ex.Message}");
+      }
+
+      if (update == null || !IsReaderSessionActive(generation)) {
+        return;
+      }
+
+      Avalonia.Threading.Dispatcher.UIThread.Post(async () => {
+        if (!IsReaderSessionActive(generation)) {
+          return;
+        }
+        try {
+          await Services.Dialogs.MessageShowAgain(
+              $"New stable firmware: {update.VehicleType} {update.Available}",
+              $"The connected vehicle reports {update.Current}. Stable {update.VehicleType} " +
+              $"{update.Available} is available. Release notes: " +
+              "https://discuss.ardupilot.org/tags/stable-release",
+              $"vehicle-firmware-{update.VehicleType}-{update.Available}");
+        } catch (Exception ex) {
+          Console.Error.WriteLine($"Unable to show the vehicle firmware notice: {ex.Message}");
+        }
       });
     });
   }
@@ -635,7 +723,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     SelectedPort = Ports.Contains(cur ?? "") ? cur : Ports.FirstOrDefault(p => p != "AUTO");
   }
 
-  private static readonly string[] _internalPorts = { "Bluetooth-Incoming-Port", "debug-console" };
+  private static readonly string[] _internalPorts = ["Bluetooth-Incoming-Port", "debug-console"];
 
   private static IEnumerable<string> DedupePorts(string[] names) {
     var all = names.Distinct()
@@ -787,8 +875,22 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     try {
       ICommsSerial? stream = await BuildStreamAsync(sel, interactive);
       if (stream == null) {
-        Status = "";
+        if (sel != "AUTO" || interactive) {
+          Status = "";
+        }
         return;
+      }
+
+      string endpoint = sel;
+      if (sel == "AUTO" && !string.IsNullOrWhiteSpace(stream.PortName)) {
+        endpoint = stream.PortName;
+        if (!Ports.Contains(endpoint)) {
+          Ports.Insert(1, endpoint);
+        }
+        SelectedPort = endpoint;
+        if (stream.BaudRate > 0) {
+          SelectedBaud = stream.BaudRate;
+        }
       }
 
       _comPort.BaseStream = stream;
@@ -812,7 +914,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       _connectDialog = dlg;
 
       AppState.ActiveConnectReporter = dlg;
-      dlg.Set(0, $"Connecting {sel}…");
+      dlg.Set(0, $"Connecting {endpoint}…");
 
       dlg.Token.Register(() => {
         _ = Task.Run(() => {
@@ -889,10 +991,10 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       IsConnected = _comPort.BaseStream.IsOpen;
       ConnectText = IsConnected ? "DISCONNECT" : "CONNECT";
       if (IsConnected) {
-        Settings.Instance.ComPort = sel;
+        Settings.Instance.ComPort = endpoint;
         Settings.Instance.BaudRate = SelectedBaud.ToString();
-        if (IsSerialEndpoint(sel)) {
-          Settings.Instance[PortBaudKey(sel)] = SelectedBaud.ToString();
+        if (IsSerialEndpoint(endpoint)) {
+          Settings.Instance[PortBaudKey(endpoint)] = SelectedBaud.ToString();
         }
         Status = cachedParamsLoaded
             ? $"Connected. Reused {cachedParamCount} cached params."
@@ -902,6 +1004,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
         _connectedAtUtc = DateTime.UtcNow;
         int generation = StartReader();
         RefreshVehicleChoices();
+        StartPostConnectMetadataCheck(generation);
 
         if (backgroundParamLoad) {
           StartBackgroundParameterLoad(generation);
@@ -916,9 +1019,9 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       } else {
         dlg.Close();
         CloseLogs();
-        Status = interactive ? "" : $"Auto-connect failed on {sel}.";
+        Status = interactive ? "" : $"Auto-connect failed on {endpoint}.";
         if (interactive) {
-          await Services.Dialogs.Alert("Connection failed", $"Could not connect on {sel}.");
+          await Services.Dialogs.Alert("Connection failed", $"Could not connect on {endpoint}.");
         }
       }
       AppState.RaiseConnectionChanged();
@@ -943,7 +1046,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   private async Task<ICommsSerial?> BuildStreamAsync(string sel, bool interactive) {
     switch (sel) {
       case "AUTO":
-        return await Task.Run(ScanForPort);
+        return await ScanForStreamAsync(interactive);
 
       case "TCP": {
           var defaults = new[] { Setting("TCP_host", "127.0.0.1"), Setting("TCP_port", "5760") };
@@ -1008,13 +1111,69 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     }
   }
 
-  private ICommsSerial? ScanForPort() {
-    CommsSerialScan.Scan(false);
-    var deadline = DateTime.Now.AddSeconds(20);
-    while (!CommsSerialScan.foundport && CommsSerialScan.run == 1 && DateTime.Now < deadline) {
-      Thread.Sleep(300);
+  private async Task<ICommsSerial?> ScanForStreamAsync(bool interactive) {
+    var dlg = new Services.ProgressReporter("Scanning serial ports");
+    _connectDialog = dlg;
+    AppState.ActiveConnectReporter = dlg;
+    dlg.Set(0, "Looking for MAVLink on serial ports…");
+    dlg.Show2();
+
+    ICommsSerial? stream;
+    bool cancelled;
+    var scanToken = dlg.Token;
+    try {
+      stream = await Task.Run(() => ScanForPort(scanToken));
+    } finally {
+      cancelled = dlg.CancelRequested;
+      if (ReferenceEquals(_connectDialog, dlg)) {
+        _connectDialog = null;
+      }
+      if (ReferenceEquals(AppState.ActiveConnectReporter, dlg)) {
+        AppState.ActiveConnectReporter = null;
+      }
+      dlg.Close();
     }
-    return CommsSerialScan.portinterface?.FirstOrDefault();
+
+    if (stream == null && !cancelled) {
+      const string message = "No MAVLink serial port was found during the automatic scan.";
+      if (interactive) {
+        await Services.Dialogs.Alert("Auto scan", message);
+      } else {
+        Status = message;
+      }
+    }
+    return stream;
+  }
+
+  private ICommsSerial? ScanForPort(CancellationToken cancellationToken) {
+    if (!DedupePorts(SerialPort.GetPortNames()).Any()) {
+      return null;
+    }
+
+    CommsSerialScan.Scan(false);
+    var started = DateTime.UtcNow;
+    var deadline = started.AddSeconds(50);
+    while (Volatile.Read(ref CommsSerialScan.run) == 1 && DateTime.UtcNow < deadline) {
+      if (cancellationToken.IsCancellationRequested) {
+        Interlocked.Exchange(ref CommsSerialScan.run, 0);
+        return null;
+      }
+
+      var found = CommsSerialScan.portinterface?.FirstOrDefault();
+      if (CommsSerialScan.foundport && found != null) {
+        Interlocked.Exchange(ref CommsSerialScan.run, 0);
+        return found;
+      }
+
+      double elapsed = (DateTime.UtcNow - started).TotalSeconds;
+      _connectDialog?.Set(Math.Min(99, elapsed / 50 * 100),
+          $"Looking for MAVLink… {Math.Max(0, Volatile.Read(ref CommsSerialScan.running))} port(s) active");
+      Thread.Sleep(200);
+    }
+
+    var result = CommsSerialScan.portinterface?.FirstOrDefault();
+    Interlocked.Exchange(ref CommsSerialScan.run, 0);
+    return result;
   }
 
   private static string Setting(string key, string fallback) {
@@ -1035,7 +1194,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     var owner = (Avalonia.Application.Current?.ApplicationLifetime
                  as IClassicDesktopStyleApplicationLifetime)?.MainWindow;
     if (owner == null) {
-      return new[] { v1, v2 };
+      return [v1, v2];
     }
 
     var r = await ConnectDialog.Show(owner, title, l1, v1, l2, v2);
@@ -1043,7 +1202,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       return null;
     }
 
-    return new[] { r[0] ?? "", r[1] ?? "" };
+    return [r[0] ?? "", r[1] ?? ""];
   }
 }
 

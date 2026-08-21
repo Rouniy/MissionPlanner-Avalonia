@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 
 namespace MissionPlannerAvalonia.Services;
 
@@ -10,7 +11,7 @@ public static class PoiStore {
 
   public static string FilePath => AppPaths.PoiFilePath;
 
-  private static readonly List<PoiPoint> _points = new();
+  private static readonly List<PoiPoint> _points = [];
 
   public static IReadOnlyList<PoiPoint> All => _points;
 
@@ -39,10 +40,25 @@ public static class PoiStore {
 
   public static void Load(string path) {
     _points.Clear();
+    _points.AddRange(Read(path));
+  }
+
+  public static int Import(string path) {
+    var imported = Read(path);
+    _points.AddRange(imported);
+    return imported.Count;
+  }
+
+  private static List<PoiPoint> Read(string path) {
     if (!File.Exists(path)) {
-      return;
+      return [];
     }
-    foreach (var line in File.ReadAllLines(path)) {
+    return [.. ParseLines(File.ReadLines(path))];
+  }
+
+  internal static IReadOnlyList<PoiPoint> ParseLines(IEnumerable<string> lines) {
+    var result = new List<PoiPoint>();
+    foreach (var line in lines) {
       if (string.IsNullOrWhiteSpace(line)) {
         continue;
       }
@@ -55,11 +71,12 @@ public static class PoiStore {
       }
 
       if (f.Length >= 4 && TryD(f[2], out var alt)) {
-        _points.Add(new PoiPoint(lat, lng, alt, f[3]));
+        result.Add(new PoiPoint(lat, lng, alt, f[3]));
       } else {
-        _points.Add(new PoiPoint(lat, lng, 0, f[2]));
+        result.Add(new PoiPoint(lat, lng, 0, f[2]));
       }
     }
+    return result;
   }
 
   public static void Save() => Save(FilePath);

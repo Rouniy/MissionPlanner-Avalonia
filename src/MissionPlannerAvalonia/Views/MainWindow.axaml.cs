@@ -95,10 +95,20 @@ public partial class MainWindow : Window {
     }
   }
 
-  private void OnToggleReadonly(object? sender, RoutedEventArgs e) {
-    if (Vm != null) {
-      Vm.Connection.ReadOnly = !Vm.Connection.ReadOnly;
+  private void OnHeaderPointerEntered(object? sender, PointerEventArgs e) {
+    if (DataContext is MainWindowViewModel vm) {
+      vm.HeaderHovered = true;
     }
+  }
+
+  private void OnHeaderPointerExited(object? sender, PointerEventArgs e) {
+    if (DataContext is MainWindowViewModel vm) {
+      vm.HeaderHovered = false;
+    }
+  }
+
+  private void OnToggleReadonly(object? sender, RoutedEventArgs e) {
+    Vm?.Connection.ReadOnly = !Vm.Connection.ReadOnly;
   }
 
   private void OnLinkStats(object? sender, RoutedEventArgs e) => LinkStatsWindow.OpenWindow();

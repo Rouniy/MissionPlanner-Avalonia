@@ -65,14 +65,14 @@ public partial class FlightDataView : UserControl {
       }
 
       double span = g.Max - g.Min;
-      g.Ranges = new List<GaugeRange> {
+      g.Ranges = [
         new() { Start = g.Min, End = g.Min + span * 0.75,
                 Color = new Avalonia.Media.SolidColorBrush(
                     Avalonia.Media.Color.FromArgb(120, 0, 200, 0)) },
         new() { Start = g.Min + span * 0.75, End = g.Max,
                 Color = new Avalonia.Media.SolidColorBrush(
                     Avalonia.Media.Color.FromArgb(150, 220, 40, 40)) },
-      };
+      ];
     }
   }
 
@@ -109,12 +109,10 @@ public partial class FlightDataView : UserControl {
       return;
     }
 
-    QuickItem? item = (e.Source as Control)?.DataContext as QuickItem;
-    if (item == null) {
+    if ((e.Source as Control)?.DataContext is not QuickItem item) {
       return;
     }
-    var owner = TopLevel.GetTopLevel(this) as Window;
-    if (owner == null) {
+    if (TopLevel.GetTopLevel(this) is not Window owner) {
       return;
     }
     var fields = vm.QuickFieldList();
@@ -193,13 +191,13 @@ public partial class FlightDataView : UserControl {
     }
   }
 
-  private readonly Dictionary<string, (List<double> Xs, List<double> Ys)> _tuningBuffers = new();
+  private readonly Dictionary<string, (List<double> Xs, List<double> Ys)> _tuningBuffers = [];
 
-  private static readonly ScottPlot.Color[] _tuningPalette = {
+  private static readonly ScottPlot.Color[] _tuningPalette = [
     ScottPlot.Colors.Yellow, ScottPlot.Colors.Cyan, ScottPlot.Colors.OrangeRed,
     ScottPlot.Colors.LightGreen, ScottPlot.Colors.Magenta, ScottPlot.Colors.DeepSkyBlue,
-  };
-  private readonly Dictionary<string, ScottPlot.Color> _tuningColors = new();
+  ];
+  private readonly Dictionary<string, ScottPlot.Color> _tuningColors = [];
 
   private ScottPlot.Color ColorFor(string label) {
     if (!_tuningColors.TryGetValue(label, out var c)) {
@@ -282,7 +280,7 @@ public partial class FlightDataView : UserControl {
     }
   }
 
-  private readonly Dictionary<string, Window> _indicatorWindows = new();
+  private readonly Dictionary<string, Window> _indicatorWindows = [];
 
   private void OnHudIndicatorClicked(string which) {
     string key = which switch { "ekf" => "ekf", "vibe" => "vibe", _ => "prearm" };
@@ -291,7 +289,6 @@ public partial class FlightDataView : UserControl {
       return;
     }
 
-    var owner = TopLevel.GetTopLevel(this) as Window;
     Window win = key switch {
       "ekf" => new EKFStatusWindow(),
       "vibe" => new VibrationWindow(),
@@ -299,7 +296,7 @@ public partial class FlightDataView : UserControl {
     };
     _indicatorWindows[key] = win;
     win.Closed += (_, _) => _indicatorWindows.Remove(key);
-    if (owner != null) {
+    if (TopLevel.GetTopLevel(this) is Window owner) {
       win.Show(owner);
     } else {
       win.Show();
@@ -331,6 +328,10 @@ public partial class FlightDataView : UserControl {
     menu.Items.Add(Item("Add POI at Coords…", vm => vm.AddPoiCoords()));
     menu.Items.Add(Item("Delete Nearest POI…", vm => vm.DeleteNearestPoi(map.LastClickLatLng.Lat, map.LastClickLatLng.Lng)));
     menu.Items.Add(Item("Clear All POIs…", vm => vm.ClearPois()));
+    menu.Items.Add(Item("Load POIs…", vm => vm.LoadPois()));
+    menu.Items.Add(Item("Save POIs…", vm => vm.SavePois()));
+    menu.Items.Add(new Separator());
+    menu.Items.Add(Item("Open Flight Planner", vm => vm.OpenFlightPlanner()));
     menu.Items.Add(new Separator());
     menu.Items.Add(Item("Set Home Here", vm => vm.SetHomeHere(map.LastClickLatLng.Lat, map.LastClickLatLng.Lng)));
     menu.Items.Add(Item("Set EKF Origin Here", vm => vm.SetEkfOriginHere(map.LastClickLatLng.Lat, map.LastClickLatLng.Lng)));

@@ -24,6 +24,8 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   private readonly LuaScriptHost _lua = new();
   private readonly Dictionary<string, Action<string>> _customActions = new(StringComparer.Ordinal);
 
+  public event Action? RequestFlightPlanner;
+
   [ObservableProperty]
   private double _roll;
 
@@ -100,7 +102,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 
   private int _lastMsgCount = -1;
 
-  public ObservableCollection<ServoOut> Servos { get; } = new();
+  public ObservableCollection<ServoOut> Servos { get; } = [];
 
   public LogBrowseViewModel TelemetryLogs { get; } = new();
   public LogBrowseViewModel DataFlashLogs { get; } = new();
@@ -115,8 +117,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   private double _ekfStatus;
 
   public ObservableCollection<string> Modes { get; } =
-      new()
-      {
+      [
             "STABILIZE",
             "ALT_HOLD",
             "LOITER",
@@ -132,7 +133,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
             "FBWB",
             "CRUISE",
             "CIRCLE",
-      };
+      ];
 
   [ObservableProperty]
   private string _selectedMode = "STABILIZE";
@@ -159,6 +160,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     InitQuickItems();
     InitPreflightChecks();
     InitTuningFields();
+    LoadHudSettings();
 
     SelectedMessage = MessageOptions.FirstOrDefault(m =>
         m.Id == (uint)MAVLink.MAVLINK_MSG_ID.ATTITUDE) ?? MessageOptions.FirstOrDefault();
@@ -236,7 +238,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     ArmText = cs.armed ? "DISARM" : "ARM";
 
     float[] outs =
-    {
+    [
             cs.ch1out,
             cs.ch2out,
             cs.ch3out,
@@ -245,7 +247,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
             cs.ch6out,
             cs.ch7out,
             cs.ch8out,
-        };
+        ];
     for (int i = 0; i < 8; i++) {
       Servos[i].Value = (int)outs[i];
     }
@@ -299,7 +301,10 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
         } catch {
           v = null;
         }
-        sb.AppendLine(v is float or double ? $"{p.Name}: {v:0.00}" : $"{p.Name}: {v}");
+        string prefix = _hudUserPrefixes.TryGetValue(p.Name, out var savedPrefix)
+            ? savedPrefix
+            : p.Name + ": ";
+        sb.AppendLine(v is float or double ? $"{prefix}{v:0.00}" : $"{prefix}{v}");
       }
       HudCustomText = sb.ToString().TrimEnd();
     } else if (HudCustomText.Length > 0) {
@@ -391,7 +396,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private double _targetSpeed;
 
-  public ObservableCollection<QuickItem> QuickItems { get; } = new();
+  public ObservableCollection<QuickItem> QuickItems { get; } = [];
 
   [ObservableProperty]
   private int _quickViewCount = 6;
@@ -399,14 +404,14 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private int _quickColumns = 2;
 
-  private static readonly (string field, string color)[] _quickDefaults = {
+  private static readonly (string field, string color)[] _quickDefaults = [
     ("alt", "#D197F8"),
     ("groundspeed", "#FE842E"),
     ("current", "#FF605B"),
     ("airspeed", "#00FF53"),
     ("verticalspeed", "#FEFE56"),
     ("DistToHome", "#00FFFC"),
-  };
+  ];
 
   private void InitQuickItems() {
     for (int i = 0; i < QuickViewCount; i++) {
@@ -553,14 +558,13 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     return list;
   }
 
-  public ObservableCollection<StatusItem> Statuses { get; } = new();
+  public ObservableCollection<StatusItem> Statuses { get; } = [];
 
   private static readonly System.Reflection.PropertyInfo[] _statusProps =
-      typeof(MissionPlanner.CurrentState)
+      [.. typeof(MissionPlanner.CurrentState)
           .GetProperties()
           .Where(p => p.GetIndexParameters().Length == 0 && p.CanRead)
-          .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
-          .ToArray();
+          .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)];
 
   private void RefreshStatus(MissionPlanner.CurrentState cs) {
     if (Statuses.Count != _statusProps.Length) {
@@ -580,19 +584,19 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     }
   }
 
-  public ObservableCollection<CheckItem> PreflightChecks { get; } = new();
+  public ObservableCollection<CheckItem> PreflightChecks { get; } = [];
 
   private const int _autoCheckCount = 6;
   private const string _manualChecksJsonKey = "preflight_manual_json";
 
-  private static readonly string[] _defaultManualChecks = {
+  private static readonly string[] _defaultManualChecks = [
     "Tail and wings secured?",
     "All servos respond to input?",
     "All servos respond to pitch and roll?",
     "Center of gravity at indicated point?",
     "Servo linkages are secure?",
     "Camera is on and ready to fly?",
-  };
+  ];
 
   private void InitPreflightChecks() {
     PreflightChecks.Add(new CheckItem("Ready GPS"));
@@ -610,7 +614,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   private static IReadOnlyList<string> LoadManualPreflightChecks() {
     if (Settings.Instance[_manualChecksJsonKey] is { Length: > 0 } json) {
       try {
-        return (JsonSerializer.Deserialize<string[]>(json) ?? Array.Empty<string>())
+        return (JsonSerializer.Deserialize<string[]>(json) ?? [])
             .Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
       } catch (JsonException) {
         // Fall through to the legacy semicolon-separated value.
@@ -685,9 +689,9 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     Settings.Instance[_manualChecksJsonKey] = JsonSerializer.Serialize(manual);
   }
 
-  public ObservableCollection<object> ServoRelayItems { get; } = new();
+  public ObservableCollection<object> ServoRelayItems { get; } = [];
 
-  public ObservableCollection<AuxFunctionRow> AuxOptions { get; } = new();
+  public ObservableCollection<AuxFunctionRow> AuxOptions { get; } = [];
 
   private static IReadOnlyList<ParamOption> LoadAuxFunctionOptions() {
     try {
@@ -696,7 +700,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
           .Select(option => new ParamOption(option.Key, $"{option.Key}: {option.Value}"))
           .ToArray();
     } catch {
-      return Array.Empty<ParamOption>();
+      return [];
     }
   }
 
@@ -708,9 +712,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     }
     var row = AuxOptions.FirstOrDefault(item => item.Index == index);
     if (row?.SelectedFunction == null) {
-      if (row != null) {
-        row.Status = "Select a function.";
-      }
+      row?.Status = "Select a function.";
       return;
     }
     if (!Connected) {
@@ -1352,8 +1354,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   }
 
   public ObservableCollection<string> Actions { get; } =
-      new()
-      {
+      [
             "Loiter_Unlim",
             "Return_To_Launch",
             "Preflight_Calibration",
@@ -1373,7 +1374,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
             "Engine_Stop",
             "Terminate_Flight",
             "Format_SD_Card",
-      };
+      ];
 
   /// <summary>
   /// Registers an extension-provided action in the Flight Data action selector.
@@ -1474,13 +1475,13 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     }
     int newrad = (int)LoiterRadValue;
     await Task.Run(() =>
-        _comPort.setParam(new[] { "LOITER_RAD", "WP_LOITER_RAD" },
+        _comPort.setParam(["LOITER_RAD", "WP_LOITER_RAD"],
             newrad / MissionPlanner.CurrentState.multiplierdist));
     Log($"Set loiter rad {newrad}");
   }
 
   public ObservableCollection<string> MountModes { get; } =
-      new() { "Retract", "Neutral", "MavLink Targeting", "RC Targeting", "GPS Point" };
+      ["Retract", "Neutral", "MavLink Targeting", "RC Targeting", "GPS Point"];
 
   [ObservableProperty]
   private string _selectedMountMode = "Retract";
@@ -1651,7 +1652,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private bool _tuning;
 
-  private readonly System.Collections.Generic.HashSet<string> _tuningFields = new();
+  private readonly System.Collections.Generic.HashSet<string> _tuningFields = [];
   private long _tuningStart = Environment.TickCount64;
 
   public event Action<double, System.Collections.Generic.IReadOnlyDictionary<string, double>>? TuningSampled;
@@ -1817,20 +1818,20 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   }
 
   public async Task DeleteNearestPoi(double lat, double lng) {
-    var nearest = Services.PoiStore.All
+    var (Point, Distance) = Services.PoiStore.All
         .Select(point => (Point: point, Distance: DistanceMeters(lat, lng, point.Lat, point.Lng)))
         .OrderBy(candidate => candidate.Distance)
         .FirstOrDefault();
-    if (nearest.Point == null || nearest.Distance > 1000) {
+    if (Point == null || Distance > 1000) {
       await Services.Dialogs.Alert("Delete POI", "No POI was found within 1 km of this location.");
       return;
     }
     if (!await Services.Dialogs.Confirm(
-        "Delete POI", $"Delete {nearest.Point.Name} ({nearest.Distance:0} m away)?")) {
+        "Delete POI", $"Delete {Point.Name} ({Distance:0} m away)?")) {
       return;
     }
-    Services.PoiStore.Remove(nearest.Point);
-    Log($"POI {nearest.Point.Name} deleted");
+    Services.PoiStore.Remove(Point);
+    Log($"POI {Point.Name} deleted");
   }
 
   public async Task ClearPois() {
@@ -1840,6 +1841,37 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     }
     Services.PoiStore.Clear();
     Log("All POIs cleared");
+  }
+
+  public async Task LoadPois() {
+    var path = await PickFileAsync("Load POIs", "*.txt", "POI file");
+    if (path == null) {
+      return;
+    }
+    try {
+      int imported = Services.PoiStore.Import(path);
+      Log($"Imported {imported} POI(s) from {System.IO.Path.GetFileName(path)}");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Load POIs", ex.Message);
+    }
+  }
+
+  public async Task SavePois() {
+    var path = await PickSaveAsync("Save POIs", "txt");
+    if (path == null) {
+      return;
+    }
+    try {
+      Services.PoiStore.Save(path);
+      Log($"Saved {Services.PoiStore.All.Count} POI(s) to {System.IO.Path.GetFileName(path)}");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Save POIs", ex.Message);
+    }
+  }
+
+  public Task OpenFlightPlanner() {
+    RequestFlightPlanner?.Invoke();
+    return Task.CompletedTask;
   }
 
   internal static bool TryParseCoordinates(
@@ -1918,16 +1950,16 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     double previousLng = homeLng;
     double total = 0;
     double travelled = 0;
-    foreach (var point in points) {
+    foreach (var (Seq, Lat, Lng) in points) {
       if (havePrevious) {
-        double leg = DistanceMeters(previousLat, previousLng, point.Lat, point.Lng);
+        double leg = DistanceMeters(previousLat, previousLng, Lat, Lng);
         total += leg;
-        if (point.Seq <= currentWaypoint) {
+        if (Seq <= currentWaypoint) {
           travelled += leg;
         }
       }
-      previousLat = point.Lat;
-      previousLng = point.Lng;
+      previousLat = Lat;
+      previousLng = Lng;
       havePrevious = true;
     }
     if (travelled > 0 && double.IsFinite(distanceToCurrentWaypoint)) {
@@ -2314,7 +2346,86 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private bool _hudAoa = true;
 
-  private readonly System.Collections.Generic.HashSet<string> _hudUserFields = new();
+  private readonly System.Collections.Generic.HashSet<string> _hudUserFields = [];
+  private readonly Dictionary<string, string> _hudUserPrefixes = new(StringComparer.Ordinal);
+  private bool _loadingHudSettings;
+
+  private void LoadHudSettings() {
+    _loadingHudSettings = true;
+    try {
+      HudShowIcons = SavedHudBool("HUD_showicons", true);
+      HudRussian = SavedHudBool("russian_hud", false);
+      HudGroundBrown = SavedHudBool("groundColorToolStripMenuItem", false);
+      HudBatteryCells = SavedHudBool("HUD_showbatterycell", false)
+          ? Math.Clamp(Settings.Instance.GetInt32("HUD_batterycellcount", 4), 1, 32)
+          : 0;
+      if (SavedHudBool("HudSwap", false)) {
+        HudColumn = 2;
+        MapColumn = 0;
+      }
+
+      HudHeading = SavedHudBool("HUD_item_heading", true);
+      HudSpeed = SavedHudBool("HUD_item_speed", true);
+      HudAlt = SavedHudBool("HUD_item_alt", true);
+      HudConnection = SavedHudBool("HUD_item_connection", true);
+      HudXTrack = SavedHudBool("HUD_item_xtrack", true);
+      HudRollPitch = SavedHudBool("HUD_item_rollpitch", true);
+      HudGps = SavedHudBool("HUD_item_gps", true);
+      HudBattery = SavedHudBool("HUD_item_battery", true);
+      HudBattery2 = SavedHudBool("HUD_item_battery2", true);
+      HudEkf = SavedHudBool("HUD_item_ekf", true);
+      HudVibe = SavedHudBool("HUD_item_vibe", true);
+      HudPrearm = SavedHudBool("HUD_item_prearm", true);
+      HudAoa = SavedHudBool("HUD_item_aoa", true);
+
+      foreach (var property in _statusProps.Where(p => IsNumber(p.PropertyType))) {
+        string key = "hud1_useritem_" + property.Name;
+        if (!Settings.Instance.ContainsKey(key)) {
+          continue;
+        }
+        _hudUserFields.Add(property.Name);
+        _hudUserPrefixes[property.Name] = Settings.Instance[key] ?? property.Name + ": ";
+      }
+    } finally {
+      _loadingHudSettings = false;
+    }
+  }
+
+  private static bool SavedHudBool(string key, bool fallback) =>
+      Settings.Instance.ContainsKey(key) ? Settings.Instance.GetBoolean(key) : fallback;
+
+  private void SaveHudBool(string key, bool value) {
+    if (!_loadingHudSettings) {
+      Settings.Instance[key] = value.ToString();
+    }
+  }
+
+  partial void OnHudShowIconsChanged(bool value) => SaveHudBool("HUD_showicons", value);
+  partial void OnHudRussianChanged(bool value) => SaveHudBool("russian_hud", value);
+  partial void OnHudGroundBrownChanged(bool value) =>
+      SaveHudBool("groundColorToolStripMenuItem", value);
+  partial void OnHudBatteryCellsChanged(int value) {
+    if (_loadingHudSettings) {
+      return;
+    }
+    Settings.Instance["HUD_showbatterycell"] = (value > 0).ToString();
+    if (value > 0) {
+      Settings.Instance["HUD_batterycellcount"] = value.ToString(CultureInfo.InvariantCulture);
+    }
+  }
+  partial void OnHudHeadingChanged(bool value) => SaveHudBool("HUD_item_heading", value);
+  partial void OnHudSpeedChanged(bool value) => SaveHudBool("HUD_item_speed", value);
+  partial void OnHudAltChanged(bool value) => SaveHudBool("HUD_item_alt", value);
+  partial void OnHudConnectionChanged(bool value) => SaveHudBool("HUD_item_connection", value);
+  partial void OnHudXTrackChanged(bool value) => SaveHudBool("HUD_item_xtrack", value);
+  partial void OnHudRollPitchChanged(bool value) => SaveHudBool("HUD_item_rollpitch", value);
+  partial void OnHudGpsChanged(bool value) => SaveHudBool("HUD_item_gps", value);
+  partial void OnHudBatteryChanged(bool value) => SaveHudBool("HUD_item_battery", value);
+  partial void OnHudBattery2Changed(bool value) => SaveHudBool("HUD_item_battery2", value);
+  partial void OnHudEkfChanged(bool value) => SaveHudBool("HUD_item_ekf", value);
+  partial void OnHudVibeChanged(bool value) => SaveHudBool("HUD_item_vibe", value);
+  partial void OnHudPrearmChanged(bool value) => SaveHudBool("HUD_item_prearm", value);
+  partial void OnHudAoaChanged(bool value) => SaveHudBool("HUD_item_aoa", value);
 
   [RelayCommand]
   private void ToggleHudIcons() => HudShowIcons = !HudShowIcons;
@@ -2323,7 +2434,10 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   private void ToggleRussianHud() => HudRussian = !HudRussian;
 
   [RelayCommand]
-  private void SwapHudMap() => (HudColumn, MapColumn) = (MapColumn, HudColumn);
+  private void SwapHudMap() {
+    (HudColumn, MapColumn) = (MapColumn, HudColumn);
+    Settings.Instance["HudSwap"] = (HudColumn == 2).ToString().ToLowerInvariant();
+  }
 
   private MissionPlannerAvalonia.Controls.VideoControl? _video;
   private Views.VideoPopupWindow? _videoWindow;
@@ -2434,10 +2548,9 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     if (top == null) {
       return;
     }
-    var panel = new Avalonia.Controls.WrapPanel {
-      Orientation = Avalonia.Layout.Orientation.Vertical,
-      MaxHeight = 520,
-    };
+    var panel = new Avalonia.Controls.StackPanel { Spacing = 3 };
+    var selectedFields = new HashSet<string>(_hudUserFields, StringComparer.Ordinal);
+    var prefixes = new Dictionary<string, string>(_hudUserPrefixes, StringComparer.Ordinal);
     foreach (var p in _statusProps) {
       if (!IsNumber(p.PropertyType)) {
         continue;
@@ -2449,14 +2562,26 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
         FontSize = 11,
       };
       var name = p.Name;
+      var prefix = new Avalonia.Controls.TextBox {
+        Text = prefixes.TryGetValue(name, out var savedPrefix) ? savedPrefix : name + ": ",
+        Width = 260,
+        FontSize = 11,
+        IsEnabled = cb.IsChecked == true,
+      };
       cb.IsCheckedChanged += (_, _) => {
         if (cb.IsChecked == true) {
-          _hudUserFields.Add(name);
+          selectedFields.Add(name);
         } else {
-          _hudUserFields.Remove(name);
+          selectedFields.Remove(name);
         }
+        prefix.IsEnabled = cb.IsChecked == true;
       };
-      panel.Children.Add(cb);
+      prefix.TextChanged += (_, _) => prefixes[name] = prefix.Text ?? name + ": ";
+      panel.Children.Add(new Avalonia.Controls.StackPanel {
+        Orientation = Avalonia.Layout.Orientation.Horizontal,
+        Spacing = 8,
+        Children = { cb, prefix },
+      });
     }
     var dlg = new Avalonia.Controls.Window {
       Title = "HUD User Items",
@@ -2469,6 +2594,23 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       },
     };
     await dlg.ShowDialog(top);
+
+    _hudUserFields.Clear();
+    _hudUserPrefixes.Clear();
+    foreach (var property in _statusProps.Where(p => IsNumber(p.PropertyType))) {
+      string key = "hud1_useritem_" + property.Name;
+      if (!selectedFields.Contains(property.Name)) {
+        Settings.Instance.Remove(key);
+        continue;
+      }
+      string prefix = prefixes.TryGetValue(property.Name, out var savedPrefix)
+          ? savedPrefix
+          : property.Name + ": ";
+      _hudUserFields.Add(property.Name);
+      _hudUserPrefixes[property.Name] = prefix;
+      Settings.Instance[key] = prefix;
+    }
+    Settings.Instance.Save();
   }
 
   private static bool IsNumber(Type t) {
@@ -2569,7 +2711,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
         | (ModeC ? 32 : 0)
         | (ModeS ? 64 : 0)
         | (ModeEs ? 128 : 0));
-    var id = System.Text.Encoding.ASCII.GetBytes((FlightId ?? "").PadRight(8).Substring(0, 8));
+    var id = System.Text.Encoding.ASCII.GetBytes((FlightId ?? "").PadRight(8)[..8]);
     _comPort.uAvionixADSBControl(int.MaxValue, (ushort)Squawk, state, 0, id, 0);
   }
 
@@ -2621,30 +2763,24 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 }
 
 internal static class TransponderAccuracy {
-  private static readonly string[] _nic = {
+  private static readonly string[] _nic = [
     "UNKNOWN", "<20.0 NM", "<8.0 NM", "<4.0 NM", "<2.0 NM", "<1.0 NM",
     "<0.3 NM", "<0.2 NM", "<0.1 NM", "<75 m", "<25 m", "<7.5 m",
-  };
+  ];
 
-  private static readonly string[] _nacp = {
+  private static readonly string[] _nacp = [
     "UNKNOWN", "<10.0 NM", "<4.0 NM", "<2.0 NM", "<1.0 NM", "<0.5 NM",
     "<0.3 NM", "<0.1 NM", "<0.05 NM", "<30 m", "<10 m", "<3 m",
-  };
+  ];
 
   internal static string Nic(byte value) => value < _nic.Length ? _nic[value] : "UNKNOWN";
 
   internal static string Nacp(byte value) => value < _nacp.Length ? _nacp[value] : "UNKNOWN";
 }
 
-public partial class QuickItem : ObservableObject {
-  public QuickItem(string field, string color) {
-    _field = field;
-    Color = color;
-    _brush = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse(color));
-  }
-
+public partial class QuickItem(string field, string color) : ObservableObject {
   [ObservableProperty]
-  private string _field;
+  private string _field = field;
 
   [ObservableProperty]
   private string _desc = "";
@@ -2652,10 +2788,10 @@ public partial class QuickItem : ObservableObject {
   [ObservableProperty]
   private double _number;
 
-  public string Color { get; }
+  public string Color { get; } = color;
 
   [ObservableProperty]
-  private Avalonia.Media.IBrush _brush;
+  private Avalonia.Media.IBrush _brush = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse(color));
 
   [ObservableProperty]
   private Avalonia.Media.IBrush _backgroundBrush = Avalonia.Media.Brushes.Transparent;
@@ -2665,17 +2801,17 @@ public partial class QuickItem : ObservableObject {
 
   internal void ApplyWarningColor(string color) {
     var configured = Avalonia.Media.Color.Parse(Color);
-    var style = QuickWarningStyle.Resolve(color, configured);
-    if (style.Background == null) {
+    var (Background, Foreground) = QuickWarningStyle.Resolve(color, configured);
+    if (Background == null) {
       BackgroundBrush = Avalonia.Media.Brushes.Transparent;
-      Brush = new Avalonia.Media.SolidColorBrush(style.Foreground);
+      Brush = new Avalonia.Media.SolidColorBrush(Foreground);
       LabelBrush = Avalonia.Media.Brushes.White;
       return;
     }
 
-    BackgroundBrush = new Avalonia.Media.SolidColorBrush(style.Background.Value);
-    Brush = new Avalonia.Media.SolidColorBrush(style.Foreground);
-    LabelBrush = new Avalonia.Media.SolidColorBrush(style.Foreground);
+    BackgroundBrush = new Avalonia.Media.SolidColorBrush(Background.Value);
+    Brush = new Avalonia.Media.SolidColorBrush(Foreground);
+    LabelBrush = new Avalonia.Media.SolidColorBrush(Foreground);
   }
 }
 
@@ -2727,32 +2863,20 @@ public sealed record MavlinkMessageOption(uint Id, string Name) {
 internal readonly record struct MissionProgressInfo(
     int ItemCount, double TotalDistance, double TravelledDistance);
 
-public class RelayChannel {
-  public RelayChannel(int index) {
-    Index = index;
-  }
-
-  public int Index { get; }
+public class RelayChannel(int index) {
+  public int Index { get; } = index;
   public string Label => $"Relay {Index + 1}";
 }
 
-public partial class ServoOut : ObservableObject {
-  public ServoOut(int number) {
-    Number = number;
-  }
-
-  public int Number { get; }
+public partial class ServoOut(int number) : ObservableObject {
+  public int Number { get; } = number;
 
   [ObservableProperty]
   private int _value;
 }
 
-public partial class StatusItem : ObservableObject {
-  public StatusItem(string name) {
-    Name = name;
-  }
-
-  public string Name { get; }
+public partial class StatusItem(string name) : ObservableObject {
+  public string Name { get; } = name;
 
   [ObservableProperty]
   private string _value = "";
@@ -2781,12 +2905,8 @@ public partial class CheckItem : ObservableObject {
   }
 }
 
-public partial class ServoChannel : ObservableObject {
-  public ServoChannel(int number) {
-    Number = number;
-  }
-
-  public int Number { get; }
+public partial class ServoChannel(int number) : ObservableObject {
+  public int Number { get; } = number;
 
   [ObservableProperty]
   private int _min = 1100;

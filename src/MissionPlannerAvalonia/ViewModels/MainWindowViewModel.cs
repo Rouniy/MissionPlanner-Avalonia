@@ -24,12 +24,24 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
   [ObservableProperty]
   private string _windowTitle = Services.AppVersion.Title;
 
+  [ObservableProperty]
+  [NotifyPropertyChangedFor(nameof(HeaderHeight))]
+  private bool _menuAutoHide;
+
+  [ObservableProperty]
+  [NotifyPropertyChangedFor(nameof(HeaderHeight))]
+  private bool _headerHovered;
+
+  public double HeaderHeight => HeaderHeightFor(MenuAutoHide, HeaderHovered);
+
   public MainWindowViewModel() {
     Simulation = new SimulationViewModel(Connection);
     _currentScreen = FlightData;
+    _menuAutoHide = MissionPlanner.Utilities.Settings.Instance.GetBoolean("menu_autohide", false);
 
     Connection.Connected += OnConnected;
     AppState.ConnectionChanged += OnConnectionChanged;
+    FlightData.RequestFlightPlanner += OnFlightPlannerRequested;
 
     Simulation.RequestFlightData += () =>
         Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = Navigate("DATA"));
@@ -37,6 +49,15 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
 
   private void OnConnectionChanged() =>
       Avalonia.Threading.Dispatcher.UIThread.Post(() => WindowTitle = BuildWindowTitle());
+
+  private void OnFlightPlannerRequested() =>
+      Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = Navigate("PLAN"));
+
+  partial void OnMenuAutoHideChanged(bool value) =>
+      MissionPlanner.Utilities.Settings.Instance["menu_autohide"] = value.ToString();
+
+  internal static double HeaderHeightFor(bool autoHide, bool hovered) =>
+      autoHide && !hovered ? 7 : 64;
 
   private static string BuildWindowTitle() => FormatWindowTitle(
       Services.AppVersion.Title,
@@ -55,15 +76,15 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
   }
 
   private void OnConnected() {
-    if (!MissionPlanner.Utilities.Settings.Instance.GetBoolean("loadwpsonconnect", false)) {
-      return;
-    }
-    Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = LoadMissionOnConnectAsync());
+    Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = LoadConnectionMissionsAsync());
   }
 
-  private async System.Threading.Tasks.Task LoadMissionOnConnectAsync() {
-    await Navigate("PLAN");
-    await FlightPlanner.ReadMissionOnConnectAsync();
+  private async System.Threading.Tasks.Task LoadConnectionMissionsAsync() {
+    if (MissionPlanner.Utilities.Settings.Instance.GetBoolean("loadwpsonconnect", false)) {
+      await Navigate("PLAN");
+      await FlightPlanner.ReadMissionOnConnectAsync();
+    }
+    await FlightPlanner.ReadAncillaryOnConnectAsync();
   }
 
   private bool _passwordUnlocked;
@@ -170,6 +191,7 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
   public void Dispose() {
     Connection.Connected -= OnConnected;
     AppState.ConnectionChanged -= OnConnectionChanged;
+    FlightData.RequestFlightPlanner -= OnFlightPlannerRequested;
     Connection.Dispose();
     FlightData.Dispose();
     Setup.Dispose();
