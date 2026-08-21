@@ -119,6 +119,9 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   public ObservableCollection<string> Modes { get; } = [];
 
   private MissionPlanner.ArduPilot.Firmwares? _modeFirmware;
+  private MissionPlanner.ArduPilot.Firmwares? _mountModeFirmware;
+  private int _mountModeParameterCount = -1;
+  private bool _mountModeMetadataAvailable;
   private int _waypointOptionMax = -1;
 
   [ObservableProperty]
@@ -1473,6 +1476,8 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   }
 
   private void RefreshFlightOptions(MissionPlanner.CurrentState cs) {
+    RefreshMountModes(cs.firmware);
+
     if (_modeFirmware != cs.firmware || Modes.Count == 0) {
       string previous = SelectedMode;
       string[] modes = ModesForFirmware(cs.firmware);
@@ -1521,6 +1526,60 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     } catch {
       return [];
     }
+  }
+
+  private void RefreshMountModes(MissionPlanner.ArduPilot.Firmwares firmware) {
+    int parameterCount = _comPort.MAV.param.Count;
+    if (_mountModeFirmware == firmware && MountModes.Count > 0
+        && (_mountModeMetadataAvailable || parameterCount == _mountModeParameterCount)) {
+      return;
+    }
+
+    int previousValue = SelectedMountMode?.Value ?? 0;
+    var metadata = LoadMountModeMetadata(firmware.ToString());
+    var options = BuildMountModeOptions(metadata);
+    MountModes.Clear();
+    foreach (var option in options) {
+      MountModes.Add(option);
+    }
+    _mountModeFirmware = firmware;
+    _mountModeParameterCount = parameterCount;
+    _mountModeMetadataAvailable = metadata.Count > 0;
+    SelectedMountMode = MountModes.FirstOrDefault(option => option.Value == previousValue)
+        ?? MountModes.FirstOrDefault();
+  }
+
+  private static IReadOnlyList<KeyValuePair<int, string>> LoadMountModeMetadata(string firmware) {
+    foreach (string name in new[] { "MNT1_DEFLT_MODE", "MNT_DEFLT_MODE", "MNT_MODE" }) {
+      try {
+        var options = ParameterMetaDataRepository.GetParameterOptionsInt(name, firmware);
+        if (options is { Count: > 0 }) {
+          return options;
+        }
+      } catch {
+        // Fall back to the MAV_MOUNT_MODE values below when metadata is not available yet.
+      }
+    }
+    return [];
+  }
+
+  internal static IReadOnlyList<ParamOption> BuildMountModeOptions(
+      IEnumerable<KeyValuePair<int, string>> metadata) {
+    var options = metadata
+        .GroupBy(option => option.Key)
+        .Select(group => group.First())
+        .OrderBy(option => option.Key)
+        .Select(option => new ParamOption(option.Key, option.Value))
+        .ToArray();
+    return options.Length > 0
+        ? options
+        : [
+          new ParamOption(0, "Retract"),
+          new ParamOption(1, "Neutral"),
+          new ParamOption(2, "MAVLink Targeting"),
+          new ParamOption(3, "RC Targeting"),
+          new ParamOption(4, "GPS Point"),
+        ];
   }
 
   internal static bool RequiresModeFailsafeConfirmation(bool failsafe) => failsafe;
@@ -1738,11 +1797,10 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     Log($"Set loiter rad {newrad}");
   }
 
-  public ObservableCollection<string> MountModes { get; } =
-      ["Retract", "Neutral", "MavLink Targeting", "RC Targeting", "GPS Point"];
+  public ObservableCollection<ParamOption> MountModes { get; } = [];
 
   [ObservableProperty]
-  private string _selectedMountMode = "Retract";
+  private ParamOption? _selectedMountMode;
 
   [RelayCommand]
   [Obsolete]
@@ -1751,11 +1809,25 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       Messages += "Not connected.\n";
       return;
     }
-    int mode = MountModes.IndexOf(SelectedMountMode);
-    await Task.Run(() =>
-        _comPort.doCommand(_comPort.MAV.sysid, _comPort.MAV.compid, MAVLink.MAV_CMD.DO_MOUNT_CONFIGURE,
-            mode, 0, 0, 0, 0, 0, 0));
-    Log($"Set mount mode {SelectedMountMode}");
+    if (SelectedMountMode == null) {
+      Messages += "No mount mode is available.\n";
+      return;
+    }
+
+    int mode = SelectedMountMode.Value;
+    try {
+      bool accepted = await Task.Run(() => _comPort.MAV.param.ContainsKey("MNT_MODE")
+          ? _comPort.setParam(_comPort.MAV.sysid, _comPort.MAV.compid, "MNT_MODE", mode)
+          : _comPort.doCommand(_comPort.MAV.sysid, _comPort.MAV.compid,
+              MAVLink.MAV_CMD.DO_MOUNT_CONTROL, 0, 0, 0, 0, 0, 0, mode));
+      if (!accepted) {
+        await Services.Dialogs.Alert("Set Mount", "The vehicle did not accept the mount mode.");
+        return;
+      }
+      Log($"Set mount mode {SelectedMountMode.Text} ({mode})");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Set Mount", "No response from the vehicle: " + ex.Message);
+    }
   }
 
   [RelayCommand]
@@ -1971,23 +2043,116 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   private byte Sysid => _comPort.MAV.sysid;
   private byte Compid => _comPort.MAV.compid;
 
-  private static byte FrameByte(string frame) => frame switch {
+  internal static byte GuidedFrameByte(string frame) => frame switch {
     "Absolute" => (byte)MAVLink.MAV_FRAME.GLOBAL,
     "Terrain" => (byte)MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT,
     _ => (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT,
   };
 
+  internal static string GuidedFrameName(byte frame) => (MAVLink.MAV_FRAME)frame switch {
+    MAVLink.MAV_FRAME.GLOBAL => "Absolute",
+    MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT => "Terrain",
+    _ => "Relative",
+  };
+
+  private static double AltitudeMultiplier(double multiplier) =>
+      double.IsFinite(multiplier) && multiplier > 0 ? multiplier : 1;
+
+  internal static double GuidedAltitudeDefault(
+      MissionPlanner.ArduPilot.Firmwares firmware, double multiplier) =>
+      (firmware == MissionPlanner.ArduPilot.Firmwares.ArduCopter2 ? 10 : 100)
+      * AltitudeMultiplier(multiplier);
+
+  internal static double DisplayToVehicleAltitude(double altitude, double multiplier) =>
+      altitude / AltitudeMultiplier(multiplier);
+
+  internal static byte ResolveGuidedFrame(bool hasGuidedTarget, byte guidedFrame,
+      string? savedFrame) {
+    if (hasGuidedTarget) {
+      return IsGuidedFrame(guidedFrame)
+          ? guidedFrame
+          : (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT;
+    }
+    return byte.TryParse(savedFrame, NumberStyles.Integer, CultureInfo.InvariantCulture,
+        out byte parsed) && IsGuidedFrame(parsed)
+        ? parsed
+        : (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT;
+  }
+
+  private static bool IsGuidedFrame(byte frame) => (MAVLink.MAV_FRAME)frame is
+      MAVLink.MAV_FRAME.GLOBAL
+      or MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT
+      or MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT;
+
+  private static bool TryParseAltitude(string? text, out double altitude) =>
+      double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out altitude)
+      || double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out altitude);
+
+  private static bool HasGuidedTarget(MAVLink.mavlink_mission_item_int_t guided) =>
+      guided.x != 0 || guided.y != 0 || guided.z != 0;
+
   [Obsolete]
-  private async Task GuidedGoto(double lat, double lng, double alt, string frame) {
+  public async Task<bool> SetGuidedAltitude() {
+    double multiplier = AltitudeMultiplier(MissionPlanner.CurrentState.multiplieralt);
+    double defaultAltitude = GuidedAltitudeDefault(_comPort.MAV.cs.firmware, multiplier);
+    if (TryParseAltitude(Settings.Instance["guided_alt"], out double savedAltitude)) {
+      defaultAltitude = savedAltitude;
+    }
+
+    byte savedFrame = ResolveGuidedFrame(false, 0, Settings.Instance["guided_alt_frame"]);
+    var result = await Services.Dialogs.AltInputBox(
+        "Enter Guided Mode Alt", defaultAltitude, GuidedFrameName(savedFrame));
+    if (result == null) {
+      return false;
+    }
+    if (!double.IsFinite(result.Value.Alt)) {
+      await Services.Dialogs.Alert("Guided altitude", "Bad altitude value.");
+      return false;
+    }
+
+    byte frame = GuidedFrameByte(result.Value.Frame);
+    double vehicleAltitude = DisplayToVehicleAltitude(result.Value.Alt, multiplier);
+    Settings.Instance["guided_alt"] =
+        result.Value.Alt.ToString(CultureInfo.InvariantCulture);
+    Settings.Instance["guided_alt_frame"] = frame.ToString(CultureInfo.InvariantCulture);
+    _comPort.MAV.GuidedMode.z = (float)vehicleAltitude;
+    _comPort.MAV.GuidedMode.frame = frame;
+
+    if (string.Equals(_comPort.MAV.cs.mode, "Guided", StringComparison.OrdinalIgnoreCase)) {
+      double lat = _comPort.MAV.GuidedMode.x / 1e7;
+      double lng = _comPort.MAV.GuidedMode.y / 1e7;
+      if (ValidCoordinates(lat, lng)) {
+        try {
+          await GuidedGotoVehicle(lat, lng, vehicleAltitude, frame);
+        } catch (Exception ex) {
+          await Services.Dialogs.Alert(
+              "Guided altitude", "Could not update the active target: " + ex.Message);
+          return false;
+        }
+      }
+    }
+    Log($"Guided altitude {result.Value.Alt:0.##} ({result.Value.Frame})");
+    return true;
+  }
+
+  [Obsolete]
+  private async Task GuidedGotoVehicle(double lat, double lng, double altitude, byte frame) {
     var wp = new MissionPlanner.Utilities.Locationwp {
       id = (ushort)MAVLink.MAV_CMD.WAYPOINT,
       lat = lat,
       lng = lng,
-      alt = (float)alt,
-      frame = FrameByte(frame),
+      alt = (float)altitude,
+      frame = frame,
     };
     await Task.Run(() => _comPort.setGuidedModeWP(wp));
-    Log($"Fly to {lat:0.000000},{lng:0.000000} @ {alt} m ({frame})");
+  }
+
+  [Obsolete]
+  private async Task GuidedGoto(double lat, double lng, double alt, string frame) {
+    double vehicleAltitude = DisplayToVehicleAltitude(
+        alt, MissionPlanner.CurrentState.multiplieralt);
+    await GuidedGotoVehicle(lat, lng, vehicleAltitude, GuidedFrameByte(frame));
+    Log($"Fly to {lat:0.000000},{lng:0.000000} @ {alt:0.##} ({frame})");
   }
 
   [Obsolete]
@@ -1995,9 +2160,22 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     if (!Connected) {
       return;
     }
-    var r = await Services.Dialogs.AltInputBox("Fly To Here", 50, "Relative");
-    if (r != null) {
-      await GuidedGoto(lat, lng, r.Value.Alt, r.Value.Frame);
+    if (!ValidCoordinates(lat, lng)) {
+      await Services.Dialogs.Alert("Fly To Here", "Bad coordinates.");
+      return;
+    }
+    if (_comPort.MAV.GuidedMode.z == 0 && !await SetGuidedAltitude()) {
+      return;
+    }
+    try {
+      await GuidedGotoVehicle(lat, lng, _comPort.MAV.GuidedMode.z,
+          _comPort.MAV.GuidedMode.frame);
+      double displayAltitude = _comPort.MAV.GuidedMode.z
+          * AltitudeMultiplier(MissionPlanner.CurrentState.multiplieralt);
+      Log($"Fly to {lat:0.000000},{lng:0.000000} @ {displayAltitude:0.##} "
+          + $"({GuidedFrameName(_comPort.MAV.GuidedMode.frame)})");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Fly To Here", "Command failed: " + ex.Message);
     }
   }
 
@@ -2006,12 +2184,30 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     if (!Connected) {
       return;
     }
-    var text = await Services.Dialogs.InputBox("Fly To Coords", "Enter lat;lng;alt");
-    if (!TryParseCoordinates(text, out double lat, out double lng, out double? parsedAlt)
-        || parsedAlt == null) {
+    var text = await Services.Dialogs.InputBox(
+        "Fly To Coords", "Enter lat;lng;alt or lat;lng");
+    if (!TryParseCoordinates(text, out double lat, out double lng, out double? parsedAlt)) {
+      await Services.Dialogs.Alert("Fly To Coords", "Invalid coordinates.");
       return;
     }
-    await GuidedGoto(lat, lng, parsedAlt.Value, "Relative");
+
+    bool hasGuidedTarget = HasGuidedTarget(_comPort.MAV.GuidedMode);
+    byte frame = ResolveGuidedFrame(hasGuidedTarget, _comPort.MAV.GuidedMode.frame,
+        Settings.Instance["guided_alt_frame"]);
+    try {
+      if (parsedAlt.HasValue) {
+        await GuidedGoto(lat, lng, parsedAlt.Value, GuidedFrameName(frame));
+      } else {
+        if (_comPort.MAV.GuidedMode.z == 0 && !await SetGuidedAltitude()) {
+          return;
+        }
+        frame = _comPort.MAV.GuidedMode.frame;
+        await GuidedGotoVehicle(lat, lng, _comPort.MAV.GuidedMode.z, frame);
+        Log($"Fly to {lat:0.000000},{lng:0.000000} using the current guided altitude");
+      }
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Fly To Coords", "Command failed: " + ex.Message);
+    }
   }
 
   [Obsolete]
@@ -2019,12 +2215,22 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     if (!Connected) {
       return;
     }
-    var s = await Services.Dialogs.InputBox("Point Camera Here", "Enter Target Alt (relative to home)", "0");
-    if (!float.TryParse(s, out var alt)) {
+    if (!ValidCoordinates(lat, lng)) {
+      await Services.Dialogs.Alert("Point Camera Here", "Bad coordinates.");
       return;
     }
-    await PointCameraAt(lat, lng, alt, MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT);
-    Log($"Camera ROI -> {lat:0.000000},{lng:0.000000}");
+    var s = await Services.Dialogs.InputBox("Point Camera Here", "Enter Target Alt (relative to home)", "0");
+    if (!TryParseAltitude(s, out double alt)) {
+      return;
+    }
+    try {
+      await PointCameraAt(lat, lng,
+          DisplayToVehicleAltitude(alt, MissionPlanner.CurrentState.multiplieralt),
+          MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT);
+      Log($"Camera ROI -> {lat:0.000000},{lng:0.000000}");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Point Camera Here", "Command failed: " + ex.Message);
+    }
   }
 
   [Obsolete]
@@ -2037,9 +2243,16 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     if (!TryParseCoordinates(text, out double lat, out double lng, out double? altitude)) {
       return;
     }
-    double alt = altitude ?? MissionPlanner.Utilities.srtm.getAltitude(lat, lng).alt;
-    await PointCameraAt(lat, lng, alt, MAVLink.MAV_FRAME.GLOBAL);
-    Log($"Camera ROI -> {lat:0.000000},{lng:0.000000} @ {alt:0.0} m AMSL");
+    double alt = altitude.HasValue
+        ? DisplayToVehicleAltitude(
+            altitude.Value, MissionPlanner.CurrentState.multiplieralt)
+        : MissionPlanner.Utilities.srtm.getAltitude(lat, lng).alt;
+    try {
+      await PointCameraAt(lat, lng, alt, MAVLink.MAV_FRAME.GLOBAL);
+      Log($"Camera ROI -> {lat:0.000000},{lng:0.000000} @ {alt:0.0} m AMSL");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Point Camera Coords", "Command failed: " + ex.Message);
+    }
   }
 
   [Obsolete]
@@ -2560,6 +2773,9 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   private bool _hudGroundBrown;
 
   [ObservableProperty]
+  private bool _hudSixteenByNine;
+
+  [ObservableProperty]
   private int _hudColumn;
 
   [ObservableProperty]
@@ -2696,6 +2912,9 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private void ToggleRussianHud() => HudRussian = !HudRussian;
+
+  [RelayCommand]
+  private void ToggleHudAspect() => HudSixteenByNine = !HudSixteenByNine;
 
   [RelayCommand]
   private void SwapHudMap() {

@@ -318,6 +318,7 @@ public partial class FlightDataView : UserControl {
     }
     var menu = new ContextMenu();
     menu.Items.Add(Item("Fly To Here", vm => vm.FlyToHere(map.LastClickLatLng.Lat, map.LastClickLatLng.Lng)));
+    menu.Items.Add(Item("Fly To Here Alt…", vm => vm.SetGuidedAltitude()));
     menu.Items.Add(Item("Fly To Coords", vm => vm.FlyToCoords()));
     menu.Items.Add(new Separator());
     menu.Items.Add(Item("Point Camera Here", vm => vm.PointCameraHere(map.LastClickLatLng.Lat, map.LastClickLatLng.Lng)));

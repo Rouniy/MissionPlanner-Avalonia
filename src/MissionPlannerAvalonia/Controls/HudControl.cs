@@ -18,6 +18,7 @@ public class HudControl : Control {
   public event Action<HudControl, DrawingContext>? CustomPaint;
 
   private Rect _ekfRect, _vibeRect, _prearmRect;
+  private Point _contentOffset;
   public static readonly StyledProperty<double> RollProperty = AvaloniaProperty.Register<
       HudControl,
       double
@@ -74,6 +75,8 @@ public class HudControl : Control {
       AvaloniaProperty.Register<HudControl, int>(nameof(BatteryCells));
   public static readonly StyledProperty<bool> GroundBrownProperty =
       AvaloniaProperty.Register<HudControl, bool>(nameof(GroundBrown), false);
+  public static readonly StyledProperty<bool> SixteenByNineProperty =
+      AvaloniaProperty.Register<HudControl, bool>(nameof(SixteenByNine), false);
 
   public static readonly StyledProperty<bool> DisplayHeadingProperty =
       AvaloniaProperty.Register<HudControl, bool>(nameof(DisplayHeading), true);
@@ -214,6 +217,10 @@ public class HudControl : Control {
   public bool GroundBrown {
     get => GetValue(GroundBrownProperty);
     set => SetValue(GroundBrownProperty, value);
+  }
+  public bool SixteenByNine {
+    get => GetValue(SixteenByNineProperty);
+    set => SetValue(SixteenByNineProperty, value);
   }
   public bool DisplayHeading {
     get => GetValue(DisplayHeadingProperty);
@@ -475,6 +482,7 @@ public class HudControl : Control {
         RussianProperty,
         BatteryCellsProperty,
         GroundBrownProperty,
+        SixteenByNineProperty,
         DisplayHeadingProperty,
         DisplaySpeedProperty,
         DisplayAltProperty,
@@ -531,9 +539,17 @@ public class HudControl : Control {
     }
 
     context.FillRectangle(Brushes.Black, new Rect(0, 0, w, h));
+    var viewport = HudLayout.AspectViewport(new Size(w, h), SixteenByNine);
+    _contentOffset = new Point(viewport.X, viewport.Y);
     if (!OverlayEnabled) {
+      _ekfRect = _vibeRect = _prearmRect = default;
       return;
     }
+    using var contentClip = context.PushClip(viewport);
+    using var contentTransform = context.PushTransform(
+        Matrix.CreateTranslation(viewport.X, viewport.Y));
+    w = viewport.Width;
+    h = viewport.Height;
 
     double unit = Math.Min(w, h);
     double fontsize = Math.Clamp(unit / 28.0, 9, 30);
@@ -992,7 +1008,8 @@ public class HudControl : Control {
 
   protected override void OnPointerPressed(PointerPressedEventArgs e) {
     base.OnPointerPressed(e);
-    var p = e.GetPosition(this);
+    var raw = e.GetPosition(this);
+    var p = new Point(raw.X - _contentOffset.X, raw.Y - _contentOffset.Y);
     string? which = _ekfRect.Contains(p) ? "ekf"
         : _vibeRect.Contains(p) ? "vibe"
         : _prearmRect.Contains(p) ? "prearm"
@@ -1001,5 +1018,21 @@ public class HudControl : Control {
       IndicatorClicked?.Invoke(which);
       e.Handled = true;
     }
+  }
+}
+
+internal static class HudLayout {
+  internal static Rect AspectViewport(Size available, bool sixteenByNine) {
+    if (available.Width <= 0 || available.Height <= 0) {
+      return default;
+    }
+    double aspect = sixteenByNine ? 16.0 / 9.0 : 4.0 / 3.0;
+    double width = Math.Min(available.Width, available.Height * aspect);
+    double height = Math.Min(available.Height, available.Width / aspect);
+    return new Rect(
+        (available.Width - width) / 2,
+        (available.Height - height) / 2,
+        width,
+        height);
   }
 }

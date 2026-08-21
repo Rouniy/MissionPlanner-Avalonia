@@ -44,6 +44,7 @@
           Russian="{Binding HudRussian}"
           BatteryCells="{Binding HudBatteryCells}"
           GroundBrown="{Binding HudGroundBrown}"
+          SixteenByNine="{Binding HudSixteenByNine}"
           NavBearing="{Binding NavBearing}"
           CurrentAmps="{Binding BatCurrent}"
           CustomItemsText="{Binding HudCustomText}"
@@ -93,6 +94,7 @@
                           CommandParameter="herelink" />
                 <MenuItem Header="GStreamer Stop" Command="{Binding StopVideoCommand}" />
               </MenuItem>
+              <MenuItem Header="Set Aspect Ratio" Command="{Binding ToggleHudAspectCommand}" />
               <MenuItem Header="User Items" Command="{Binding HudUserItemsCommand}" />
               <MenuItem Header="Russian Hud" ToggleType="CheckBox" IsChecked="{Binding HudRussian, Mode=TwoWay}" />
               <MenuItem Header="Swap With Map" Command="{Binding SwapHudMapCommand}" />
