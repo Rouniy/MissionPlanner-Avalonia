@@ -116,24 +116,10 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private double _ekfStatus;
 
-  public ObservableCollection<string> Modes { get; } =
-      [
-            "STABILIZE",
-            "ALT_HOLD",
-            "LOITER",
-            "AUTO",
-            "GUIDED",
-            "RTL",
-            "LAND",
-            "POSHOLD",
-            "BRAKE",
-            "ACRO",
-            "MANUAL",
-            "FBWA",
-            "FBWB",
-            "CRUISE",
-            "CIRCLE",
-      ];
+  public ObservableCollection<string> Modes { get; } = [];
+
+  private MissionPlanner.ArduPilot.Firmwares? _modeFirmware;
+  private int _waypointOptionMax = -1;
 
   [ObservableProperty]
   private string _selectedMode = "STABILIZE";
@@ -236,6 +222,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     Mode = cs.mode ?? "—";
     Armed = cs.armed;
     ArmText = cs.armed ? "DISARM" : "ARM";
+    RefreshFlightOptions(cs);
 
     float[] outs =
     [
@@ -586,8 +573,8 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 
   public ObservableCollection<CheckItem> PreflightChecks { get; } = [];
 
-  private const int _autoCheckCount = 6;
   private const string _manualChecksJsonKey = "preflight_manual_json";
+  private readonly List<PreflightChecklistDefinition> _preflightDefinitions = [];
 
   private static readonly string[] _defaultManualChecks = [
     "Tail and wings secured?",
@@ -599,16 +586,8 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   ];
 
   private void InitPreflightChecks() {
-    PreflightChecks.Add(new CheckItem("Ready GPS"));
-    PreflightChecks.Add(new CheckItem("Gps Sat Count"));
-    PreflightChecks.Add(new CheckItem("Telemetry Signal"));
-    PreflightChecks.Add(new CheckItem("Battery Level"));
-    PreflightChecks.Add(new CheckItem("Mode"));
-    PreflightChecks.Add(new CheckItem("Check Altitude"));
-
-    foreach (string name in LoadManualPreflightChecks()) {
-      PreflightChecks.Add(new CheckItem(name, manual: true));
-    }
+    ReplacePreflightDefinitions(PreflightChecklist.Load(
+        legacyManualItems: LoadManualPreflightChecks()));
   }
 
   private static IReadOnlyList<string> LoadManualPreflightChecks() {
@@ -628,12 +607,16 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   }
 
   private void RefreshPreflight(MissionPlanner.CurrentState cs) {
-    PreflightChecks[0].Set($"{cs.satcount} >= 3", cs.satcount >= 3);
-    PreflightChecks[1].Set($"{cs.satcount} Sats", cs.satcount >= 3);
-    PreflightChecks[2].Set($"{cs.linkqualitygcs}%", cs.linkqualitygcs > 0);
-    PreflightChecks[3].Set($"{cs.battery_voltage:0.0} V", cs.battery_voltage > 1);
-    PreflightChecks[4].Set(cs.mode ?? "Unknown", !string.IsNullOrEmpty(cs.mode));
-    PreflightChecks[5].Set($"{cs.alt:0.0} m", cs.alt < 5);
+    if (PreflightChecks.Count != _preflightDefinitions.Count) {
+      ReplacePreflightDefinitions(_preflightDefinitions);
+    }
+
+    for (int i = 0; i < _preflightDefinitions.Count; i++) {
+      CheckItem view = PreflightChecks[i];
+      var evaluation = PreflightChecklist.Evaluate(
+          _preflightDefinitions[i], cs, LookupParameter, view.Ok);
+      view.Set(evaluation.DisplayText, evaluation.IsSatisfied);
+    }
   }
 
   [RelayCommand]
@@ -643,50 +626,168 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     if (top == null) {
       return;
     }
-    var current = string.Join(
-        Environment.NewLine,
-        PreflightChecks.Skip(_autoCheckCount).Select(c => c.Name));
-    var box = new Avalonia.Controls.TextBox {
-      Text = current,
-      AcceptsReturn = true,
-      MinWidth = 360,
-      MinHeight = 180,
+
+    var rows = new ObservableCollection<PreflightEditorRow>(
+        _preflightDefinitions.Select(item => new PreflightEditorRow(item.Clone())));
+    var table = new Avalonia.Controls.DataGrid {
+      AutoGenerateColumns = false,
+      ItemsSource = rows,
+      MinHeight = 280,
     };
-    var ok = new Avalonia.Controls.Button {
-      Content = "Save",
+    table.Columns.Add(new Avalonia.Controls.DataGridTextColumn {
+      Header = "Description",
+      Width = new Avalonia.Controls.DataGridLength(1.4,
+          Avalonia.Controls.DataGridLengthUnitType.Star),
+      Binding = new Avalonia.Data.Binding(nameof(PreflightEditorRow.Description)),
+    });
+    table.Columns.Add(new Avalonia.Controls.DataGridTextColumn {
+      Header = "Displayed text",
+      Width = new Avalonia.Controls.DataGridLength(1,
+          Avalonia.Controls.DataGridLengthUnitType.Star),
+      Binding = new Avalonia.Data.Binding(nameof(PreflightEditorRow.Text)),
+    });
+    table.Columns.Add(new Avalonia.Controls.DataGridTextColumn {
+      Header = "Condition",
+      Width = new Avalonia.Controls.DataGridLength(1.5,
+          Avalonia.Controls.DataGridLengthUnitType.Star),
+      Binding = new Avalonia.Data.Binding(nameof(PreflightEditorRow.Condition)),
+    });
+    table.Columns.Add(new Avalonia.Controls.DataGridTextColumn {
+      Header = "True color",
+      Width = new Avalonia.Controls.DataGridLength(0.7,
+          Avalonia.Controls.DataGridLengthUnitType.Star),
+      Binding = new Avalonia.Data.Binding(nameof(PreflightEditorRow.TrueColor)),
+    });
+    table.Columns.Add(new Avalonia.Controls.DataGridTextColumn {
+      Header = "False color",
+      Width = new Avalonia.Controls.DataGridLength(0.7,
+          Avalonia.Controls.DataGridLengthUnitType.Star),
+      Binding = new Avalonia.Data.Binding(nameof(PreflightEditorRow.FalseColor)),
+    });
+
+    var add = new Avalonia.Controls.Button { Content = "Add" };
+    var delete = new Avalonia.Controls.Button { Content = "Delete" };
+    var defaults = new Avalonia.Controls.Button { Content = "Restore defaults" };
+    var save = new Avalonia.Controls.Button { Content = "Save" };
+    var cancel = new Avalonia.Controls.Button { Content = "Cancel" };
+    var actions = new Avalonia.Controls.StackPanel {
+      Orientation = Avalonia.Layout.Orientation.Horizontal,
       HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+      Spacing = 8,
+      Children = { add, delete, defaults, save, cancel },
     };
     var dlg = new Avalonia.Controls.Window {
-      Title = "Edit Checklist Items",
-      Width = 400,
-      Height = 280,
+      Title = "Pre-flight Checklist Editor",
+      Width = 980,
+      Height = 560,
+      MinWidth = 760,
+      MinHeight = 420,
       WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.CenterOwner,
-      Content = new Avalonia.Controls.StackPanel {
+      Content = new Avalonia.Controls.DockPanel {
         Margin = new Avalonia.Thickness(10),
-        Spacing = 8,
         Children = {
-          new Avalonia.Controls.TextBlock { Text = "One checklist item per line:" },
-          box,
-          ok,
+          new Avalonia.Controls.TextBlock {
+            Text = "Conditions: satcount >= 5, PARAM:ARMING_CHECK != 0, manual, "
+                + "or manual(mode). Combine checks with &&. Text supports {value}, "
+                + "{trigger}, and {name}.",
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Margin = new Avalonia.Thickness(0, 0, 0, 8),
+            [Avalonia.Controls.DockPanel.DockProperty] = Avalonia.Controls.Dock.Top,
+          },
+          new Avalonia.Controls.Border {
+            Child = actions,
+            Margin = new Avalonia.Thickness(0, 8, 0, 0),
+            [Avalonia.Controls.DockPanel.DockProperty] = Avalonia.Controls.Dock.Bottom,
+          },
+          table,
         },
       },
     };
-    ok.Click += (_, _) => dlg.Close(box.Text);
-    var result = await dlg.ShowDialog<string?>(top);
+
+    add.Click += (_, _) => {
+      var row = new PreflightEditorRow(new PreflightChecklistDefinition());
+      rows.Add(row);
+      table.SelectedItem = row;
+      table.ScrollIntoView(row, null);
+    };
+    delete.Click += (_, _) => {
+      if (table.SelectedItem is PreflightEditorRow row) {
+        rows.Remove(row);
+      }
+    };
+    defaults.Click += async (_, _) => {
+      if (!await Services.Dialogs.Confirm(
+              "Restore Checklist", "Replace every checklist item with the upstream defaults?")) {
+        return;
+      }
+      rows.Clear();
+      foreach (var item in PreflightChecklist.LoadDefaults()) {
+        rows.Add(new PreflightEditorRow(item));
+      }
+    };
+    save.Click += async (_, _) => {
+      var definitions = new List<PreflightChecklistDefinition>();
+      for (int i = 0; i < rows.Count; i++) {
+        PreflightEditorRow row = rows[i];
+        if (string.IsNullOrWhiteSpace(row.Description)) {
+          await Services.Dialogs.Alert("Checklist", $"Row {i + 1} needs a description.");
+          return;
+        }
+        if (!Avalonia.Media.Color.TryParse(row.TrueColor, out _)
+            || !Avalonia.Media.Color.TryParse(row.FalseColor, out _)) {
+          await Services.Dialogs.Alert(
+              "Checklist", $"Row {i + 1} contains an invalid color.");
+          return;
+        }
+        if (!PreflightChecklist.TryParseExpression(
+                row.Condition, row.Description, row.Text,
+                row.TrueColor, row.FalseColor, out var definition, out string error)) {
+          await Services.Dialogs.Alert("Checklist", $"Row {i + 1}: {error}.");
+          return;
+        }
+        definitions.Add(definition);
+      }
+      try {
+        PreflightChecklist.Save(definitions);
+        dlg.Close(definitions);
+      } catch (Exception ex) {
+        await Services.Dialogs.Alert("Checklist", $"Unable to save checklist: {ex.Message}");
+      }
+    };
+    cancel.Click += (_, _) => dlg.Close((List<PreflightChecklistDefinition>?)null);
+
+    var result = await dlg.ShowDialog<List<PreflightChecklistDefinition>?>(top);
     if (result == null) {
       return;
     }
-    for (int i = PreflightChecks.Count - 1; i >= _autoCheckCount; i--) {
-      PreflightChecks.RemoveAt(i);
-    }
-    foreach (var line in result.Split('\n')) {
-      var name = line.Trim();
-      if (name.Length > 0) {
-        PreflightChecks.Add(new CheckItem(name, manual: true));
+    Settings.Instance.Remove(_manualChecksJsonKey);
+    Settings.Instance.Remove("preflight_manual");
+    ReplacePreflightDefinitions(result);
+  }
+
+  private double? LookupParameter(string name) =>
+      _comPort.MAV.param.ContainsKey(name) ? _comPort.MAV.param[name].Value : null;
+
+  private void ReplacePreflightDefinitions(
+      IEnumerable<PreflightChecklistDefinition> definitions) {
+    var manualStates = PreflightChecks
+        .Where(item => item.Manual)
+        .GroupBy(item => item.Name, StringComparer.Ordinal)
+        .ToDictionary(group => group.Key, group => group.First().Ok, StringComparer.Ordinal);
+    var replacements = definitions.Select(item => item.Clone()).ToArray();
+
+    _preflightDefinitions.Clear();
+    _preflightDefinitions.AddRange(replacements);
+    PreflightChecks.Clear();
+    foreach (var definition in replacements) {
+      bool manual = definition.ConditionType == PreflightCondition.NONE;
+      var item = new CheckItem(
+          definition.Description, manual, definition.TrueColor, definition.FalseColor);
+      if (manualStates.TryGetValue(definition.Description, out bool state)) {
+        item.Ok = state;
       }
+      PreflightChecks.Add(item);
     }
-    var manual = PreflightChecks.Skip(_autoCheckCount).Select(item => item.Name).ToArray();
-    Settings.Instance[_manualChecksJsonKey] = JsonSerializer.Serialize(manual);
   }
 
   public ObservableCollection<object> ServoRelayItems { get; } = [];
@@ -1249,9 +1350,49 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       Messages += "Not connected.\n";
       return;
     }
-    bool target = !Armed;
-    bool ok = await Task.Run(() => _comPort.doARM(target, false));
-    Messages += $"{(target ? "Arm" : "Disarm")}: {(ok ? "ok" : "rejected")}\n";
+    bool target = !_comPort.MAV.cs.armed;
+    string action = target ? "Arm" : "Disarm";
+    if (!target && !await Services.Dialogs.Confirm(
+            "Disarm", "Disarm the vehicle now? In-flight disarming can cause a crash.")) {
+      return;
+    }
+
+    var statusMessages = new System.Collections.Concurrent.ConcurrentQueue<string>();
+    int subscription = _comPort.SubscribeToPacketType(
+        MAVLink.MAVLINK_MSG_ID.STATUSTEXT,
+        message => {
+          statusMessages.Enqueue(System.Text.Encoding.ASCII.GetString(
+              message.ToStructure<MAVLink.mavlink_statustext_t>().text).TrimEnd('\0'));
+          return true;
+        },
+        _comPort.MAV.sysid,
+        _comPort.MAV.compid);
+    bool accepted;
+    try {
+      accepted = await Task.Run(() => _comPort.doARM(target, false));
+    } finally {
+      _comPort.UnSubscribeToPacketType(subscription);
+    }
+
+    if (accepted) {
+      Messages += $"{action}: ok\n";
+      return;
+    }
+
+    string reason = string.Join(Environment.NewLine,
+        statusMessages.Where(text => !string.IsNullOrWhiteSpace(text)));
+    string details = reason.Length == 0 ? "The vehicle rejected the command." : reason;
+    bool force = await Services.Dialogs.Confirm(
+        $"Force {action}",
+        $"{action} failed.\n\n{details}\n\nForce {action} bypasses safety checks and can "
+        + "cause a crash or serious injury. Continue?");
+    if (!force) {
+      Messages += $"{action}: rejected\n{details}\n";
+      return;
+    }
+
+    bool forced = await Task.Run(() => _comPort.doARM(target, true));
+    Messages += $"Force {action}: {(forced ? "ok" : "rejected")}\n";
   }
 
   [RelayCommand]
@@ -1261,9 +1402,67 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       Messages += "Not connected.\n";
       return;
     }
-    var m = SelectedMode;
-    await Task.Run(() => _comPort.setMode(m));
-    Messages += $"Set mode {m}\n";
+    string modeName = SelectedMode;
+    var request = new MAVLink.mavlink_set_mode_t();
+    if (!_comPort.translateMode(
+            _comPort.MAV.sysid, _comPort.MAV.compid, modeName, ref request)) {
+      Messages += $"Mode {modeName} is not available for {_comPort.MAV.cs.firmware}.\n";
+      return;
+    }
+    await Task.Run(() => _comPort.setMode(
+        _comPort.MAV.sysid, _comPort.MAV.compid, request));
+    Messages += $"Requested mode {modeName}\n";
+  }
+
+  private void RefreshFlightOptions(MissionPlanner.CurrentState cs) {
+    if (_modeFirmware != cs.firmware || Modes.Count == 0) {
+      string previous = SelectedMode;
+      string[] modes = ModesForFirmware(cs.firmware);
+      Modes.Clear();
+      foreach (string mode in modes) {
+        Modes.Add(mode);
+      }
+      _modeFirmware = cs.firmware;
+      SelectedMode = modes.FirstOrDefault(mode =>
+              string.Equals(mode, cs.mode, StringComparison.OrdinalIgnoreCase))
+          ?? modes.FirstOrDefault(mode =>
+              string.Equals(mode, previous, StringComparison.OrdinalIgnoreCase))
+          ?? modes.FirstOrDefault()
+          ?? previous;
+    }
+
+    int maximum = _comPort.MAV.wps.Count;
+    foreach (string parameter in new[] { "CMD_TOTAL", "WP_TOTAL", "MIS_TOTAL" }) {
+      if (_comPort.MAV.param.ContainsKey(parameter)) {
+        maximum = Math.Max(maximum,
+            (int)Math.Round(_comPort.MAV.param[parameter].Value));
+      }
+    }
+    maximum = Math.Clamp(maximum, 0, ushort.MaxValue);
+    if (maximum == _waypointOptionMax) {
+      return;
+    }
+
+    int previousWaypoint = SelectedWaypoint?.Index ?? 0;
+    WpNumbers.Clear();
+    WpNumbers.Add(new WaypointOption(0, "0 (Home)"));
+    for (int index = 1; index <= maximum; index++) {
+      WpNumbers.Add(new WaypointOption(index, index.ToString(CultureInfo.InvariantCulture)));
+    }
+    _waypointOptionMax = maximum;
+    SelectedWaypoint = WpNumbers.FirstOrDefault(item => item.Index == previousWaypoint)
+        ?? WpNumbers[0];
+  }
+
+  internal static string[] ModesForFirmware(MissionPlanner.ArduPilot.Firmwares firmware) {
+    try {
+      return [.. MissionPlanner.ArduPilot.Common.getModesList(firmware)
+          .Select(mode => mode.Value)
+          .Where(mode => !string.IsNullOrWhiteSpace(mode))
+          .Distinct(StringComparer.OrdinalIgnoreCase)];
+    } catch {
+      return [];
+    }
   }
 
   [RelayCommand]
@@ -1419,11 +1618,10 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private string _selectedAction = "Return_To_Launch";
 
-  public ObservableCollection<int> WpNumbers { get; } =
-      new(System.Linq.Enumerable.Range(0, 31));
+  public ObservableCollection<WaypointOption> WpNumbers { get; } = [];
 
   [ObservableProperty]
-  private int _setWpIndex;
+  private WaypointOption? _selectedWaypoint;
 
   [ObservableProperty]
   private double _homeAlt;
@@ -2081,8 +2279,13 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
         "Terminate the flight now? This command can stop the vehicle in flight and cannot be undone.",
     "Format_SD_Card" =>
         "Format the vehicle SD card now? All logs and other data on that card will be permanently erased.",
+    "Do_Parachute" =>
+        "Disable automatic parachute release? Manual parachute release remains available on the vehicle.",
     _ => $"Send the vehicle action {action}?",
   };
+
+  internal static MAVLink.PARACHUTE_ACTION ParachuteCommandAction =>
+      MAVLink.PARACHUTE_ACTION.PARACHUTE_DISABLE;
 
   [Obsolete]
   private void RunAction(string a) {
@@ -2148,7 +2351,8 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
         }, MAVLink.MAV_MODE_FLAG.SAFETY_ARMED);
         break;
       case "Do_Parachute":
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.DO_PARACHUTE, 2, 0, 0, 0, 0, 0, 0);
+        _comPort.doCommand(s, c, MAVLink.MAV_CMD.DO_PARACHUTE,
+            (float)ParachuteCommandAction, 0, 0, 0, 0, 0, 0);
         break;
       case "Engine_Start":
         _comPort.doEngineControl(s, c, true);
@@ -2173,7 +2377,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       Messages += "Not connected.\n";
       return;
     }
-    ushort idx = (ushort)SetWpIndex;
+    ushort idx = (ushort)(SelectedWaypoint?.Index ?? 0);
     await Task.Run(() => _comPort.setWPCurrent(_comPort.MAV.sysid, _comPort.MAV.compid, idx));
     Log($"Set current WP {idx}");
   }
@@ -2883,9 +3087,12 @@ public partial class StatusItem(string name) : ObservableObject {
 }
 
 public partial class CheckItem : ObservableObject {
-  public CheckItem(string name, bool manual = false) {
+  public CheckItem(
+      string name, bool manual = false, string trueColor = "Green", string falseColor = "Red") {
     Name = name;
     Manual = manual;
+    TrueBrush = ParseBrush(trueColor, Avalonia.Media.Colors.Green);
+    FalseBrush = ParseBrush(falseColor, Avalonia.Media.Colors.Red);
   }
 
   [ObservableProperty]
@@ -2897,12 +3104,26 @@ public partial class CheckItem : ObservableObject {
   private string _value = "";
 
   [ObservableProperty]
+  [NotifyPropertyChangedFor(nameof(Foreground))]
   private bool _ok;
+
+  public Avalonia.Media.IBrush TrueBrush { get; }
+  public Avalonia.Media.IBrush FalseBrush { get; }
+  public Avalonia.Media.IBrush Foreground => Ok ? TrueBrush : FalseBrush;
 
   public void Set(string value, bool ok) {
     Value = value;
     Ok = ok;
   }
+
+  private static Avalonia.Media.IBrush ParseBrush(
+      string value, Avalonia.Media.Color fallback) =>
+      new Avalonia.Media.SolidColorBrush(
+          Avalonia.Media.Color.TryParse(value, out var parsed) ? parsed : fallback);
+}
+
+public sealed record WaypointOption(int Index, string Label) {
+  public override string ToString() => Label;
 }
 
 public partial class ServoChannel(int number) : ObservableObject {

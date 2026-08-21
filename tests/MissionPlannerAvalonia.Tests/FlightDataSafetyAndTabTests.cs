@@ -27,6 +27,25 @@ public class FlightDataSafetyAndTabTests {
         FlightDataViewModel.ActionConfirmationText("Terminate_Flight"));
     Assert.Contains("permanently erased",
         FlightDataViewModel.ActionConfirmationText("Format_SD_Card"));
+    Assert.Contains("Disable automatic parachute release",
+        FlightDataViewModel.ActionConfirmationText("Do_Parachute"));
+    Assert.Equal(MAVLink.PARACHUTE_ACTION.PARACHUTE_DISABLE,
+        FlightDataViewModel.ParachuteCommandAction);
+  }
+
+  [Fact]
+  public void Flight_mode_options_come_from_the_connected_vehicle_family() {
+    string[] trackerModes = FlightDataViewModel.ModesForFirmware(
+        MissionPlanner.ArduPilot.Firmwares.ArduTracker);
+
+    Assert.Contains("SCAN", trackerModes);
+    Assert.Contains("SERVO_TEST", trackerModes);
+    Assert.DoesNotContain("ALT_HOLD", trackerModes);
+  }
+
+  [Fact]
+  public void Home_waypoint_has_the_upstream_label() {
+    Assert.Equal("0 (Home)", new WaypointOption(0, "0 (Home)").ToString());
   }
 
   [AvaloniaFact]

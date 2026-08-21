@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -29,6 +31,10 @@ public partial class MAVLinkInspectorViewModel : ViewModelBase, IDisposable {
 
   [ObservableProperty]
   private string _status = "Listening on the active MAVLink link…";
+
+  [ObservableProperty]
+  [NotifyCanExecuteChangedFor(nameof(GraphSelectedCommand))]
+  private InspectorNode? _selectedNode;
 
   public MAVLinkInspectorViewModel() {
     _mav.OnPacketReceived += MavOnPacketReceived;
@@ -64,6 +70,33 @@ public partial class MAVLinkInspectorViewModel : ViewModelBase, IDisposable {
     _mavi.Clear();
     Tree.Clear();
     _rootMap.Clear();
+  }
+
+  private bool CanGraphSelected() => SelectedNode?.GraphSelection != null;
+
+  [RelayCommand(CanExecute = nameof(CanGraphSelected))]
+  private async Task GraphSelected() {
+    if (SelectedNode?.GraphSelection is not { } selection) {
+      return;
+    }
+
+    string? entered = await Services.Dialogs.InputBox(
+        "MAVLink Graph", "Points of history (10..100000)", "500");
+    if (entered == null) {
+      return;
+    }
+    if (!int.TryParse(entered, NumberStyles.Integer, CultureInfo.InvariantCulture,
+            out int history) || history is < 10 or > 100000) {
+      await Services.Dialogs.Alert("MAVLink Graph", "Enter a point count from 10 to 100000.");
+      return;
+    }
+
+    var window = new Views.MavlinkFieldGraphWindow(_mav, selection, history);
+    if (Services.Dialogs.Owner is { } owner) {
+      window.Show(owner);
+    } else {
+      window.Show();
+    }
   }
 
   public string PauseLabel => IsPaused ? "Resume" : "Pause";
@@ -109,6 +142,10 @@ public partial class MAVLinkInspectorViewModel : ViewModelBase, IDisposable {
       foreach (var field in minfo.type.GetFields()) {
         var fieldNode = GetOrAdd(msgNode.Map, msgNode.Children, field.Name,
             () => new InspectorNode { Key = field.Name });
+        if (Views.MavlinkGraphSampleExtractor.IsSupportedType(field.FieldType)) {
+          fieldNode.GraphSelection = new MavlinkGraphSelection(
+              m.sysid, m.compid, m.msgid, m.msgtypename, field.Name);
+        }
 
         object? value = field.GetValue(m.data);
 
@@ -174,4 +211,13 @@ public partial class InspectorNode : ObservableObject {
 
   public ObservableCollection<InspectorNode> Children { get; } = new();
   public Dictionary<string, InspectorNode> Map { get; } = new();
+  public MavlinkGraphSelection? GraphSelection { get; set; }
+  public bool CanGraph => GraphSelection != null;
 }
+
+public readonly record struct MavlinkGraphSelection(
+    byte SysId,
+    byte CompId,
+    uint MessageId,
+    string MessageName,
+    string FieldName);

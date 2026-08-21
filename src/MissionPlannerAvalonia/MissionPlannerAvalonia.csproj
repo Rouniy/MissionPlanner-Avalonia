@@ -87,6 +87,9 @@
     <Content Include="../../external/MissionPlanner/camerasBuiltin.xml" Link="camerasBuiltin.xml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="../../external/MissionPlanner/checklistDefault.xml" Link="checklistDefault.xml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="../../external/MissionPlanner/block_plane_0.dae" Link="block_plane_0.dae">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

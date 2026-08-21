@@ -208,7 +208,7 @@
                 <DockPanel>
                   <Button DockPanel.Dock="Right" Width="78" Content="Set WP"
                           Command="{Binding SetWpCommand}" />
-                  <ComboBox ItemsSource="{Binding WpNumbers}" SelectedItem="{Binding SetWpIndex}"
+                  <ComboBox ItemsSource="{Binding WpNumbers}" SelectedItem="{Binding SelectedWaypoint}"
                             HorizontalAlignment="Stretch" Margin="0,0,3,0" />
                 </DockPanel>
               </Panel>
@@ -338,13 +338,9 @@
                   <DataTemplate x:DataType="vm:CheckItem">
                     <Grid ColumnDefinitions="*,120,28" Margin="0,2" Background="{DynamicResource MpPanelBg}">
                       <TextBlock Grid.Column="0" Text="{Binding Name}" Margin="6,4"
-                                 VerticalAlignment="Center" />
-                      <Panel Grid.Column="1">
-                        <TextBlock Text="{Binding Value}" VerticalAlignment="Center" Foreground="{DynamicResource MpAccentBrush}"
-                                   IsVisible="{Binding Ok}" />
-                        <TextBlock Text="{Binding Value}" VerticalAlignment="Center" Foreground="#E03030"
-                                   IsVisible="{Binding !Ok}" />
-                      </Panel>
+                                 VerticalAlignment="Center" Foreground="{Binding Foreground}" />
+                      <TextBlock Grid.Column="1" Text="{Binding Value}" VerticalAlignment="Center"
+                                 Foreground="{Binding Foreground}" />
 
                       <CheckBox Grid.Column="2" IsChecked="{Binding Ok, Mode=TwoWay}"
                                 IsHitTestVisible="{Binding Manual}" />
