@@ -45,6 +45,36 @@ public partial class MavlinkLogConvertViewModel : ViewModelBase {
   private Task ConvertGpx() => Convert("gpx", "GPX", (track, outPath) =>
       DataFlashLog.WriteGpxTrack(track, outPath));
 
+  [RelayCommand]
+  private Task ConvertCsv() => ExportFile(
+      "csv", "CSV", (input, output) =>
+          $"Wrote {TlogExportService.WriteCsv(input, output)} decoded packets to {output}");
+
+  [RelayCommand]
+  private Task ConvertText() => ExportFile(
+      "txt", "human-readable text", (input, output) =>
+          $"Wrote {TlogExportService.WriteHumanReadable(input, output)} decoded packets to {output}");
+
+  [RelayCommand]
+  private Task ExtractParameters() => ExportFile(
+      "param", "parameters", (input, output) => {
+        int count = TlogExportService.WriteParameters(input, output);
+        if (count == 0) {
+          throw new InvalidOperationException("No PARAM_VALUE messages were found in the tlog.");
+        }
+        return $"Wrote {count} parameters to {output}";
+      });
+
+  [RelayCommand]
+  private Task ExtractWaypoints() => ExportFile(
+      "waypoints", "mission snapshots", (input, output) => {
+        var files = TlogExportService.WriteWaypointSnapshots(input, output);
+        if (files.Count == 0) {
+          throw new InvalidOperationException("No complete mission transfer was found in the tlog.");
+        }
+        return $"Wrote {files.Count} unique mission snapshot(s): {string.Join(", ", files)}";
+      });
+
   private async Task Convert(string ext, string label,
       Action<IReadOnlyList<(double lat, double lng, double alt, DateTime time)>, string> write) {
     if (_tlogPath == null || IsBusy) {
@@ -69,6 +99,29 @@ public partial class MavlinkLogConvertViewModel : ViewModelBase {
       Status = $"Wrote {label}: {dest}";
     } catch (Exception ex) {
       Status = $"{label} conversion failed: " + ex.Message;
+    } finally {
+      IsBusy = false;
+    }
+  }
+
+  private async Task ExportFile(
+      string extension, string label, Func<string, string, string> export) {
+    if (_tlogPath == null || IsBusy) {
+      return;
+    }
+    var output = await PickSaveAsync(
+        Path.GetFileNameWithoutExtension(_tlogPath) + "." + extension, extension);
+    if (output == null) {
+      return;
+    }
+
+    IsBusy = true;
+    Status = $"Exporting {label}…";
+    try {
+      string input = _tlogPath;
+      Status = await Task.Run(() => export(input, output));
+    } catch (Exception ex) {
+      Status = $"{label} export failed: " + ex.Message;
     } finally {
       IsBusy = false;
     }

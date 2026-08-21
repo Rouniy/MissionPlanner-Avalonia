@@ -127,18 +127,13 @@
 
       <TabControl x:Name="FdTabs" Grid.Row="2" Background="{DynamicResource MpControlBg}">
         <TabItem Header="Quick">
-          <DockPanel>
-            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="4,2">
-              <TextBlock Text="Cells" VerticalAlignment="Center" />
-              <NumericUpDown Width="62" Minimum="1" Maximum="12" FormatString="0"
-                             Value="{Binding QuickViewCount}" />
-              <TextBlock Text="Columns" VerticalAlignment="Center" Margin="8,0,0,0" />
-              <NumericUpDown Width="62" Minimum="1" Maximum="6" FormatString="0"
-                             Value="{Binding QuickColumns}" />
-            </StackPanel>
-
-            <ItemsControl x:Name="QuickGrid" ItemsSource="{Binding QuickItems}" Margin="2"
-                          DoubleTapped="OnQuickViewDoubleTapped">
+          <ItemsControl x:Name="QuickGrid" ItemsSource="{Binding QuickItems}" Margin="2"
+                        DoubleTapped="OnQuickViewDoubleTapped">
+            <ItemsControl.ContextMenu>
+              <ContextMenu>
+                <MenuItem Header="Set View Count…" Command="{Binding ConfigureQuickViewLayoutCommand}" />
+              </ContextMenu>
+            </ItemsControl.ContextMenu>
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate>
                 <UniformGrid Columns="{Binding $parent[ItemsControl].DataContext.QuickColumns}" />
@@ -156,8 +151,7 @@
                 </Border>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
-            </ItemsControl>
-          </DockPanel>
+          </ItemsControl>
         </TabItem>
 
         <TabItem Header="Actions">

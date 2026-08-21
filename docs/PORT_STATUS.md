@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 148 tests verified; Linux `.deb` is rebuilt at the end of each release pass, while the existing `tar.gz` predates the latest feature rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 158 tests verified; Linux `.deb` rebuilt and extracted-package smoke verified, while the existing `tar.gz` predates the latest feature round |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -66,6 +66,9 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 - Proximity radar for `DISTANCE_SENSOR` / `OBSTACLE_DISTANCE` telemetry.
 - Parameter metadata regeneration from current ArduPilot definitions.
 - Log organization for `.tlog`, `.rlog`, `.bin` and `.log`.
+- Tlog conversion now includes streamed CSV and human-readable packet exports, extraction of the
+  latest parameter values, and reconstruction of complete QGC WPL mission snapshots in addition to
+  KML, GPX and Matlab output.
 - Upstream-compatible custom flight actions and HUD drawing extension points.
 - Linux joystick input uses a port-native joydev reader with deterministic lifecycle, raw input
   preview and Avalonia-safe axis/button detection; Windows continues to use upstream DirectInput.
@@ -120,7 +123,9 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 - MAVLink NSH shell over `SERIAL_CONTROL`, with raw-link mode kept as an explicit expert option.
 - ArduPilot onboard Lua REPL over `MAV_CMD_SCRIPTING` and MAVFTP, separate from the local script console.
 - Runtime MAVLink message interval control (`SET_MESSAGE_INTERVAL`) from Flight Data.
-- Configurable/persistent QuickView cell count and columns, plus persistent manual preflight checks.
+- Configurable/persistent QuickView cell count and columns through the upstream-style context menu,
+  without permanent layout controls consuming flight-data space, plus persistent manual preflight
+  checks.
 - Mission file compatibility for QGC WPL, Mission Planner `.mission`, QGC `.plan`, `.poly`, legacy
   `.fen`/`.ral`, and load-and-append. QGC Plan round-trips mission, polygon/circle fence, and rally data.
 - Fence inclusion/exclusion polygons and circles can be created from the Avalonia planner.
@@ -152,20 +157,22 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 148 passed, 0 failed.
+- Automated tests: 158 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 156 MB.
 - Headless Xvfb startup: reaches the normal application event loop.
-- The `.deb` target was rebuilt from the current 148-test source on 2026-08-21; package structure,
-  dependencies and an extracted-package Xvfb event-loop smoke were verified. The existing
-  `tar.gz` is older and must still be rebuilt before release.
+- The `.deb` target was rebuilt from the current 158-test source on 2026-08-21; package structure,
+  dependencies, current QuickView/tlog strings and an extracted-package Xvfb event-loop smoke were
+  verified. Lintian reports informational tags for bundled .NET/Skia/HarfBuzz native binaries, but
+  no warning or error tags.
 - Debian install: registered as `missionplanner-avalonia 2026.8.0`; launcher, desktop entry, icon,
   man page and dependency metadata verified.
 - Installed-package smoke test: `/usr/lib/missionplanner-avalonia` remains byte-for-byte unchanged;
   runtime files are routed to isolated XDG config/data/cache/state roots.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
-The current Debian artifact is `out/packages/missionplanner-avalonia_2026.8.0_amd64.deb`; any
-existing `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source.
+The current Debian artifact is `out/packages/missionplanner-avalonia_2026.8.0_amd64.deb` (SHA-256
+`f6d5a36db8f11f3eda2d8d70c0cb150b4bd23d86421183b434411c63f862b3a7`). Any existing
+`out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
 
@@ -215,7 +222,7 @@ not remove required Windows-native files from `win-x64` builds.
 | Survey grid advanced helpers | All | Core mission-command generation is ported. Upstream split-mission output, sample-photo preview, terrain-following adjustment and the camera-profile editor remain absent. |
 | Grid v2 / SimpleGrid variants | All | The alternative upstream/plugin grid workflows remain absent. |
 | DroneCAN file browser | All, hardware-specific | Node parameters and firmware upload work; general node file browsing is not exposed. |
-| Secondary log/interchange tools | All | Tlog conversion, DataFlash split/DashWare and GPS-correction extraction are present; tlog parameter/waypoint extraction, ULog UI and offline MagFit remain to be ported. |
+| Secondary log/interchange tools | All | Tlog KML/GPX/Matlab/CSV/text conversion, parameter/mission extraction, DataFlash split/DashWare and GPS-correction extraction are present; ULog UI and offline MagFit remain to be ported. |
 | Direct DroneCAN SLCAN adapter mode | All, hardware-specific | UI reports unsupported; MAVLink-CAN1/CAN2 works. Direct serial lifecycle needs porting and native testing. |
 | Antenna tracker interfaces other than Maestro | All, hardware-specific | Configuration rejects other drivers; port/test each driver independently. |
 | Traditional-heli live curve/servo visualization | All | Writable configuration is present; remaining ZedGraph visuals need Avalonia replacements. |
@@ -239,7 +246,7 @@ not remove required Windows-native files from `win-x64` builds.
 | ADS-B connection settings | All | The toggle controls MAVLink traffic rendering. The upstream external ADS-B server/port connection and configuration prompt are not implemented. |
 | SSH terminal | All | The upstream companion-computer SSH terminal (`Renci.SshNet`) is not ported; the terminal is MAVLink NSH only. |
 | RF propagation overlay | All | The terrain line-of-sight/RF coverage overlay (Ctrl+W upstream) is absent. |
-| Log tooling extras | All | OSD video rendering from tlog, LogIndex with map thumbnails, log download over SCP, tlog→CSV/human-readable text/graph in the tlog converter, and MAVLink Inspector "Graph It" are not ported. |
+| Log tooling extras | All | OSD video rendering from tlog, LogIndex with map thumbnails, log download over SCP, interactive tlog graphing and MAVLink Inspector "Graph It" are not ported. |
 | Geo-reference gaps | All | GPS EXIF and TRIG matching are ported. Shutter lag, Estimate Offset, AMSL base altitude and KML network-link export remain absent. |
 | Geomagnetic K-index | All | The upstream K-index fetch and warning is not ported. |
 | Remaining developer utilities | All | The safe portable subset of `temp.cs` is now a native Developer Tools page. Translation/resource editor, OpenGL 3D terrain view, MicroDrones serial downlink, vehicle default-settings loader, DevopsUI, custom GDAL/DEM browser and optical-flow live calibration image still need dedicated Avalonia implementations. |

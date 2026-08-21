@@ -441,6 +441,52 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     Settings.Instance["quickViewColumns"] = value.ToString(CultureInfo.InvariantCulture);
   }
 
+  [RelayCommand]
+  private async Task ConfigureQuickViewLayout() {
+    var columnsText = await Services.Dialogs.InputBox(
+        "QuickView Layout", "Number of columns (1..6)",
+        QuickColumns.ToString(CultureInfo.InvariantCulture));
+    if (columnsText == null) {
+      return;
+    }
+
+    int currentRows = (int)Math.Ceiling(QuickViewCount / (double)QuickColumns);
+    var rowsText = await Services.Dialogs.InputBox(
+        "QuickView Layout", "Number of rows (total cells may not exceed 12)",
+        currentRows.ToString(CultureInfo.InvariantCulture));
+    if (rowsText == null) {
+      return;
+    }
+
+    if (!TryParseQuickViewLayout(columnsText, rowsText, out int columns, out int count)) {
+      await Services.Dialogs.Alert(
+          "QuickView Layout", "Enter 1..6 columns and enough rows for a total of 1..12 cells.");
+      return;
+    }
+
+    QuickColumns = columns;
+    QuickViewCount = count;
+  }
+
+  internal static bool TryParseQuickViewLayout(
+      string columnsText, string rowsText, out int columns, out int count) {
+    columns = 0;
+    count = 0;
+    if (!int.TryParse(columnsText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedColumns)
+        || !int.TryParse(rowsText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int rows)
+        || parsedColumns is < 1 or > 6 || rows < 1) {
+      return false;
+    }
+
+    if (rows > 12 / parsedColumns) {
+      return false;
+    }
+
+    columns = parsedColumns;
+    count = parsedColumns * rows;
+    return true;
+  }
+
   private static string DescFor(MissionPlanner.CurrentState? cs, string field) {
     try {
       return cs?.GetNameandUnit(field) ?? field;

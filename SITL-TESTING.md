@@ -74,6 +74,8 @@ relies on them. Tick what behaves; report what doesn't.
 - [ ] FlightData HUD: attitude horizon, altitude, speed, heading move and look sane.
 - [ ] Mode shows correctly; arm/disarm from the GCS reflects in HUD (SITL, props irrelevant).
 - [ ] Map shows the vehicle at the home location; it moves when the vehicle moves.
+- [ ] FlightData → Quick has no permanent row/column controls. Right-click the Quick grid, choose
+  **Set View Count…**, change the layout, and verify the saved grid survives a restart.
 
 **Mission**
 - [ ] PLAN tab: draw a few waypoints, **Write** to vehicle, **Read** back — they match.
@@ -107,6 +109,8 @@ relies on them. Tick what behaves; report what doesn't.
   `60000`), save it, and verify its name and P1-P7 labels appear immediately in Flight Planner.
 - [ ] Tools → **Cursor-on-Target / TAK Output**: start UDP Client or TAK Multicast output and verify
   a CoT 2.0 event is emitted for the connected SITL system at the selected interval.
+- [ ] Tools → **Tlog Convert / Extract**: export a recorded tlog to CSV/text and extract parameters;
+  for a log containing a mission download/upload, verify the QGC WPL mission opens in Flight Planner.
 - [ ] Keep SITL disarmed while checking QNH, recovery parameter restore, MAVFTP download, reboot or
   calibration-recovery actions. Do not exercise bootloader/DFU actions unless testing disposable
   controller hardware specifically for that purpose.
