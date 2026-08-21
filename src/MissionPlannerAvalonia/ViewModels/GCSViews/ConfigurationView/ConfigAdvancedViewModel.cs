@@ -21,6 +21,8 @@ public class ConfigAdvancedViewModel : ActionPageViewModel {
     Action("NMEA", () => Views.SerialOutputNMEAWindow.OpenWindow());
     Action("Cursor-on-Target / TAK", () => Views.SerialOutputCotWindow.OpenWindow());
     Action("Follow Me", () => Views.FollowMeWindow.OpenWindow());
+    Action("Moving Base", () => Views.MovingBaseWindow.OpenWindow());
+    Action("Map Tile Cache", () => Views.MapCacheWindow.OpenWindow());
     Action("MAVLink Signing", () => _ = ManageSigningAsync());
     Action("FFT", () => Views.ConfigFFTWindow.OpenWindow());
     Action("Spectrogram", () => Views.SpectrogramWindow.OpenWindow());
@@ -38,7 +40,6 @@ public class ConfigAdvancedViewModel : ActionPageViewModel {
 
   private static readonly (string Name, string Desc, string Opens)[] _notPorted =
   {
-        ("Moving Base", "Show an extra icon on the map of your current location", "MovingBase"),
         ("Support Proxy", "Share connection with support engineer", "SerialSupportProxy"),
     };
 

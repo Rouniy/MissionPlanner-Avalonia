@@ -1,0 +1,43 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  mc:Ignorable="d"
+  d:DesignWidth="760"
+  d:DesignHeight="500"
+  x:Class="MissionPlannerAvalonia.Views.MapCacheView"
+  x:DataType="vm:MapCacheViewModel"
+  Background="{DynamicResource MpControlBg}"
+>
+  <Grid Margin="14" RowDefinitions="Auto,*,Auto,Auto" RowSpacing="10">
+    <StackPanel Grid.Row="0" Spacing="4">
+      <TextBlock Text="Map Tile Cache" FontSize="18" Foreground="#DDD" />
+      <TextBlock Text="Inspect the cross-platform Mapsui tile cache and reclaim stale or all tiles."
+                 Foreground="#AAA" TextWrapping="Wrap" />
+    </StackPanel>
+
+    <DataGrid Grid.Row="1" ItemsSource="{Binding Entries}" SelectedItem="{Binding SelectedEntry}"
+              AutoGenerateColumns="False" IsReadOnly="True" GridLinesVisibility="Horizontal">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="Provider cache" Binding="{Binding Name}" Width="170" />
+        <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="95" />
+        <DataGridTextColumn Header="Files" Binding="{Binding Files}" Width="90" />
+        <DataGridTextColumn Header="Last write" Binding="{Binding LastWrite}" Width="140" />
+        <DataGridTextColumn Header="Directory" Binding="{Binding Path}" Width="*" />
+      </DataGrid.Columns>
+    </DataGrid>
+
+    <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
+      <Button Content="Refresh" Command="{Binding RefreshCommand}" IsEnabled="{Binding !Busy}" />
+      <Button Content="Remove 30+ days" Command="{Binding RemoveOldCommand}"
+              IsEnabled="{Binding !Busy}" />
+      <Button Content="Remove All" Command="{Binding RemoveAllCommand}"
+              IsEnabled="{Binding !Busy}" />
+    </StackPanel>
+
+    <TextBlock Grid.Row="3" Text="{Binding Status}" Foreground="{DynamicResource MpAccentBrush}"
+               TextWrapping="Wrap" />
+  </Grid>
+</UserControl>

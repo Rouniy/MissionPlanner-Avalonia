@@ -138,6 +138,7 @@
             <MenuItem Header="NMEA Output     Ctrl+G" Click="OnNmeaOutput" />
             <MenuItem Header="Cursor-on-Target / TAK Output" Click="OnCotOutput" />
             <MenuItem Header="DataFlash Spectrogram     Ctrl+L" Click="OnSpectrogram" />
+            <MenuItem Header="Map Tile Cache     Ctrl+X" Click="OnMapCache" />
             <Separator />
             <MenuItem Header="Link Statistics" Click="OnLinkStats" />
             <MenuItem Header="Connection Options" Click="OnConnectionOptions" />

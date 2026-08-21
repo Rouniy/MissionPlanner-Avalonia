@@ -1,6 +1,5 @@
 using System;
 using System.Collections.ObjectModel;
-using System.Globalization;
 using System.Linq;
 using System.Threading;
 using Avalonia.Threading;
@@ -9,6 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 using MissionPlanner;
 using MissionPlanner.Comms;
 using MissionPlanner.Utilities;
+using MissionPlannerAvalonia.Services;
 
 namespace MissionPlannerAvalonia.ViewModels;
 
@@ -183,61 +183,17 @@ public partial class FollowMeViewModel : ViewModelBase, IDisposable {
   }
 
   private void ParseNmea(string line) {
-    if (string.IsNullOrEmpty(line)) {
+    if (!NmeaGgaParser.TryParse(line, out var fix, out string error)) {
+      if (error == "GPS has no position fix.") {
+        Dispatcher.UIThread.Post(() => Status = "GPS: no fix.");
+      }
       return;
     }
 
-    if (!line.StartsWith("$GPGGA") && !line.StartsWith("$GNGGA")) {
-      return;
-    }
-
-    string[] items = line.Trim().Split(',', '*');
-    if (items.Length < 9) {
-      return;
-    }
-
-    if (items[items.Length - 1] != GetChecksum(line.Trim())) {
-      return;
-    }
-
-    if (items[6] == "0") {
-      Dispatcher.UIThread.Post(() => Status = "GPS: no fix.");
-      return;
-    }
-
-    double lat = double.Parse(items[2], CultureInfo.InvariantCulture) / 100.0;
-    lat = (int)lat + (lat - (int)lat) / 0.60;
-    if (items[3] == "S") {
-      lat *= -1;
-    }
-
-    double lng = double.Parse(items[4], CultureInfo.InvariantCulture) / 100.0;
-    lng = (int)lng + (lng - (int)lng) / 0.60;
-    if (items[5] == "W") {
-      lng *= -1;
-    }
-
-    _gotoLocation.Lat = lat;
-    _gotoLocation.Lng = lng;
+    _gotoLocation.Lat = fix.Latitude;
+    _gotoLocation.Lng = fix.Longitude;
     _gotoLocation.Alt = RelativeAltM;
-    _gotoLocation.Tag = "Sats " + items[7] + " hdop " + items[8];
-  }
-
-  private static string GetChecksum(string sentence) {
-    int checksum = 0;
-    foreach (char c in sentence) {
-      if (c == '$') {
-        continue;
-      }
-
-      if (c == '*') {
-        return checksum.ToString("X2");
-      }
-
-      checksum = checksum == 0 ? Convert.ToByte(c) : checksum ^ Convert.ToByte(c);
-    }
-
-    return checksum.ToString("X2");
+    _gotoLocation.Tag = $"Sats {fix.Satellites} hdop {fix.Hdop:0.##}";
   }
 
   private void Stop() {

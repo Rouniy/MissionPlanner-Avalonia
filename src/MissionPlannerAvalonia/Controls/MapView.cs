@@ -26,6 +26,7 @@ public class MapView : MapControl {
   private readonly WritableLayer _missionMarkers = new() { Name = "Mission waypoints" };
   private readonly WritableLayer _fence = new() { Name = "GeoFence" };
   private readonly WritableLayer _rally = new() { Name = "Rally points" };
+  private readonly WritableLayer _movingBase = new() { Name = "Moving base" };
   private readonly WritableLayer _guidedTarget = new() { Name = "Guided target" };
   private readonly WritableLayer _poi = new() { Name = "POI" };
   private readonly WritableLayer _photoMarkers = new() { Name = "Camera feedback" };
@@ -99,6 +100,7 @@ public class MapView : MapControl {
     map.Layers.Add(_photoMarkers);
     map.Layers.Add(_traffic);
     map.Layers.Add(_guidedTarget);
+    map.Layers.Add(_movingBase);
     _vehicle.Style = MavMarker.Vehicle(0);
     map.Layers.Add(_vehicle);
 
@@ -246,11 +248,14 @@ public class MapView : MapControl {
     UpdateMissionOverlay(mav.wps.OrderBy(item => item.Key).ToArray(), mav.cs);
     UpdateFenceOverlay(mav.fencepoints.OrderBy(item => item.Key).ToArray());
     UpdateRallyOverlay(mav.rallypoints.OrderBy(item => item.Key).ToArray());
+    UpdateMovingBaseOverlay(mav.cs);
     UpdatePoiOverlay();
   }
 
   private void ClearOperationalOverlays() {
-    foreach (var layer in new[] { _missionRoute, _missionMarkers, _fence, _rally, _poi }) {
+    foreach (var layer in new[] {
+        _missionRoute, _missionMarkers, _fence, _rally, _movingBase, _poi,
+    }) {
       layer.Clear();
       layer.DataHasChanged();
     }
@@ -427,6 +432,25 @@ public class MapView : MapControl {
       _rally.Add(marker);
     }
     _rally.DataHasChanged();
+  }
+
+  private void UpdateMovingBaseOverlay(MissionPlanner.CurrentState currentState) {
+    _movingBase.Clear();
+    var location = currentState.Base;
+    if (location != null && ValidLatLng(location.Lat, location.Lng)) {
+      var marker = BuildLabeledMarker(
+          location.Lat, location.Lng, "BASE", Color.FromArgb(255, 0, 210, 210), Color.Black);
+      marker.Styles.Add(new LabelStyle {
+        Text = $"{location.Alt:0.0} m AMSL"
+            + (string.IsNullOrWhiteSpace(location.Tag?.ToString()) ? "" : $"  {location.Tag}"),
+        ForeColor = Color.White,
+        BackColor = new Brush(Color.FromArgb(160, 0, 0, 0)),
+        Font = new Font { Size = 9 },
+        Offset = new Offset(0, 16),
+      });
+      _movingBase.Add(marker);
+    }
+    _movingBase.DataHasChanged();
   }
 
   private void UpdatePoiOverlay() {
