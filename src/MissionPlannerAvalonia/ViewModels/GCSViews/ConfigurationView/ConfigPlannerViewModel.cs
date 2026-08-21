@@ -8,7 +8,7 @@ using MissionPlannerAvalonia.Services;
 namespace MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView;
 
 // Remaining upstream-only controls and their platform impact are tracked in docs/PORT_STATUS.md.
-public partial class ConfigPlannerViewModel : ViewModelBase {
+public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable {
   private const string _defaultMapIconDesc =
       "{alt}{altunit} {airspeed}{speedunit} id:{sysid} Sats:{satcount} HDOP:{gpshdop} Volts:{battery_voltage}";
 
@@ -57,6 +57,9 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
   private string _layout = "Advanced";
 
   [ObservableProperty]
+  private bool _layoutSelectorVisible = true;
+
+  [ObservableProperty]
   private string _language = "English (United States)";
 
   [ObservableProperty]
@@ -95,6 +98,12 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
   private bool _enableSpeech;
 
   public bool SpeechSubOptionsVisible => EnableSpeech;
+
+  [ObservableProperty]
+  private string _varioButtonText = "Start Vario";
+
+  [ObservableProperty]
+  private string _varioStatus = "vario stopped";
 
   [ObservableProperty]
   private bool _speechArmedOnly;
@@ -166,7 +175,24 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
   private bool _showAirports;
 
   [ObservableProperty]
+  [NotifyPropertyChangedFor(nameof(AdsbSettingsVisible))]
   private bool _enableAdsb;
+
+  [ObservableProperty]
+  [NotifyPropertyChangedFor(nameof(AdsbTcpPortVisible))]
+  private string _adsbServer = ExternalAdsbOptions.DefaultServer;
+
+  [ObservableProperty]
+  private int _adsbPort = ExternalAdsbOptions.DefaultPort;
+
+  [ObservableProperty]
+  private string _adsbStatus = "external ADS-B disabled";
+
+  public bool AdsbSettingsVisible => EnableAdsb;
+
+  public bool AdsbTcpPortVisible => !System.Uri.TryCreate(
+      ExternalAdsbOptions.NormalizeServer(AdsbServer), System.UriKind.Absolute, out var uri)
+      || (uri.Scheme != System.Uri.UriSchemeHttp && uri.Scheme != System.Uri.UriSchemeHttps);
 
   [ObservableProperty]
   private bool _noRcReceiver;
@@ -221,6 +247,9 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
 
   public ConfigPlannerViewModel() {
     Load();
+    AudioVario.StateChanged += OnVarioStateChanged;
+    DisplayViewService.Changed += OnDisplayViewChanged;
+    RefreshVarioState();
   }
 
   private void Load() {
@@ -231,7 +260,8 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
     AltUnits = s["altunits"] ?? AltUnits;
     SpeedUnits = s["speedunits"] ?? SpeedUnits;
     Theme = MissionPlannerAvalonia.Services.ThemeService.Current;
-    Layout = s["displayview"] ?? Layout;
+    Layout = DisplayViewService.Current.displayName.ToString();
+    LayoutSelectorVisible = DisplayViewService.Current.displayPlannerLayout;
     Language = s["language"] ?? Language;
     SpeechLevel = s["speechlevel"] ?? SpeechLevel;
 
@@ -272,6 +302,8 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
     BetaUpdates = s.GetBoolean("beta_updates", BetaUpdates);
     PasswordProtect = s.GetBoolean("password_protect", PasswordProtect);
     ShowAirports = s.GetBoolean("showairports", ShowAirports);
+    AdsbServer = s.GetString("adsbserver", ExternalAdsbOptions.DefaultServer);
+    AdsbPort = s.GetInt32("adsbport", ExternalAdsbOptions.DefaultPort);
     EnableAdsb = s.GetBoolean("enableadsb", EnableAdsb);
     NoRcReceiver = s.GetBoolean("norcreceiver", NoRcReceiver);
     ShowTfr = s.GetBoolean("showtfr", ShowTfr);
@@ -296,6 +328,37 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
         : s.GetInt32("GCS_sysid", MAVLinkInterface.gcssysid);
 
     _loading = false;
+  }
+
+  [RelayCommand]
+  private async System.Threading.Tasks.Task ToggleVario() {
+    if (AudioVario.IsRunning) {
+      await System.Threading.Tasks.Task.Run(AudioVario.Stop);
+    } else {
+      await System.Threading.Tasks.Task.Run(AudioVario.Start);
+    }
+    RefreshVarioState();
+  }
+
+  private void OnVarioStateChanged(object? sender, System.EventArgs e) =>
+      Avalonia.Threading.Dispatcher.UIThread.Post(RefreshVarioState);
+
+  private void RefreshVarioState() {
+    VarioButtonText = AudioVario.IsRunning ? "Stop Vario" : "Start Vario";
+    VarioStatus = AudioVario.Status;
+  }
+
+  private void OnDisplayViewChanged(object? sender, System.EventArgs e) =>
+      Avalonia.Threading.Dispatcher.UIThread.Post(() => {
+        _loading = true;
+        Layout = DisplayViewService.Current.displayName.ToString();
+        LayoutSelectorVisible = DisplayViewService.Current.displayPlannerLayout;
+        _loading = false;
+      });
+
+  public void Dispose() {
+    AudioVario.StateChanged -= OnVarioStateChanged;
+    DisplayViewService.Changed -= OnDisplayViewChanged;
   }
 
   [RelayCommand]
@@ -336,7 +399,9 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
 
   partial void OnLayoutChanged(string value) {
     if (_loading) return;
-    Settings.Instance["displayview"] = value;
+    if (System.Enum.TryParse(value, ignoreCase: true, out DisplayNames name)) {
+      DisplayViewService.SetPreset(name);
+    }
   }
 
   partial void OnLanguageChanged(string value) {
@@ -605,6 +670,33 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
   partial void OnEnableAdsbChanged(bool value) {
     if (_loading) return;
     Settings.Instance["enableadsb"] = value.ToString();
+    _ = ApplyAdsbSettingsAsync();
+  }
+
+  partial void OnAdsbServerChanged(string value) {
+    if (_loading) return;
+    Settings.Instance["adsbserver"] = ExternalAdsbOptions.NormalizeServer(value);
+    if (EnableAdsb) {
+      _ = ApplyAdsbSettingsAsync();
+    }
+  }
+
+  partial void OnAdsbPortChanged(int value) {
+    if (_loading) return;
+    Settings.Instance["adsbport"] = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    if (EnableAdsb) {
+      _ = ApplyAdsbSettingsAsync();
+    }
+  }
+
+  private async System.Threading.Tasks.Task ApplyAdsbSettingsAsync() {
+    try {
+      AdsbStatus = EnableAdsb ? "starting external ADS-B…" : "external ADS-B disabled";
+      await AppState.Traffic.ConfigureExternalAsync(EnableAdsb, AdsbServer, AdsbPort);
+      AdsbStatus = AppState.Traffic.ExternalStatus;
+    } catch (System.Exception ex) {
+      AdsbStatus = $"external ADS-B error: {ex.Message}";
+    }
   }
 
   partial void OnNoRcReceiverChanged(bool value) {

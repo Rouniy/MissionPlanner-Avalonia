@@ -35,7 +35,8 @@
       <Border.ContextMenu>
         <ContextMenu>
           <MenuItem Header="Auto Hide Menu" ToggleType="CheckBox"
-                    IsChecked="{Binding MenuAutoHide, Mode=TwoWay}" />
+                    IsChecked="{Binding MenuAutoHide, Mode=TwoWay}"
+                    IsVisible="{Binding ShowMenuAutoHideOption}" />
           <MenuItem Header="Full Screen" Click="OnFullScreen" />
           <MenuItem Header="Readonly" Click="OnToggleReadonly" />
           <Separator />
@@ -104,6 +105,7 @@
             </Button>
             <Button
               Classes="nav"
+              IsVisible="{Binding ShowSimulation}"
               Classes.active="{Binding ActiveTab, Converter={StaticResource Eq}, ConverterParameter=SIMULATION}"
               Command="{Binding NavigateCommand}"
               CommandParameter="SIMULATION"
@@ -116,6 +118,7 @@
             </Button>
             <Button
               Classes="nav"
+              IsVisible="{Binding ShowHelp}"
               Classes.active="{Binding ActiveTab, Converter={StaticResource Eq}, ConverterParameter=HELP}"
               Command="{Binding NavigateCommand}"
               CommandParameter="HELP"

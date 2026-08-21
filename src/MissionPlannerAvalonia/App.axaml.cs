@@ -14,6 +14,8 @@ public partial class App : Application {
 
   public override void OnFrameworkInitializationCompleted() {
     Services.AppPaths.Initialize();
+    Services.DisplayViewService.Initialize();
+    Services.FlightModeNames.Initialize();
     Services.ThemeService.ApplySaved();
     Services.Speech.Enabled = MissionPlanner.Utilities.Settings.Instance.GetBoolean("speechenable", false);
     // Upstream CurrentState/MAVLinkInterface speak mode, waypoint and severe-status messages
@@ -33,9 +35,16 @@ public partial class App : Application {
           () => _ = mainViewModel.Connection.TryAutoConnectAsync());
 
       desktop.Exit += (_, _) => {
+        try {
+          System.Threading.Tasks.Task.Run(Services.AudioVario.Shutdown)
+              .Wait(System.TimeSpan.FromSeconds(2));
+        } catch {
+          // Do not leave the process stuck if a native audio output blocks during shutdown.
+        }
         Services.SpeechAnnouncer.Stop();
         WarningEngine.Stop();
         Services.Speech.Stop();
+        mainViewModel.Dispose();
         AppState.JoystickControl.Dispose();
         AppState.Traffic.Dispose();
         Services.SitlLauncher.StopAll();

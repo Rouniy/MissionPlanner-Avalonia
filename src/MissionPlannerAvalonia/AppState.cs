@@ -31,7 +31,7 @@ public static class AppState {
     global::System.CustomMessageBox.ShowEvent += Services.Dialogs.ShowUpstreamMessage;
     comPort = new MAVLinkInterface();
     JoystickControl = new Services.JoystickControlService(comPort);
-    Traffic = new Services.TrafficService();
+    Traffic = new Services.TrafficService(comPort, applySavedSettings: true);
 
     MAVLinkInterface.CreateIProgressReporterDialogue +=
         _ => new Services.ForwardingProgressReporter(ActiveConnectReporter);

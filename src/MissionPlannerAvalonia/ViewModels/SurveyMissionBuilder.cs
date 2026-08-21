@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MissionPlanner.Utilities;
 
 namespace MissionPlannerAvalonia.ViewModels;
@@ -21,7 +22,9 @@ public sealed record SurveyMissionOptions(
     int ServoPwm,
     double ServoRepeatSeconds,
     int ServoLowPwm,
-    int ServoHighPwm);
+    int ServoHighPwm,
+    int SplitCount = 1,
+    double RestoreSpeed = 0);
 
 public sealed record SurveyMissionCommand(
     MAVLink.MAV_CMD Command,
@@ -37,6 +40,8 @@ public sealed record SurveyMissionCommand(
 public sealed record SurveyMissionPlan(IReadOnlyList<SurveyMissionCommand> Commands) {
   public int NavigationCount { get; init; }
   public int CameraCommandCount { get; init; }
+  public int SegmentCount { get; init; } = 1;
+  public bool JumpTargetsAreRelative { get; init; }
 }
 
 internal static class SurveyMissionBuilder {
@@ -51,6 +56,84 @@ internal static class SurveyMissionBuilder {
 
   internal static SurveyMissionPlan Build(IReadOnlyList<PointLatLngAlt> grid,
       PointLatLngAlt home, SurveyMissionOptions options) {
+    int splitCount = options.SplitCount;
+    if (splitCount < 1) {
+      throw new ArgumentOutOfRangeException(nameof(options), "Split count must be at least one.");
+    }
+    if (grid.Count == 0) {
+      return new SurveyMissionPlan(Array.Empty<SurveyMissionCommand>()) { SegmentCount = 0 };
+    }
+    if (splitCount == 1) {
+      return BuildSegment(grid, home, options);
+    }
+    if (!options.AddTakeoff || options.FinishAction == FinishNone) {
+      throw new InvalidOperationException(
+          "Split missions require takeoff and an RTL or Land finish for every flight.");
+    }
+
+    var commands = new List<SurveyMissionCommand>();
+    var starts = new List<int>();
+    int navigationCount = 0;
+    int cameraCommandCount = 0;
+    foreach (var (start, end) in SplitRanges(grid, splitCount)) {
+      starts.Add(commands.Count);
+      var segment = BuildSegment(grid.Skip(start).Take(end - start).ToList(), home,
+          options with { SplitCount = 1 });
+      commands.AddRange(segment.Commands);
+      navigationCount += segment.NavigationCount;
+      cameraCommandCount += segment.CameraCommandCount;
+    }
+
+    int jumpCount = starts.Count;
+    var jumps = starts.Select(start => new SurveyMissionCommand(MAVLink.MAV_CMD.DO_JUMP,
+        P1: start + jumpCount + 1, P2: 1));
+    commands.InsertRange(0, jumps);
+    return new SurveyMissionPlan(commands) {
+      NavigationCount = navigationCount,
+      CameraCommandCount = cameraCommandCount,
+      SegmentCount = jumpCount,
+      JumpTargetsAreRelative = true,
+    };
+  }
+
+  internal static IReadOnlyList<(int Start, int End)> SplitRanges(
+      IReadOnlyList<PointLatLngAlt> grid, int splitCount) {
+    if (splitCount < 1) {
+      throw new ArgumentOutOfRangeException(nameof(splitCount));
+    }
+    if (grid.Count == 0) {
+      return Array.Empty<(int, int)>();
+    }
+
+    int chunk = Math.Max(1,
+        (int)Math.Round(grid.Count / (double)splitCount, MidpointRounding.AwayFromZero));
+    var ranges = new List<(int Start, int End)>();
+    for (int split = 0; split < splitCount; split++) {
+      int start = chunk * split;
+      int rawEnd = chunk * (split + 1);
+      if (start >= grid.Count) {
+        throw new InvalidOperationException("Split count exceeds the available survey strips.");
+      }
+
+      while (start != 0 && start < grid.Count && grid[start].Tag != "E") {
+        start--;
+      }
+
+      int end = Math.Min(rawEnd, grid.Count);
+      while (end > 0 && end < grid.Count && grid[end].Tag != "S") {
+        end--;
+      }
+      if (end <= start) {
+        throw new InvalidOperationException(
+            "The generated grid does not contain enough complete strip boundaries to split safely.");
+      }
+      ranges.Add((start, end));
+    }
+    return ranges;
+  }
+
+  private static SurveyMissionPlan BuildSegment(IReadOnlyList<PointLatLngAlt> grid,
+      PointLatLngAlt home, SurveyMissionOptions options) {
     var commands = new List<SurveyMissionCommand>();
     if (grid.Count == 0) {
       return new SurveyMissionPlan(commands);
@@ -58,7 +141,7 @@ internal static class SurveyMissionBuilder {
 
     if (options.AddTakeoff) {
       commands.Add(new SurveyMissionCommand(MAVLink.MAV_CMD.TAKEOFF,
-          Alt: Math.Max(0, options.TakeoffAltitude)));
+          Alt: Math.Max(0, options.TakeoffAltitude), P1: 20));
     }
 
     if (options.UseSpeed && options.FlyingSpeed > 0) {
@@ -101,7 +184,7 @@ internal static class SurveyMissionBuilder {
         if (options.TriggerMode == TriggerDigicam) {
           AddNavigation(point);
           commands.Add(new SurveyMissionCommand(MAVLink.MAV_CMD.DO_DIGICAM_CONTROL,
-              Lng: 1, P1: 1));
+              Lat: 1, P1: 1));
           cameraCommandCount++;
         } else if (options.TriggerMode == TriggerRepeatServo &&
                    !options.StopTriggerAtStripEnds) {
@@ -164,9 +247,14 @@ internal static class SurveyMissionBuilder {
       }
     }
 
-    if (options.TriggerMode == TriggerDistance && distanceTriggerStarted) {
+    if (options.TriggerMode == TriggerDistance) {
       commands.Add(TriggerDistanceCommand(0));
       cameraCommandCount++;
+    }
+
+    if (options.UseSpeed && options.RestoreSpeed > 0) {
+      commands.Add(new SurveyMissionCommand(MAVLink.MAV_CMD.DO_CHANGE_SPEED,
+          P2: options.RestoreSpeed));
     }
 
     if (options.FinishAction == FinishRtl) {
@@ -178,6 +266,7 @@ internal static class SurveyMissionBuilder {
     return new SurveyMissionPlan(commands) {
       NavigationCount = navigationCount,
       CameraCommandCount = cameraCommandCount,
+      SegmentCount = 1,
     };
   }
 

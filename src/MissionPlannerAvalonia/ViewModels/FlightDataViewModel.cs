@@ -128,6 +128,15 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private string _selectedMode = "STABILIZE";
 
+  [ObservableProperty]
+  private bool _quickViewEditable = true;
+
+  [ObservableProperty]
+  private bool _preflightEditVisible = true;
+
+  [ObservableProperty]
+  private bool _anemometerVisible = true;
+
   public FlightDataViewModel() {
     for (int i = 1; i <= 8; i++) {
       Servos.Add(new ServoOut(i));
@@ -163,6 +172,18 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     _tlog.Progress += OnTlogProgress;
     _lua.Output += OnLuaOutput;
     MissionPlanner.Warnings.WarningEngine.QuickPanelColoring += OnQuickPanelColoring;
+    Services.DisplayViewService.Changed += OnDisplayViewChanged;
+    RefreshDisplayView();
+  }
+
+  private void OnDisplayViewChanged(object? sender, EventArgs e) =>
+      Dispatcher.UIThread.Post(RefreshDisplayView);
+
+  private void RefreshDisplayView() {
+    var profile = Services.DisplayViewService.Current;
+    QuickViewEditable = !profile.lockQuickView;
+    PreflightEditVisible = profile.displayPreFlightTabEdit;
+    AnemometerVisible = profile.displayAnenometer;
   }
 
   private void OnQuickPanelColoring(string field, string color) =>
@@ -174,6 +195,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 
   public void Dispose() {
     MissionPlanner.Warnings.WarningEngine.QuickPanelColoring -= OnQuickPanelColoring;
+    Services.DisplayViewService.Changed -= OnDisplayViewChanged;
     _timer.Stop();
     _tlog.Close();
     _videoWindow?.Close();
@@ -199,6 +221,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       _nextMissionProgressUpdate = Environment.TickCount64 + 500;
     }
     VerticalSpeed = cs.verticalspeed;
+    AudioVario.SetClimbRate(cs.climbrate);
     DistToHome = cs.DistToHome;
     var settings = Settings.Instance;
     ShowDistanceToHome = settings.GetBoolean("CHK_disttohomeflightdata", true);

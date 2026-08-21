@@ -138,7 +138,8 @@
                         DoubleTapped="OnQuickViewDoubleTapped">
             <ItemsControl.ContextMenu>
               <ContextMenu>
-                <MenuItem Header="Set View Count…" Command="{Binding ConfigureQuickViewLayoutCommand}" />
+                <MenuItem Header="Set View Count…" Command="{Binding ConfigureQuickViewLayoutCommand}"
+                          IsVisible="{Binding QuickViewEditable}" />
               </ContextMenu>
             </ItemsControl.ContextMenu>
             <ItemsControl.ItemsPanel>
@@ -333,7 +334,8 @@
         <TabItem Header="PreFlight">
           <DockPanel Margin="6">
             <Button DockPanel.Dock="Top" HorizontalAlignment="Right" Content="Edit" Width="60"
-                    Command="{Binding EditPreflightCommand}" />
+                    Command="{Binding EditPreflightCommand}"
+                    IsVisible="{Binding PreflightEditVisible}" />
             <ScrollViewer>
               <ItemsControl ItemsSource="{Binding PreflightChecks}">
                 <ItemsControl.ItemTemplate>
@@ -362,7 +364,8 @@
                        DoubleTapped="OnGaugeDoubleTapped" />
             <ctl:Gauge x:Name="GSpeed" Grid.Row="0" Grid.Column="1" Margin="6" MinHeight="120"
                        Label="Speed" Units="m/s" Min="0" Max="60" Value="{Binding AirSpeed}"
-                       Value2="{Binding GroundSpeed}" DoubleTapped="OnGaugeDoubleTapped" />
+                       Value2="{Binding GroundSpeed}" DoubleTapped="OnGaugeDoubleTapped"
+                       IsVisible="{Binding AnemometerVisible}" />
             <ctl:Gauge x:Name="GAlt" Grid.Row="1" Grid.Column="0" Margin="6" MinHeight="120"
                        Label="Alt" Units="m" Min="0" Max="1000" Value="{Binding Alt}"
                        DoubleTapped="OnGaugeDoubleTapped" />

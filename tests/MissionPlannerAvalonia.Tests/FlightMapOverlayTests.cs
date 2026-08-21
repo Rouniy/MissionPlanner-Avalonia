@@ -48,6 +48,25 @@ public class FlightMapOverlayTests {
     Assert.Contains("Rally points", names);
     Assert.Contains("Guided target", names);
     Assert.Contains("POI", names);
+    Assert.Contains("ADS-B / AIS traffic", names);
+  }
+
+  [Fact]
+  public void Oa_db_radius_builds_a_closed_red_map_polygon() {
+    var feature = MapView.BuildTrafficRadius(33, 34, 25);
+
+    var polygon = Assert.IsType<NetTopologySuite.Geometries.Polygon>(feature.Geometry);
+    Assert.Equal(49, polygon.ExteriorRing.Coordinates.Length);
+    Assert.Equal(polygon.ExteriorRing.Coordinates[0], polygon.ExteriorRing.Coordinates[^1]);
+    Assert.Contains(feature.Styles, style => style is Mapsui.Styles.VectorStyle);
+  }
+
+  [Fact]
+  public void Ais_vessels_use_a_distinct_boat_marker_style() {
+    var style = MavMarker.Vessel(123);
+
+    Assert.Equal(Mapsui.Styles.SymbolType.Rectangle, style.SymbolType);
+    Assert.Equal(123, style.SymbolRotation);
   }
 
   [Fact]

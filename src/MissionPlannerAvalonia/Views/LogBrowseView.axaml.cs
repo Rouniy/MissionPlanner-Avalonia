@@ -195,30 +195,54 @@ public partial class LogBrowseView : UserControl {
       return;
     }
     Plot.ClearAll();
-    int plotted = 0, skipped = 0;
-    foreach (var curve in preset.Curves) {
-
-      (IReadOnlyList<double> xs, IReadOnlyList<double> ys)? data;
-      try {
-        data = await Task.Run(() => {
-          if (LogBrowseViewModel.IsExpression(curve.Expression)) {
-            return vm.ReadExpressionCurve(curve.Expression);
-          }
-          var parts = curve.Expression.Split('.');
-          return parts.Length == 2 ? vm.ReadCurve(parts[0], parts[1]) : null;
-        });
-      } catch (Exception) {
-        data = null;
+    var alternatives = vm.ResolvePresetAlternatives(preset);
+    if (alternatives.Count == 0) {
+      vm.Status = $"Preset '{preset.Name}' has no expression compatible with this log.";
+      return;
+    }
+    var best = new List<(GraphCurve Curve,
+        (IReadOnlyList<double> xs, IReadOnlyList<double> ys) Data)>();
+    int bestCurveCount = 0;
+    foreach (var alternative in alternatives) {
+      var candidate = new List<(GraphCurve,
+          (IReadOnlyList<double> xs, IReadOnlyList<double> ys))>();
+      foreach (var curve in alternative) {
+        (IReadOnlyList<double> xs, IReadOnlyList<double> ys)? data;
+        try {
+          data = await Task.Run(() => {
+            if (LogBrowseViewModel.IsExpression(curve.Expression)) {
+              return vm.ReadExpressionCurve(curve.Expression);
+            }
+            var parts = curve.Expression.Split('.');
+            return parts.Length == 2 ? vm.ReadCurve(parts[0], parts[1]) : null;
+          });
+        } catch (Exception) {
+          data = null;
+        }
+        if (data is { } found) {
+          candidate.Add((curve, found));
+        }
       }
-      if (data is { } d) {
-        Plot.SetSeries($"{curve.Expression}{(curve.Axis == 2 ? " (R)" : "")}", d.xs, d.ys,
-            rightAxis: curve.Axis == 2);
-        plotted++;
-      } else {
-        skipped++;
+      if (candidate.Count > best.Count) {
+        best = candidate.Select(item => (item.Item1, item.Item2)).ToList();
+        bestCurveCount = alternative.Count;
+        if (best.Count == bestCurveCount) {
+          break;
+        }
       }
     }
-    vm.Status = $"Preset '{preset.Name}': {plotted} plotted, {skipped} skipped (missing/cross-type).";
+    foreach (var item in best) {
+      var curve = item.Curve;
+      var data = item.Data;
+      Plot.SetSeries($"{curve.Expression}{(curve.Axis == 2 ? " (R)" : "")}", data.xs, data.ys,
+          rightAxis: curve.Axis == 2);
+    }
+    if (best.Count == 0) {
+      vm.Status = $"Preset '{preset.Name}' has no data in this log.";
+    } else {
+      vm.Status = $"Preset '{preset.Name}': {best.Count} plotted, "
+          + $"{bestCurveCount - best.Count} skipped.";
+    }
   }
 
   private void OnOverlay(string type, string field, ScottPlot.Color color) {

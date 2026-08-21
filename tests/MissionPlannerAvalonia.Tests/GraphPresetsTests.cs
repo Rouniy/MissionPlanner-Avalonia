@@ -14,6 +14,7 @@ public class GraphPresetsTests {
     var presets = GraphPresets.Parse(xml);
     Assert.Single(presets);
     Assert.Equal("Test/Velocity", presets[0].Name);
+    Assert.Single(presets[0].Alternatives);
     Assert.Equal(2, presets[0].Curves.Count);
     Assert.Equal("NKF1.VE", presets[0].Curves[0].Expression);
     Assert.Equal(1, presets[0].Curves[0].Axis);
@@ -28,5 +29,25 @@ public class GraphPresetsTests {
     Assert.Equal(1, curves[0].Axis);
     Assert.Equal("ATT.DesRoll-ATT.Roll", curves[1].Expression);
     Assert.Equal(2, curves[1].Axis);
+  }
+
+  [Fact]
+  public void Preserves_all_upstream_alternatives_and_description() {
+    const string xml = """
+      <graphs>
+        <graph name="Speed/Ground Speed">
+          <expression>VFR_HUD.groundspeed</expression>
+          <expression>GPS.Spd</expression>
+          <description>Ground speed from either log format</description>
+        </graph>
+      </graphs>
+      """;
+
+    var preset = Assert.Single(GraphPresets.Parse(xml));
+
+    Assert.Equal("Ground speed from either log format", preset.Description);
+    Assert.Equal(2, preset.Alternatives.Count);
+    Assert.Equal("VFR_HUD.groundspeed", Assert.Single(preset.Alternatives[0].Curves).Expression);
+    Assert.Equal("GPS.Spd", Assert.Single(preset.Alternatives[1].Curves).Expression);
   }
 }

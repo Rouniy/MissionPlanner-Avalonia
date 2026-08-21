@@ -42,7 +42,31 @@ public partial class FlightDataView : UserControl {
       _fdTabs.ContextMenu = BuildTabMenu(_fdTabs);
       ApplyTabSettings(_fdTabs);
     }
+    AttachedToVisualTree += (_, _) => {
+      if (_displayViewSubscribed) {
+        return;
+      }
+      _displayViewSubscribed = true;
+      Services.DisplayViewService.Changed += OnDisplayViewChanged;
+      if (_fdTabs != null) {
+        ApplyTabSettings(_fdTabs);
+      }
+    };
+    DetachedFromVisualTree += (_, _) => {
+      _displayViewSubscribed = false;
+      Services.DisplayViewService.Changed -= OnDisplayViewChanged;
+    };
     ApplyGaugeSettings();
+  }
+
+  private bool _displayViewSubscribed;
+
+  private void OnDisplayViewChanged(object? sender, EventArgs e) {
+    Avalonia.Threading.Dispatcher.UIThread.Post(() => {
+      if (_fdTabs != null) {
+        ApplyTabSettings(_fdTabs);
+      }
+    });
   }
 
   private static readonly Dictionary<string, string> _gaugeKeys = new() {
@@ -105,7 +129,7 @@ public partial class FlightDataView : UserControl {
   }
 
   private async void OnQuickViewDoubleTapped(object? sender, TappedEventArgs e) {
-    if (DataContext is not FlightDataViewModel vm) {
+    if (DataContext is not FlightDataViewModel { QuickViewEditable: true } vm) {
       return;
     }
 
@@ -370,13 +394,41 @@ public partial class FlightDataView : UserControl {
   private void ApplyTabSettings(TabControl tabs) {
     var items = TabItemsOf(tabs).ToList();
     var hidden = HiddenTabSet(items.Select(HeaderOf).ToList());
+    var profile = Services.DisplayViewService.Current;
     foreach (var ti in items) {
-      ti.IsVisible = !hidden.Contains(HeaderOf(ti));
+      string header = HeaderOf(ti);
+      ti.IsVisible = ProfileAllowsTab(header, profile) && !hidden.Contains(header);
+    }
+    if (!items.Any(item => item.IsVisible) && items.FirstOrDefault() is { } fallback) {
+      // Avalonia otherwise leaves an empty tab host for a malformed all-false custom profile.
+      fallback.IsVisible = true;
+    }
+    if (tabs.SelectedItem is not TabItem { IsVisible: true }
+        && items.FirstOrDefault(item => item.IsVisible) is { } selected) {
+      tabs.SelectedItem = selected;
     }
     if (TabMultiLineSetting()) {
       SetTabMultiLine(tabs, true);
     }
   }
+
+  internal static bool ProfileAllowsTab(string header, DisplayView profile) => header switch {
+    "Quick" => profile.displayQuickTab,
+    "Actions" => profile.displayAdvActionsTab,
+    "Simple Actions" => profile.displaySimpleActionsTab,
+    "Messages" => profile.displayMessagesTab,
+    "PreFlight" => profile.displayPreFlightTab,
+    "Gauges" => profile.displayGaugesTab,
+    "Status" => profile.displayStatusTab,
+    "Servo/Relay" => profile.displayServoTab,
+    "Scripts" => profile.displayScriptsTab,
+    "Payload Control" => profile.displayPayloadTab,
+    "Telemetry Logs" => profile.displayTelemetryTab,
+    "DataFlash Logs" => profile.displayDataflashTab,
+    "Transponder" => profile.displayTransponderTab,
+    "Aux Function" => profile.displayAuxFunctionTab,
+    _ => true,
+  };
 
   private static HashSet<string> HiddenTabSet(IReadOnlyList<string> headers) {
     bool hasAvaloniaSetting = Settings.Instance.ContainsKey(_hiddenTabsKey);
@@ -473,8 +525,20 @@ public partial class FlightDataView : UserControl {
     }
     var panel = new StackPanel { Spacing = 2, Margin = new Avalonia.Thickness(4) };
     var map = new List<(TabItem Ti, CheckBox Cb)>();
-    foreach (var ti in TabItemsOf(tabs)) {
-      var cb = new CheckBox { Content = HeaderOf(ti), IsChecked = ti.IsVisible };
+    var items = TabItemsOf(tabs).ToList();
+    var manuallyHidden = HiddenTabSet(items.Select(HeaderOf).ToList());
+    var profile = Services.DisplayViewService.Current;
+    foreach (var ti in items) {
+      string header = HeaderOf(ti);
+      bool profileAllows = ProfileAllowsTab(header, profile);
+      var cb = new CheckBox {
+        Content = header,
+        IsChecked = !manuallyHidden.Contains(header),
+        IsEnabled = profileAllows,
+      };
+      if (!profileAllows) {
+        ToolTip.SetTip(cb, $"Hidden by the {profile.displayName} layout profile");
+      }
       map.Add((ti, cb));
       panel.Children.Add(cb);
     }
@@ -497,12 +561,12 @@ public partial class FlightDataView : UserControl {
     var hidden = new List<string>();
     foreach (var (ti, cb) in map) {
       bool vis = cb.IsChecked == true;
-      ti.IsVisible = vis;
       if (!vis) {
         hidden.Add(HeaderOf(ti));
       }
     }
     var headers = map.Select(item => HeaderOf(item.Ti)).ToList();
     SaveTabSettings(headers, hidden.ToHashSet(StringComparer.OrdinalIgnoreCase));
+    ApplyTabSettings(tabs);
   }
 }

@@ -28,9 +28,10 @@ public class SurveyMissionBuilderTests {
         Options(trigger: SurveyMissionBuilder.TriggerDistance, stopAtEnds: true));
 
     Assert.Equal(4, plan.NavigationCount);
-    Assert.Equal(2, plan.CameraCommandCount);
+    Assert.Equal(3, plan.CameraCommandCount);
     Assert.Equal(25, plan.Commands[2].P1);
     Assert.Equal(0, plan.Commands[4].P1);
+    Assert.Equal(0, plan.Commands[^1].P1);
   }
 
   [Fact]
@@ -50,9 +51,14 @@ public class SurveyMissionBuilderTests {
 
     Assert.Equal(MAVLink.MAV_CMD.TAKEOFF, plan.Commands[0].Command);
     Assert.Equal(35, plan.Commands[0].Alt);
+    Assert.Equal(20, plan.Commands[0].P1);
     Assert.Equal(MAVLink.MAV_CMD.DO_CHANGE_SPEED, plan.Commands[1].Command);
     Assert.Equal(8, plan.Commands[1].P2);
-    Assert.Contains(plan.Commands, c => c.Command == MAVLink.MAV_CMD.DO_DIGICAM_CONTROL);
+    var digicam = Assert.Single(plan.Commands,
+        c => c.Command == MAVLink.MAV_CMD.DO_DIGICAM_CONTROL);
+    Assert.Equal(1, digicam.Lat);
+    Assert.Equal(0, digicam.Lng);
+    Assert.Equal(1, digicam.P1);
     Assert.Contains(plan.Commands, c => c.Command == MAVLink.MAV_CMD.SPLINE_WAYPOINT);
     Assert.All(plan.Commands.Where(c => c.Command == MAVLink.MAV_CMD.CONDITION_YAW),
         c => Assert.Equal(10, c.P1));
@@ -92,12 +98,85 @@ public class SurveyMissionBuilderTests {
     Assert.Equal(0, servo[1].P3);
   }
 
+  [Fact]
+  public void Split_mission_uses_complete_strip_boundaries_and_jump_targets() {
+    var options = Options(trigger: SurveyMissionBuilder.TriggerDistance) with {
+      UseSpeed = true,
+      FlyingSpeed = 8,
+      RestoreSpeed = 5,
+      AddTakeoff = true,
+      FinishAction = SurveyMissionBuilder.FinishRtl,
+      SplitCount = 2,
+    };
+
+    var grid = TwoStripGrid();
+    var ranges = SurveyMissionBuilder.SplitRanges(grid, 2);
+    var plan = SurveyMissionBuilder.Build(grid, PointLatLngAlt.Zero, options);
+
+    Assert.Equal(new[] { (0, 5), (4, 10) }, ranges);
+    Assert.Equal(2, plan.SegmentCount);
+    Assert.True(plan.JumpTargetsAreRelative);
+    var jumps = plan.Commands.Take(2).ToList();
+    Assert.All(jumps, command => Assert.Equal(MAVLink.MAV_CMD.DO_JUMP, command.Command));
+    Assert.All(jumps, command => Assert.Equal(1, command.P2));
+    var takeoffIndexes = plan.Commands.Select((command, index) => (command, index))
+        .Where(item => item.command.Command == MAVLink.MAV_CMD.TAKEOFF)
+        .Select(item => item.index + 1)
+        .ToList();
+    Assert.Equal(takeoffIndexes.Select(index => (double)index), jumps.Select(jump => jump.P1));
+    Assert.Equal(2, plan.Commands.Count(c => c.Command == MAVLink.MAV_CMD.RETURN_TO_LAUNCH));
+    Assert.Equal(4, plan.Commands.Count(c => c.Command == MAVLink.MAV_CMD.DO_CHANGE_SPEED));
+    Assert.Equal(2, plan.Commands.Count(c =>
+        c.Command == MAVLink.MAV_CMD.DO_CHANGE_SPEED && c.P2 == 5));
+  }
+
+  [Fact]
+  public void Split_mission_rejects_an_unsafe_unfinished_flight() {
+    var options = Options() with { SplitCount = 2, AddTakeoff = true };
+
+    var error = Assert.Throws<InvalidOperationException>(() =>
+        SurveyMissionBuilder.Build(TwoStripGrid(), PointLatLngAlt.Zero, options));
+
+    Assert.Contains("RTL or Land", error.Message);
+  }
+
+  [Fact]
+  public void Appending_split_plan_offsets_jump_targets_for_existing_commands() {
+    var options = Options() with {
+      SplitCount = 2,
+      AddTakeoff = true,
+      FinishAction = SurveyMissionBuilder.FinishRtl,
+    };
+    var plan = SurveyMissionBuilder.Build(TwoStripGrid(), PointLatLngAlt.Zero, options);
+    var vm = new FlightPlannerViewModel();
+    vm.Waypoints.Add(new WpRow { Command = (ushort)MAVLink.MAV_CMD.WAYPOINT });
+
+    vm.AppendSurveyPlan(plan);
+
+    var appendedJumps = vm.Waypoints.Skip(1).Take(2).ToList();
+    Assert.Equal(plan.Commands[0].P1 + 1, appendedJumps[0].P1);
+    Assert.Equal(plan.Commands[1].P1 + 1, appendedJumps[1].P1);
+  }
+
   private static List<PointLatLngAlt> Grid() => new() {
     new PointLatLngAlt(1, 1, 100, "S"),
     new PointLatLngAlt(1, 2, 100, "SM"),
     new PointLatLngAlt(1, 3, 100, "M"),
     new PointLatLngAlt(1, 4, 100, "ME"),
     new PointLatLngAlt(2, 4, 100, "E"),
+  };
+
+  private static List<PointLatLngAlt> TwoStripGrid() => new() {
+    new PointLatLngAlt(1, 1, 100, "S"),
+    new PointLatLngAlt(1, 2, 100, "SM"),
+    new PointLatLngAlt(1, 3, 100, "M"),
+    new PointLatLngAlt(1, 4, 100, "ME"),
+    new PointLatLngAlt(1, 5, 100, "E"),
+    new PointLatLngAlt(2, 5, 100, "S"),
+    new PointLatLngAlt(2, 4, 100, "SM"),
+    new PointLatLngAlt(2, 3, 100, "M"),
+    new PointLatLngAlt(2, 2, 100, "ME"),
+    new PointLatLngAlt(2, 1, 100, "E"),
   };
 
   private static SurveyMissionOptions Options(string trigger = SurveyMissionBuilder.TriggerNone,

@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MissionPlannerAvalonia.Services;
 
 namespace MissionPlannerAvalonia.ViewModels;
 
@@ -78,6 +79,7 @@ public partial class BackstageViewModel : ViewModelBase, IDeactivationAware, IDi
   protected BackstageViewModel(string? persistKey = null) {
     _persistKey = persistKey;
     AppState.ConnectionChanged += OnConnectionChanged;
+    DisplayViewService.Changed += OnDisplayViewChanged;
     _paramLoadTimer = new Avalonia.Threading.DispatcherTimer {
       Interval = TimeSpan.FromMilliseconds(300),
     };
@@ -101,10 +103,20 @@ public partial class BackstageViewModel : ViewModelBase, IDeactivationAware, IDi
     }
   }
 
+  private void OnDisplayViewChanged(object? sender, EventArgs e) {
+    if (Avalonia.Threading.Dispatcher.UIThread.CheckAccess()) {
+      RefreshVisibility();
+    } else {
+      Avalonia.Threading.Dispatcher.UIThread.Post(RefreshVisibility);
+    }
+  }
+
   protected void RefreshVisibility() {
     bool connected = AppState.IsConnected;
     foreach (var p in Pages) {
-      bool vis = (!p.RequiresConnection || connected) && (p.VisibleWhen?.Invoke() ?? true);
+      bool vis = (!p.RequiresConnection || connected)
+          && (!p.IsAdvanced || DisplayViewService.Current.isAdvancedMode)
+          && (p.VisibleWhen?.Invoke() ?? true);
 
       p.Visible = vis && (p.Group?.IsExpanded ?? true);
     }
@@ -146,6 +158,7 @@ public partial class BackstageViewModel : ViewModelBase, IDeactivationAware, IDi
     _disposed = true;
     _paramLoadTimer.Stop();
     AppState.ConnectionChanged -= OnConnectionChanged;
+    DisplayViewService.Changed -= OnDisplayViewChanged;
     foreach (var content in Pages.Select(page => page.CreatedContent).OfType<ViewModelBase>().Distinct()) {
       if (content is IDeactivationAware lifecycle) {
         lifecycle.Deactivate();

@@ -10,13 +10,15 @@ public sealed class SerialOutputCotWindow : Window {
   public SerialOutputCotWindow() {
     Title = "Cursor-on-Target / TAK Output";
     Width = 720;
-    Height = 660;
+    Height = 820;
     MinWidth = 560;
-    MinHeight = 500;
+    MinHeight = 650;
     Background = new SolidColorBrush(Color.Parse("#434445"));
     WindowStartupLocation = WindowStartupLocation.CenterOwner;
-    Content = new SerialOutputCotView { DataContext = _vm };
+    var view = new SerialOutputCotView { DataContext = _vm };
+    Content = view;
     DataContext = _vm;
+    Closing += (_, _) => view.CommitIdentityEdits();
     Closed += (_, _) => _vm.Dispose();
   }
 

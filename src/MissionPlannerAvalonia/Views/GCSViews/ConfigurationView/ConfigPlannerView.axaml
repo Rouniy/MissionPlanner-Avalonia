@@ -38,7 +38,8 @@
         <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Spacing="8">
           <ComboBox Classes="md" ItemsSource="{Binding ThemeOptions}" SelectedItem="{Binding Theme}" />
           <Button Name="ThemeEditorBtn" Content="Edit Custom…" />
-          <ComboBox Classes="md" ItemsSource="{Binding LayoutOptions}" SelectedItem="{Binding Layout}" />
+          <ComboBox Classes="md" ItemsSource="{Binding LayoutOptions}" SelectedItem="{Binding Layout}"
+                    IsVisible="{Binding LayoutSelectorVisible}" />
         </StackPanel>
 
         <TextBlock Grid.Row="3" Grid.Column="0" Classes="lbl" Text="HUD / OSD" />
@@ -56,6 +57,8 @@
       <StackPanel Orientation="Horizontal" Spacing="10">
         <CheckBox Content="Enable Speech" IsChecked="{Binding EnableSpeech, Mode=TwoWay}" />
         <ComboBox Classes="md" ItemsSource="{Binding SpeechOptions}" SelectedItem="{Binding SpeechLevel}" />
+        <Button Name="VarioToggle" Content="{Binding VarioButtonText}" Command="{Binding ToggleVarioCommand}" />
+        <TextBlock Classes="lbl" Text="{Binding VarioStatus}" VerticalAlignment="Center" />
       </StackPanel>
       <WrapPanel IsVisible="{Binding SpeechSubOptionsVisible}">
         <CheckBox Content="Armed Only" IsChecked="{Binding SpeechArmedOnly, Mode=TwoWay}" Margin="0,0,14,0" />
@@ -142,13 +145,29 @@
       <TextBlock Classes="lbl"
                  Text="{Binding MapCacheNote}"
                  TextWrapping="Wrap" />
-      <WrapPanel Margin="0,6,0,0">
-        <CheckBox Content="Show Airports" IsChecked="{Binding ShowAirports, Mode=TwoWay}" Margin="0,0,12,0" />
-        <CheckBox Content="Show No-Fly Zones" IsChecked="{Binding ShowNoFly, Mode=TwoWay}" Margin="0,0,12,0" />
-        <CheckBox Content="Show TFR" IsChecked="{Binding ShowTfr, Mode=TwoWay}" Margin="0,0,12,0" />
-        <CheckBox Content="Show ADS-B traffic" IsChecked="{Binding EnableAdsb, Mode=TwoWay}"
-                  ToolTip.Tip="Render ADSB_VEHICLE traffic received over MAVLink" Margin="0,0,12,0" />
-      </WrapPanel>
+      <StackPanel Margin="0,6,0,0" Spacing="6">
+        <WrapPanel>
+          <CheckBox Content="Show Airports" IsChecked="{Binding ShowAirports, Mode=TwoWay}" Margin="0,0,12,0" />
+          <CheckBox Content="Show No-Fly Zones" IsChecked="{Binding ShowNoFly, Mode=TwoWay}" Margin="0,0,12,0" />
+          <CheckBox Content="Show TFR" IsChecked="{Binding ShowTfr, Mode=TwoWay}" Margin="0,0,12,0" />
+          <CheckBox Content="Enable external ADS-B receiver" IsChecked="{Binding EnableAdsb, Mode=TwoWay}"
+                    ToolTip.Tip="Receive dump1090/RTL1090 or an ADS-B HTTP API; MAVLink ADS-B/AIS remains visible independently"
+                    Margin="0,0,12,0" />
+        </WrapPanel>
+        <Grid ColumnDefinitions="Auto,*,Auto,110" ColumnSpacing="8"
+              IsVisible="{Binding AdsbSettingsVisible}">
+          <TextBlock Grid.Column="0" Classes="lbl" Text="ADS-B server" />
+          <TextBox Grid.Column="1" MinWidth="300" Text="{Binding AdsbServer, Mode=TwoWay}"
+                   Watermark="https://api.adsb.lol or receiver hostname" />
+          <TextBlock Grid.Column="2" Classes="lbl" Text="TCP port"
+                     IsVisible="{Binding AdsbTcpPortVisible}" />
+          <NumericUpDown Grid.Column="3" Minimum="1" Maximum="65535" FormatString="0"
+                         Value="{Binding AdsbPort, Mode=TwoWay}"
+                         IsVisible="{Binding AdsbTcpPortVisible}" />
+        </Grid>
+        <TextBlock Classes="lbl" IsVisible="{Binding AdsbSettingsVisible}"
+                   Text="{Binding AdsbStatus}" TextWrapping="Wrap" />
+      </StackPanel>
 
       <TextBlock Classes="grp" Text="Logs" />
       <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">

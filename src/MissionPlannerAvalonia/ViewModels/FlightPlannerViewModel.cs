@@ -14,10 +14,12 @@ using MissionPlanner;
 using MissionPlanner.ArduPilot;
 using MissionPlanner.ArduPilot.Mavlink;
 using MissionPlanner.Utilities;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace MissionPlannerAvalonia.ViewModels;
 
-public partial class FlightPlannerViewModel : ViewModelBase {
+public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
   private readonly MAVLinkInterface _comPort = AppState.comPort;
   private bool _recomputing;
   private bool _restoringUndo;
@@ -32,6 +34,8 @@ public partial class FlightPlannerViewModel : ViewModelBase {
 
   public FlightPlannerViewModel() {
     Waypoints.CollectionChanged += OnWaypointsCollectionChanged;
+    Services.DisplayViewService.Changed += OnDisplayViewChanged;
+    RefreshDisplayView();
     try {
       Services.PoiStore.Load();
     } catch {
@@ -50,6 +54,36 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     } catch {
 
     }
+  }
+
+  private void OnDisplayViewChanged(object? sender, EventArgs e) =>
+      Dispatcher.UIThread.Post(RefreshDisplayView);
+
+  private void RefreshDisplayView() {
+    var profile = Services.DisplayViewService.Current;
+    ShowVerifyHeight = profile.displayCheckHeightBox;
+    var desired = new List<string> { "Mission" };
+    if (profile.displayGeoFenceMenu) {
+      desired.Add("Fence");
+    }
+    if (profile.displayRallyPointsMenu) {
+      desired.Add("Rally");
+    }
+    if (!desired.Contains(MissionType, StringComparer.Ordinal)) {
+      MissionType = "Mission";
+    }
+    if (!MissionTypes.SequenceEqual(desired, StringComparer.Ordinal)) {
+      MissionTypes.Clear();
+      foreach (string type in desired) {
+        MissionTypes.Add(type);
+      }
+    }
+  }
+
+  public void Dispose() {
+    Services.DisplayViewService.Changed -= OnDisplayViewChanged;
+    Waypoints.CollectionChanged -= OnWaypointsCollectionChanged;
+    SavePlannerSettings();
   }
 
   private void LoadPlannerSettings(Settings settings) {
@@ -480,7 +514,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   // ponytail: one grid + three backing stores for Mission/Fence/Rally, like upstream reusing one DataGridView per list; no per-type row class.
-  public string[] MissionTypes { get; } = ["Mission", "Fence", "Rally"];
+  public ObservableCollection<string> MissionTypes { get; } = [];
 
   [ObservableProperty]
   private string _missionType = "Mission";
@@ -580,6 +614,9 @@ public partial class FlightPlannerViewModel : ViewModelBase {
 
   [ObservableProperty]
   private bool _verifyHeight;
+
+  [ObservableProperty]
+  private bool _showVerifyHeight = true;
 
   partial void OnAltWarnChanged(double value) {
     OnPropertyChanged(nameof(AltWarnDisplay));
@@ -1325,14 +1362,12 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       switch (extension) {
         case ".mission":
         case ".plan":
-          bool omittedFenceReturn = SaveJsonMission(path);
+          SaveJsonMission(path);
           int savedCount = RowsForFile("Mission").Count;
           if (extension == ".plan") {
             savedCount += RowsForFile("Fence").Count + RowsForFile("Rally").Count;
           }
-          Status = omittedFenceReturn
-              ? $"Saved {Path.GetFileName(path)}. Note: QGC Plan has no fence-return field; use .fen to preserve it."
-              : $"Saved {savedCount} item(s) to {Path.GetFileName(path)}.";
+          Status = $"Saved {savedCount} item(s) to {Path.GetFileName(path)}.";
           return;
         case ".poly":
           await SavePolygonAsync(path);
@@ -1472,7 +1507,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
         F(row.Lat), F(row.Lng), F(row.Alt), "1",
       });
 
-  private bool SaveJsonMission(string path) {
+  private void SaveJsonMission(string path) {
     var missionRows = RowsForFile("Mission");
     var format = new MissionFile.RootObject {
       fileType = "Plan",
@@ -1491,6 +1526,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
 
     bool isPlan = Path.GetExtension(path).Equals(".plan", StringComparison.OrdinalIgnoreCase);
     var fenceRows = RowsForFile("Fence");
+    WpRow? breachReturn = isPlan ? GetPlanBreachReturn(fenceRows) : null;
     if (isPlan) {
       format.geoFence = BuildPlanGeoFence(fenceRows);
       format.rallyPoints = new MissionFile.RallyPoints {
@@ -1501,13 +1537,22 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       };
     }
 
-    MissionFile.WriteFile(path, format);
-    return isPlan && fenceRows.Any(row =>
-        row.Command == (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT);
+    var json = JObject.FromObject(format);
+    if (breachReturn != null) {
+      if (json["geoFence"] is not JObject fenceJson) {
+        throw new InvalidOperationException("QGC Plan GeoFence section could not be created.");
+      }
+      fenceJson["breachReturn"] = new JArray(
+          breachReturn.Lat, breachReturn.Lng, breachReturn.Alt);
+    }
+    File.WriteAllText(path, json.ToString(Formatting.Indented));
   }
 
   private void LoadJsonMission(string path, bool append) {
-    var format = MissionFile.ReadFile(path)
+    string contents = File.ReadAllText(path);
+    var root = JObject.Parse(contents);
+    WpRow? breachReturn = ReadPlanBreachReturn(root);
+    var format = JsonConvert.DeserializeObject<MissionFile.RootObject>(contents)
                  ?? throw new InvalidDataException("The JSON mission is empty.");
     if (format.mission == null) {
       throw new InvalidDataException("The JSON file has no mission section.");
@@ -1533,6 +1578,9 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     }
 
     var fenceRows = ReadPlanGeoFence(format.geoFence);
+    if (breachReturn != null) {
+      fenceRows.Add(breachReturn);
+    }
     var rallyRows = ReadPlanRally(format.rallyPoints);
     MergePlanStores(missionRows, fenceRows, rallyRows, append);
     Status = $"{(append ? "Appended" : "Loaded")} QGC Plan: {missionRows.Count} mission, "
@@ -1597,6 +1645,75 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       index += Math.Max(count, 1);
     }
     return result;
+  }
+
+  private static WpRow? GetPlanBreachReturn(IReadOnlyList<WpRow> rows) {
+    var returnPoints = rows.Where(row =>
+        row.Command == (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT).ToList();
+    if (returnPoints.Count > 1) {
+      throw new InvalidOperationException("QGC Plan supports exactly one fence breach-return point.");
+    }
+    if (returnPoints.Count == 0) {
+      return null;
+    }
+    ValidatePlanBreachReturn(
+        returnPoints[0].Lat, returnPoints[0].Lng, returnPoints[0].Alt,
+        message => new InvalidOperationException(message));
+    // MAVLink keeps the *_INT aliases for compatibility, but marks their enum names obsolete.
+    const byte globalIntFrame = 5;
+    const byte globalRelativeAltIntFrame = 6;
+    byte frame = returnPoints[0].Frame;
+    bool isRelative = frame is
+        (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT or
+        globalRelativeAltIntFrame;
+    bool isAltitudeFreeLegacyPoint = returnPoints[0].Alt == 0 && frame is
+        (byte)MAVLink.MAV_FRAME.GLOBAL or
+        globalIntFrame;
+    if (!isRelative && !isAltitudeFreeLegacyPoint) {
+      throw new InvalidOperationException(
+          "QGC Plan fence breach-return altitude must use a global-relative frame.");
+    }
+    return returnPoints[0];
+  }
+
+  private static WpRow? ReadPlanBreachReturn(JObject root) {
+    JToken? fenceToken = root["geoFence"];
+    if (fenceToken == null || fenceToken.Type == JTokenType.Null) {
+      return null;
+    }
+    if (fenceToken is not JObject fence) {
+      throw new InvalidDataException("QGC Plan geoFence must be an object.");
+    }
+    JToken? token = fence["breachReturn"];
+    if (token == null || token.Type == JTokenType.Null) {
+      return null;
+    }
+    if (token is not JArray { Count: 3 } coordinate
+        || coordinate.Any(value => value.Type is not JTokenType.Float and not JTokenType.Integer)) {
+      throw new InvalidDataException(
+          "QGC Plan geoFence.breachReturn must contain exactly three numbers: " +
+          "latitude, longitude and altitude.");
+    }
+    double lat = coordinate[0]!.Value<double>();
+    double lng = coordinate[1]!.Value<double>();
+    double alt = coordinate[2]!.Value<double>();
+    ValidatePlanBreachReturn(lat, lng, alt, message => new InvalidDataException(message));
+    return NewFileRow(
+        MAVLink.MAV_CMD.FENCE_RETURN_POINT, lat, lng, alt,
+        frame: (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT);
+  }
+
+  private static void ValidatePlanBreachReturn(
+      double lat, double lng, double alt, Func<string, Exception> error) {
+    if (!double.IsFinite(lat) || lat is < -90 or > 90) {
+      throw error("QGC Plan fence breach-return latitude must be between -90 and 90 degrees.");
+    }
+    if (!double.IsFinite(lng) || lng is < -180 or > 180) {
+      throw error("QGC Plan fence breach-return longitude must be between -180 and 180 degrees.");
+    }
+    if (!double.IsFinite(alt)) {
+      throw error("QGC Plan fence breach-return altitude must be finite.");
+    }
   }
 
   private static List<WpRow> ReadPlanMissionItems(IEnumerable<MissionFile.Item>? items) {
@@ -1679,6 +1796,10 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     }
 
     Merge(_missionStore, mission, append);
+    if (append && _fenceStore.Any(row =>
+          row.Command == (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT)) {
+      fence.RemoveAll(row => row.Command == (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT);
+    }
     Merge(_fenceStore, fence, append);
     Merge(_rallyStore, rally, append);
     Replace(StoreFor(MissionType).ToList());
@@ -2545,6 +2666,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     }
 
     using var undo = BeginUndoMutation();
+    int existingCommandCount = Waypoints.Count;
     foreach (var item in plan.Commands) {
       Waypoints.Add(new WpRow {
         Seq = Waypoints.Count,
@@ -2553,7 +2675,9 @@ public partial class FlightPlannerViewModel : ViewModelBase {
         Lat = item.Lat,
         Lng = item.Lng,
         Alt = item.Alt,
-        P1 = item.P1,
+        P1 = plan.JumpTargetsAreRelative && item.Command == MAVLink.MAV_CMD.DO_JUMP
+            ? item.P1 + existingCommandCount
+            : item.P1,
         P2 = item.P2,
         P3 = item.P3,
         P4 = item.P4,
@@ -2563,8 +2687,9 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     Renumber();
     RecomputeGrid();
     WaypointsChanged?.Invoke();
+    string segments = plan.SegmentCount > 1 ? $" in {plan.SegmentCount} flight segments" : "";
     return $"Survey added {plan.NavigationCount} navigation point(s) and " +
-           $"{plan.CameraCommandCount} camera command(s).";
+           $"{plan.CameraCommandCount} camera command(s){segments}.";
   }
 
   private void OnWaypointsCollectionChanged(object? sender,
