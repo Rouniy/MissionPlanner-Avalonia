@@ -84,6 +84,9 @@ public partial class MainWindow : Window {
       case Key.J when ctrl:
         DeviceOperationsWindow.OpenWindow();
         break;
+      case Key.W when ctrl:
+        PropagationSettingsWindow.OpenWindow();
+        break;
       case Key.Y when ctrl:
         vm.SaveToEepromCommand.Execute(null);
         break;
@@ -171,4 +174,7 @@ public partial class MainWindow : Window {
       SerialOutputCotWindow.OpenWindow();
 
   private void OnSpectrogram(object? sender, RoutedEventArgs e) => SpectrogramWindow.OpenWindow();
+
+  private void OnPropagationSettings(object? sender, RoutedEventArgs e) =>
+      PropagationSettingsWindow.OpenWindow();
 }

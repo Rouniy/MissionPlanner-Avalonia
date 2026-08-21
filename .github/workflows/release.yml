@@ -16,28 +16,75 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - name: Check tag matches current year.month (UTC)
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Check tag matches MissionPlanner, build date and commit
         shell: bash
         run: |
           V="${GITHUB_REF_NAME#v}"
-          if [[ ! "$V" =~ ^[0-9]{4}\.[0-9]{1,2}(\.[0-9]+)?$ ]]; then
-            echo "::error::Tag '$GITHUB_REF_NAME' is not CalVer (expected vYYYY.M or vYYYY.M.patch)."
+          if [[ ! "$V" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-([0-9]{8})\.([0-9a-fA-F]{7})$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' must be v<MP-version>-<yyyyMMdd>.<short-hash>."
             exit 1
           fi
-          TAG_YEAR="${V%%.*}"
-          REST="${V#*.}"
-          TAG_MONTH="${REST%%.*}"
-          NOW_YEAR="$(date -u +%Y)"
-          NOW_MONTH="$(date -u +%-m)"
-          if [[ "$TAG_YEAR" != "$NOW_YEAR" || "$TAG_MONTH" != "$NOW_MONTH" ]]; then
-            echo "::error::CalVer mismatch: tag is ${TAG_YEAR}.${TAG_MONTH} but current UTC date is ${NOW_YEAR}.${NOW_MONTH}. Re-tag with v${NOW_YEAR}.${NOW_MONTH}."
+          TAG_BASE="${BASH_REMATCH[1]}"
+          TAG_DATE="${BASH_REMATCH[2]}"
+          TAG_HASH="${BASH_REMATCH[3],,}"
+          OFFICIAL="$(sed -nE 's/.*AssemblyFileVersion\("([0-9]+\.[0-9]+\.[0-9]+)"\).*/\1/p' \
+            external/MissionPlanner/Properties/AssemblyInfo.cs | head -1)"
+          ACTUAL_HASH="$(git rev-parse --short=7 HEAD)"
+          if [[ "$TAG_BASE" != "$OFFICIAL" ]]; then
+            echo "::error::Tag version $TAG_BASE does not match pinned MissionPlanner $OFFICIAL."
             exit 1
           fi
-          echo "OK: ${TAG_YEAR}.${TAG_MONTH} matches current UTC month."
+          if [[ "$TAG_HASH" != "$ACTUAL_HASH" ]]; then
+            echo "::error::Tag hash $TAG_HASH does not match its port commit $ACTUAL_HASH."
+            exit 1
+          fi
+          if ! date -u -d "$TAG_DATE" +%Y%m%d | grep -qx "$TAG_DATE"; then
+            echo "::error::Tag build date $TAG_DATE is invalid."
+            exit 1
+          fi
+          echo "OK: MissionPlanner $OFFICIAL, build $TAG_DATE, port $ACTUAL_HASH."
 
-  package:
+  resolve-version:
     needs: validate-version
     if: always() && (needs.validate-version.result == 'success' || needs.validate-version.result == 'skipped')
+    runs-on: ubuntu-latest
+    outputs:
+      base: ${{ steps.ver.outputs.base }}
+      date: ${{ steps.ver.outputs.date }}
+      commit: ${{ steps.ver.outputs.commit }}
+      revision: ${{ steps.ver.outputs.revision }}
+      version: ${{ steps.ver.outputs.version }}
+      artifact: ${{ steps.ver.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Resolve version once for all platforms
+        id: ver
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            if [[ "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-([0-9]{8})\.([0-9a-fA-F]{7})$ ]]; then
+              export MISSIONPLANNER_BUILD_DATE="${BASH_REMATCH[1]}"
+              export MISSIONPLANNER_COMMIT="${BASH_REMATCH[2]}"
+            fi
+          fi
+          export MISSIONPLANNER_DIRTY_SUFFIX=""
+          source build/version.sh
+          echo "base=$MP_UPSTREAM_VERSION" >> "$GITHUB_OUTPUT"
+          echo "date=$MP_BUILD_DATE" >> "$GITHUB_OUTPUT"
+          echo "commit=$MP_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "revision=$MP_PORT_REVISION" >> "$GITHUB_OUTPUT"
+          echo "version=$MP_PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "artifact=$MP_ARTIFACT_VERSION" >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: resolve-version
     strategy:
       fail-fast: false
       matrix:
@@ -49,6 +96,13 @@ jobs:
           - os: ubuntu-latest
             rid: linux-x64
     runs-on: ${{ matrix.os }}
+    env:
+      MP_RELEASE_BASE: ${{ needs.resolve-version.outputs.base }}
+      MP_RELEASE_DATE: ${{ needs.resolve-version.outputs.date }}
+      MP_RELEASE_COMMIT: ${{ needs.resolve-version.outputs.commit }}
+      MP_RELEASE_REVISION: ${{ needs.resolve-version.outputs.revision }}
+      MP_RELEASE_VERSION: ${{ needs.resolve-version.outputs.version }}
+      MP_RELEASE_ARTIFACT: ${{ needs.resolve-version.outputs.artifact }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -57,25 +111,6 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
-
-      - name: Resolve version
-        id: ver
-        shell: bash
-        run: |
-          REF="${GITHUB_REF_NAME:-dev}"
-          V="${REF#v}"
-          # workflow_dispatch on a branch has a non-version ref. Use the project CalVer
-          # in that case so Debian metadata and assembly file versions remain valid.
-          if [[ ! "$V" =~ ^[0-9]{4}\.[0-9]{1,2}(\.[0-9]+)?$ ]]; then
-            V="$(dotnet msbuild "$APP" -nologo -getProperty:Version)"
-          fi
-          # Patch = 3rd CalVer field (default 0). Passed as VersionPatch so the app project's
-          # date-derived Version resolves to this; we must NOT pass a global -p:Version because
-          # it leaks into the shielded submodule's MetaDataExtractor ProjectReference.
-          IFS=. read -r _y _m _p <<< "$V"
-          echo "v=$V" >> "$GITHUB_OUTPUT"
-          echo "patch=${_p:-0}" >> "$GITHUB_OUTPUT"
-          echo "fv=$V.0" >> "$GITHUB_OUTPUT"
 
       - name: Package macOS (.app, self-contained, signed + notarized)
         if: matrix.rid == 'osx-x64'
@@ -88,12 +123,13 @@ jobs:
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           MACOS_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
         run: |
-          V=${{ steps.ver.outputs.v }}
           rm -rf out/osx dist
           dotnet publish "$APP" -c Release -r osx-x64 --self-contained true \
             -m:1 \
             -p:DebugType=none -p:StripSymbols=true \
-            -p:VersionPatch="${{ steps.ver.outputs.patch }}" -p:FileVersion="${{ steps.ver.outputs.fv }}" -p:AssemblyVersion="${{ steps.ver.outputs.fv }}" \
+            -p:MissionPlannerUpstreamVersion="$MP_RELEASE_BASE" \
+            -p:MissionPlannerBuildDate="$MP_RELEASE_DATE" \
+            -p:MissionPlannerCommit="$MP_RELEASE_COMMIT" \
             -o out/osx
 
           # Import the Developer ID cert into a throwaway keychain when secrets are present;
@@ -118,10 +154,10 @@ jobs:
           fi
 
           chmod +x build/macos/make-app.sh
-          ./build/macos/make-app.sh out/osx "$V" "dist/Mission Planner.app"
+          ./build/macos/make-app.sh out/osx "$MP_RELEASE_BASE" "dist/Mission Planner.app"
 
           mkdir -p upload
-          ZIP="upload/MissionPlannerAvalonia-$V-osx-x64.zip"
+          ZIP="upload/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-osx-x64.zip"
           ( cd dist && ditto -c -k --sequesterRsrc --keepParent "Mission Planner.app" "../$ZIP" )
 
           # Notarize the zip, then staple the ticket onto the bundle and re-zip so the
@@ -141,16 +177,17 @@ jobs:
         if: matrix.rid == 'win-x64'
         shell: bash
         run: |
-          V=${{ steps.ver.outputs.v }}
           rm -rf out/win stage
           # Self-contained folder (loose dlls) so the auto-updater can diff and download only the
           # changed files instead of the whole exe.
           dotnet publish "$APP" -c Release -r win-x64 --self-contained true \
             -m:1 \
             -p:DebugType=none \
-            -p:VersionPatch="${{ steps.ver.outputs.patch }}" -p:FileVersion="${{ steps.ver.outputs.fv }}" -p:AssemblyVersion="${{ steps.ver.outputs.fv }}" \
+            -p:MissionPlannerUpstreamVersion="$MP_RELEASE_BASE" \
+            -p:MissionPlannerBuildDate="$MP_RELEASE_DATE" \
+            -p:MissionPlannerCommit="$MP_RELEASE_COMMIT" \
             -o out/win
-          DIR="MissionPlannerAvalonia-$V-win-x64"
+          DIR="MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-win-x64"
           mkdir -p "stage/$DIR"
           cp -r out/win/. "stage/$DIR/"
           mkdir -p upload
@@ -160,10 +197,12 @@ jobs:
         if: matrix.rid == 'linux-x64'
         shell: bash
         run: |
-          V=${{ steps.ver.outputs.v }}
-          VERSION="$V" \
-          VERSION_PATCH="${{ steps.ver.outputs.patch }}" \
-          FILE_VERSION="${{ steps.ver.outputs.fv }}" \
+          MISSIONPLANNER_UPSTREAM_VERSION="$MP_RELEASE_BASE" \
+          MISSIONPLANNER_BUILD_DATE="$MP_RELEASE_DATE" \
+          MISSIONPLANNER_COMMIT="$MP_RELEASE_COMMIT" \
+          MISSIONPLANNER_PORT_REVISION="$MP_RELEASE_REVISION" \
+          MISSIONPLANNER_DIRTY_SUFFIX="" \
+          PACKAGE_VERSION="$MP_RELEASE_VERSION" \
           OUTPUT_DIR="$GITHUB_WORKSPACE/upload" \
           PUBLISH_PARENT="$GITHUB_WORKSPACE/out" \
           ./build/linux/package.sh all
@@ -173,29 +212,32 @@ jobs:
         env:
           SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
         run: |
-          V=${{ steps.ver.outputs.v }}
           RID=${{ matrix.rid }}
           case "$RID" in
             win-x64)   PUB=out/win ;;
             osx-x64)   PUB=out/osx ;;
-            linux-x64) PUB="out/MissionPlannerAvalonia-$V-linux-x64" ;;
+            linux-x64) PUB="out/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-linux-x64" ;;
           esac
           SITE="site/$RID"
           rm -rf "$SITE"; mkdir -p "$SITE"
-          NOTES="https://github.com/${GITHUB_REPOSITORY}/releases/tag/v$V"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            NOTES="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}"
+          else
+            NOTES="https://github.com/${GITHUB_REPOSITORY}/releases"
+          fi
           if [[ "$RID" == "osx-x64" ]]; then
             # macOS updates whole-bundle (notarization can't survive loose-file swaps). The manifest
             # points at the notarized .app zip that the release job publishes as a release asset; the
             # URL is deterministic from the tag, so it resolves once release + pages jobs finish.
-            ZIP="upload/MissionPlannerAvalonia-$V-osx-x64.zip"
-            BUNDLE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/MissionPlannerAvalonia-$V-osx-x64.zip"
+            ZIP="upload/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-osx-x64.zip"
+            BUNDLE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-osx-x64.zip"
             BUNDLE_SHA=$(shasum -a 256 "$ZIP" | awk '{print $1}')
             BUNDLE_SIZE=$(stat -f%z "$ZIP")
-            python3 build/gen-manifest.py "$SITE" "$V" "$NOTES" "$SITE/manifest.json" \
+            python3 build/gen-manifest.py "$SITE" "$MP_RELEASE_VERSION" "$NOTES" "$SITE/manifest.json" \
               --bundle-url "$BUNDLE_URL" --bundle-sha256 "$BUNDLE_SHA" --bundle-size "$BUNDLE_SIZE"
           else
             cp -R "$PUB"/. "$SITE"/
-            python3 build/gen-manifest.py "$SITE" "$V" "$NOTES" "$SITE/manifest.json"
+            python3 build/gen-manifest.py "$SITE" "$MP_RELEASE_VERSION" "$NOTES" "$SITE/manifest.json"
           fi
           # Sign the exact manifest bytes with the Ed25519 private key (raw 64-byte sig, base64).
           printf '%s' "$SIGNING_KEY" > update_key.pem

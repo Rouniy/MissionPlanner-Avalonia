@@ -209,7 +209,15 @@ public class UpdaterTests {
   [InlineData("2026.7.0", "2026.7.0", false)]
   [InlineData("2026.6.0", "2026.7.0", false)]
   [InlineData("v2026.7.0", "2026.7.0-beta", false)]
-  public void IsNewer_compares_calver(string remote, string local, bool expected) {
+  [InlineData("1.3.83+20260821.abcdef0", "2026.8.0", true)]
+  [InlineData("2026.8.1", "1.3.83+20260821.abcdef0", false)]
+  [InlineData("1.3.84+20260821.abcdef0", "1.3.83+20260821.abcdef0", true)]
+  [InlineData("1.3.83+20260822.abcdef0", "1.3.83+20260821.abcdef0", true)]
+  [InlineData("1.3.83+20260821.abcdef1", "1.3.83+20260821.abcdef0", true)]
+  [InlineData("1.3.83+20260821.abcdef0", "1.3.83+20260821.abcdef0", false)]
+  [InlineData("1.3.83+20260821.abcdef0", "1.3.83+20260821", false)]
+  public void IsNewer_compares_official_version_build_and_legacy_calver(
+      string remote, string local, bool expected) {
     Assert.Equal(expected, UpdateEngine.IsNewer(remote, local));
   }
 }

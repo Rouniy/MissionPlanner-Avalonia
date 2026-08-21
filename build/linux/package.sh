@@ -18,25 +18,22 @@ CONFIGURATION="${CONFIGURATION:-Release}"
 RID="${RID:-linux-x64}"
 OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/out/packages}"
 PUBLISH_PARENT="${PUBLISH_PARENT:-$ROOT_DIR/out}"
+source "$ROOT_DIR/build/version.sh"
 
 if [[ "$RID" != "linux-x64" ]]; then
   echo "The Debian and tar packaging target currently supports RID=linux-x64 only." >&2
   exit 2
 fi
 
-VERSION="${VERSION:-$($DOTNET msbuild "$APP_PROJECT" -nologo -getProperty:Version)}"
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-  echo "Package VERSION must be numeric (YEAR.MONTH or YEAR.MONTH.PATCH): '$VERSION'" >&2
+if [[ ! "$MP_PACKAGE_VERSION" =~ ^[0-9A-Za-z.+~]+$ ]]; then
+  echo "Package version contains characters unsupported by Debian: '$MP_PACKAGE_VERSION'" >&2
   exit 2
 fi
-IFS=. read -r _version_year _version_month _version_patch <<< "$VERSION"
-VERSION_PATCH="${VERSION_PATCH:-${_version_patch:-0}}"
-FILE_VERSION="${FILE_VERSION:-$VERSION.0}"
 PACKAGE_ARCH="amd64"
-DIR_NAME="MissionPlannerAvalonia-$VERSION-$RID"
+DIR_NAME="MissionPlannerAvalonia-$MP_ARTIFACT_VERSION-$RID"
 PUBLISH_DIR="$PUBLISH_PARENT/$DIR_NAME"
 TAR_PATH="$OUTPUT_DIR/$DIR_NAME.tar.gz"
-DEB_PATH="$OUTPUT_DIR/missionplanner-avalonia_${VERSION}_${PACKAGE_ARCH}.deb"
+DEB_PATH="$OUTPUT_DIR/missionplanner-avalonia_${MP_ARTIFACT_VERSION}_${PACKAGE_ARCH}.deb"
 BUILD_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT_DIR" log -1 --format=%ct)}"
 export SOURCE_DATE_EPOCH="$BUILD_EPOCH"
 
@@ -57,20 +54,22 @@ PUBLISH_TEMP="$WORK_ROOT/publish"
 mkdir -p "$PUBLISH_TEMP" "$OUTPUT_DIR" "$PUBLISH_PARENT"
 
 echo "Publishing $DIR_NAME"
-# VERSION is also a reserved MSBuild property. Keep our package version out of the
-# environment and pass only VersionPatch, otherwise it leaks into upstream projects.
+# Do not pass the reserved global MSBuild Version property: it would leak into the
+# shielded MissionPlanner ProjectReferences. The executable project consumes these
+# namespaced properties and stamps its own official/date/commit version contract.
 env -u VERSION "$DOTNET" publish "$APP_PROJECT" \
   -c "$CONFIGURATION" \
   -r "$RID" \
   --self-contained true \
   -m:1 \
   -p:DebugType=none \
-  -p:VersionPatch="$VERSION_PATCH" \
-  -p:FileVersion="$FILE_VERSION" \
-  -p:AssemblyVersion="$FILE_VERSION" \
+  -p:MissionPlannerUpstreamVersion="$MP_UPSTREAM_VERSION" \
+  -p:MissionPlannerBuildDate="$MP_BUILD_DATE" \
+  -p:MissionPlannerCommit="$MP_COMMIT$MP_DIRTY_SUFFIX" \
   -o "$PUBLISH_TEMP"
 
 test -x "$PUBLISH_TEMP/MissionPlannerAvalonia"
+test -s "$PUBLISH_TEMP/airports.csv"
 for unwanted in libusb-1.0.dll simpleble-c.dll simpleble.dll; do
   if [[ -e "$PUBLISH_TEMP/$unwanted" ]]; then
     echo "Linux publish contains a Windows-native library: $unwanted" >&2
@@ -118,6 +117,12 @@ build_deb() {
   local doc_dir="$deb_root/usr/share/doc/missionplanner-avalonia"
   local installed_size
 
+  if ! command -v dpkg >/dev/null 2>&1 ||
+      ! dpkg --validate-version "$MP_DEBIAN_VERSION" 2>/dev/null; then
+    echo "Invalid Debian version or missing dpkg: '$MP_DEBIAN_VERSION'" >&2
+    return 2
+  fi
+
   mkdir -p \
     "$deb_root/DEBIAN" \
     "$app_dir" \
@@ -145,7 +150,7 @@ build_deb() {
   gzip -n -9 -c "$SCRIPT_DIR/debian/missionplanner-avalonia.1" \
     > "$deb_root/usr/share/man/man1/missionplanner-avalonia.1.gz"
   {
-    echo "missionplanner-avalonia ($VERSION) unstable; urgency=medium"
+    echo "missionplanner-avalonia ($MP_DEBIAN_VERSION) unstable; urgency=medium"
     echo
     echo "  * Build the self-contained cross-platform Mission Planner port."
     echo
@@ -170,7 +175,7 @@ build_deb() {
   installed_size="$(du -sk "$deb_root" | cut -f1)"
 
   sed \
-    -e "s/@VERSION@/$VERSION/g" \
+    -e "s/@VERSION@/$MP_DEBIAN_VERSION/g" \
     -e "s/@ARCH@/$PACKAGE_ARCH/g" \
     -e "s/@INSTALLED_SIZE@/$installed_size/g" \
     "$SCRIPT_DIR/debian/control.in" > "$deb_root/DEBIAN/control"

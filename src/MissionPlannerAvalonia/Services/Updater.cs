@@ -64,10 +64,11 @@ public static class Updater {
       return;
     }
 
-    string local = AppVersion.Number;
+    string local = AppVersion.Informational;
+    string localDisplay = AppVersion.Full;
     if (!UpdateEngine.IsNewer(m.Version, local)) {
       if (!silentWhenUpToDate) {
-        await Dialogs.Alert("Update", $"You are up to date ({local}).");
+        await Dialogs.Alert("Update", $"You are up to date ({localDisplay}).");
       }
       return;
     }
@@ -78,7 +79,8 @@ public static class Updater {
 
     while (true) {
       var choice = await Dialogs.Choice("Update available",
-          $"Version {m.Version} is available (you have {local}).",
+          $"Version {AppVersion.Parse(m.Version).Display} is available " +
+          $"(you have {localDisplay}).",
           "Install", "What's new", "Skip this version", "Later");
       if (choice == "What's new") {
         Dialogs.OpenUrl(string.IsNullOrEmpty(m.Notes)
@@ -419,7 +421,38 @@ public sealed class UpdateEngine {
     }
   }
 
-  public static bool IsNewer(string remote, string local) => V3(remote).CompareTo(V3(local)) > 0;
+  public static bool IsNewer(string remote, string local) {
+    AppVersionParts remoteParts = AppVersion.Parse(remote);
+    AppVersionParts localParts = AppVersion.Parse(local);
+    var remoteNumber = V3(remoteParts.Number);
+    var localNumber = V3(localParts.Number);
+
+    // One-time migration from the port's old YYYY.M.patch CalVer to the official
+    // MissionPlanner x.y.z base. The first official-version build must update an older
+    // CalVer installation even though its numeric major is necessarily smaller.
+    bool remoteCalVer = IsLegacyCalVer(remoteNumber);
+    bool localCalVer = IsLegacyCalVer(localNumber);
+    if (remoteCalVer != localCalVer) {
+      return !remoteCalVer;
+    }
+
+    int numberComparison = remoteNumber.CompareTo(localNumber);
+    if (numberComparison != 0) {
+      return numberComparison > 0;
+    }
+
+    int dateComparison = string.CompareOrdinal(remoteParts.BuildDate, localParts.BuildDate);
+    if (dateComparison != 0) {
+      return dateComparison > 0;
+    }
+
+    // Git hashes do not have a useful ordering. If the release server and local build have
+    // different commits for the same official version/date, install the server's selected
+    // release once; after the update their hashes match and it no longer prompts.
+    return remoteParts.Hash.Length > 0
+        && localParts.Hash.Length > 0
+        && !string.Equals(remoteParts.Hash, localParts.Hash, StringComparison.OrdinalIgnoreCase);
+  }
 
   private static (int, int, int) V3(string s) {
     s = (s ?? "").Trim();
@@ -434,6 +467,9 @@ public sealed class UpdateEngine {
     int g(int i) => i < p.Length && int.TryParse(p[i], out var x) ? x : 0;
     return (g(0), g(1), g(2));
   }
+
+  private static bool IsLegacyCalVer((int Major, int Minor, int Patch) version) =>
+      version.Major is >= 2000 and <= 2999 && version.Minor is >= 1 and <= 12;
 
   private static string Sha256File(string path) {
     using var stream = File.OpenRead(path);

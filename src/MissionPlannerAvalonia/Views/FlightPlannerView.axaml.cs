@@ -390,6 +390,7 @@ public partial class FlightPlannerView : UserControl {
     OnDrawnPolygonChanged();
     Map.SetGraticuleVisible(_wired.ShowGrid);
     Map.SetMapType(_wired.MapType);
+    Map.SetHome(_wired.HomeLat, _wired.HomeLng, _wired.HomeAlt);
   }
 
   private void OnPoiChanged() =>
@@ -410,8 +411,9 @@ public partial class FlightPlannerView : UserControl {
     } else if (e.PropertyName == nameof(FlightPlannerViewModel.MapType)) {
       Map.SetMapType(Vm.MapType);
     } else if (e.PropertyName == nameof(FlightPlannerViewModel.HomeLat)
-               || e.PropertyName == nameof(FlightPlannerViewModel.HomeLng)) {
-      Map.SetHome(Vm.HomeLat, Vm.HomeLng);
+               || e.PropertyName == nameof(FlightPlannerViewModel.HomeLng)
+               || e.PropertyName == nameof(FlightPlannerViewModel.HomeAlt)) {
+      Map.SetHome(Vm.HomeLat, Vm.HomeLng, Vm.HomeAlt);
     } else if (e.PropertyName == nameof(FlightPlannerViewModel.MissionType)) {
       Map.SetRenderMode(Vm.MissionType);
     } else if (e.PropertyName == nameof(FlightPlannerViewModel.WpRadius)
@@ -733,7 +735,8 @@ public partial class FlightPlannerView : UserControl {
     }
 
     GridUIWindow.OpenForPolygon(area.polygon, area.home,
-        plan => vm.Status = vm.AppendSurveyPlan(plan));
+        plan => vm.Status = vm.AppendSurveyPlan(plan),
+        vm.ReplaceDrawnPolygon);
   }
 
   private Window? OwnerWindow => TopLevel.GetTopLevel(this) as Window;

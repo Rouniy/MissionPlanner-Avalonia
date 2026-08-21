@@ -13,6 +13,23 @@ using MissionPlannerAvalonia.Services;
 
 namespace MissionPlannerAvalonia.ViewModels;
 
+internal sealed record SurveyGridPreviewState(
+    IReadOnlyList<PointLatLngAlt> Boundary,
+    IReadOnlyList<PointLatLngAlt> Grid,
+    PointLatLngAlt Home,
+    bool Corridor,
+    bool ShowBoundary,
+    bool ShowGrid,
+    bool ShowMarkers,
+    bool ShowInternals,
+    bool ShowFootprints,
+    double Angle,
+    bool CameraFacingForward,
+    bool HoldHeading,
+    double Heading,
+    double HorizontalFovDegrees,
+    double VerticalFovDegrees);
+
 public partial class GridUIViewModel : ViewModelBase {
   private const double _rad2Deg = 180 / Math.PI;
 
@@ -34,13 +51,23 @@ public partial class GridUIViewModel : ViewModelBase {
     nameof(UseSplineWaypoints), nameof(HoldHeading), nameof(Heading), nameof(WaypointDelay),
     nameof(ServoNumber), nameof(ServoPwm), nameof(ServoRepeatSeconds),
     nameof(ServoLowPwm), nameof(ServoHighPwm), nameof(GroundElevationText),
+    nameof(IsPointStart), nameof(BoundaryPointCount),
+  };
+
+  private static readonly HashSet<string> _previewDisplayProps = new() {
+    nameof(ShowBoundary), nameof(ShowGrid), nameof(ShowMarkers),
+    nameof(ShowInternals), nameof(ShowFootprints),
   };
 
   public List<PointLatLngAlt> Result { get; private set; } = new();
 
   public event Action<SurveyMissionPlan>? GridAccepted;
 
+  public event Action<IReadOnlyList<PointLatLngAlt>>? BoundaryAccepted;
+
   public event Action? CloseRequested;
+
+  internal event Action<SurveyGridPreviewState, bool>? PreviewChanged;
 
   public ObservableCollection<string> Cameras { get; } = new();
 
@@ -169,6 +196,12 @@ public partial class GridUIViewModel : ViewModelBase {
   private double _minLaneSeparation;
 
   [ObservableProperty]
+  private bool _optimizeForDistance;
+
+  [ObservableProperty]
+  private int _startPointNumber = 1;
+
+  [ObservableProperty]
   private int _clockwiseLaps = 1;
 
   [ObservableProperty]
@@ -206,6 +239,15 @@ public partial class GridUIViewModel : ViewModelBase {
 
   [ObservableProperty]
   private bool _showInternals;
+
+  [ObservableProperty]
+  private bool _showBoundary = true;
+
+  [ObservableProperty]
+  private bool _showGrid = true;
+
+  [ObservableProperty]
+  private bool _showMarkers = true;
 
   [ObservableProperty]
   private string _areaText = "";
@@ -252,6 +294,11 @@ public partial class GridUIViewModel : ViewModelBase {
   [ObservableProperty]
   private string _status = "";
 
+  public bool IsPointStart => string.Equals(StartFrom, Grid.StartPosition.Point.ToString(),
+      StringComparison.Ordinal);
+
+  public int BoundaryPointCount => _polygon.Count;
+
   public GridUIViewModel() : this(new List<PointLatLngAlt>(), PointLatLngAlt.Zero) {
   }
 
@@ -263,6 +310,7 @@ public partial class GridUIViewModel : ViewModelBase {
 
     LoadCameras();
     LoadSettings();
+    ApplyCamera();
 
     if (Angle == 0) {
       Angle = (GetAngleOfLongestSide(_polygon) + 360) % 360;
@@ -278,14 +326,21 @@ public partial class GridUIViewModel : ViewModelBase {
       return;
     }
 
+    if (_previewDisplayProps.Contains(e.PropertyName)) {
+      PublishPreview(fit: false);
+      return;
+    }
+
     if (!_outputProps.Contains(e.PropertyName)) {
       if (e.PropertyName == nameof(SelectedCamera)) {
         ApplyCamera();
       }
 
-      Recalc();
+      Recalc(fitPreview: e.PropertyName != nameof(Angle));
     }
   }
+
+  partial void OnStartFromChanged(string value) => OnPropertyChanged(nameof(IsPointStart));
 
   [RelayCommand]
   private void Accept() {
@@ -295,6 +350,7 @@ public partial class GridUIViewModel : ViewModelBase {
           UseSplineWaypoints, HoldHeading, Heading, WaypointDelay, ServoNumber, ServoPwm,
           ServoRepeatSeconds, ServoLowPwm, ServoHighPwm, SplitCount, ReadRestoreSpeed());
       GridAccepted?.Invoke(SurveyMissionBuilder.Build(Result, _home, options));
+      BoundaryAccepted?.Invoke(_polygon.Select(point => new PointLatLngAlt(point)).ToArray());
       SaveCameraFov();
       CloseRequested?.Invoke();
     } catch (Exception ex) {
@@ -356,11 +412,14 @@ public partial class GridUIViewModel : ViewModelBase {
     fovv = sensorheight * flscale / 1000;
   }
 
-  private void Recalc() {
+  private void Recalc(bool fitPreview = true) {
     if (_polygon.Count < 3) {
       Status = "Need at least 3 polygon points to generate a survey.";
       Result = new List<PointLatLngAlt>();
       WaypointCount = 0;
+      PhotoCount = 0;
+      StripCount = 0;
+      PublishPreview(fitPreview);
       return;
     }
 
@@ -368,10 +427,16 @@ public partial class GridUIViewModel : ViewModelBase {
       DoCalc();
     }
 
-    var startpos = (Grid.StartPosition)Enum.Parse(typeof(Grid.StartPosition), StartFrom);
+    if (!Enum.TryParse(StartFrom, out Grid.StartPosition startpos)) {
+      startpos = Grid.StartPosition.Home;
+    }
 
     List<PointLatLngAlt> grid;
     try {
+      if (startpos == Grid.StartPosition.Point) {
+        int startIndex = Math.Clamp(StartPointNumber - 1, 0, _polygon.Count - 1);
+        Grid.StartPointLatLngAlt = new PointLatLngAlt(_polygon[startIndex]);
+      }
       if (Corridor) {
         grid = Grid.CreateCorridor(_polygon, Altitude, Distance, Spacing, Angle, Overshoot1,
             Overshoot2, startpos, false, (float)MinLaneSeparation, CorridorWidth, (float)Leadin);
@@ -381,25 +446,65 @@ public partial class GridUIViewModel : ViewModelBase {
             ClockwiseLaps, MatchSpiralPerimeter, Laps);
       } else {
         grid = Grid.CreateGrid(_polygon, Altitude, Distance, Spacing, Angle, Overshoot1, Overshoot2,
-            startpos, false, (float)MinLaneSeparation, (float)Leadin, (float)Leadin2, _home);
+            startpos, false, (float)MinLaneSeparation, (float)Leadin, (float)Leadin2, _home,
+            OptimizeForDistance);
       }
 
       if (grid.Count > 0 && CrossGrid) {
         Grid.StartPointLatLngAlt = grid[grid.Count - 1];
         grid.AddRange(Grid.CreateGrid(_polygon, Altitude, Distance, Spacing, Angle + 90.0,
             Overshoot1, Overshoot2, Grid.StartPosition.Point, false, (float)MinLaneSeparation,
-            (float)Leadin, (float)Leadin2, _home));
+            (float)Leadin, (float)Leadin2, _home, OptimizeForDistance));
       }
     } catch (Exception ex) {
       Status = "Grid generation failed: " + ex.Message;
       Result = new List<PointLatLngAlt>();
       WaypointCount = 0;
+      PhotoCount = 0;
+      StripCount = 0;
+      PublishPreview(fitPreview);
       return;
     }
 
     Result = grid;
     ComputeStats(grid);
+    PublishPreview(fitPreview);
   }
+
+  internal void MoveBoundaryPoint(int index, double lat, double lng) {
+    if (index < 0 || index >= _polygon.Count || !double.IsFinite(lat) ||
+        !double.IsFinite(lng)) {
+      return;
+    }
+
+    PointLatLngAlt current = _polygon[index];
+    current.Lat = Math.Clamp(lat, -90, 90);
+    current.Lng = Math.Clamp(lng, -180, 180);
+    _polygon[index] = current;
+    Recalc(fitPreview: false);
+  }
+
+  internal SurveyGridPreviewState GetPreviewState() {
+    double horizontalFov = 0;
+    double verticalFov = 0;
+    if (double.IsFinite(FocalLength) && FocalLength > 0 &&
+        double.TryParse(SensorWidth, NumberStyles.Float, CultureInfo.InvariantCulture,
+            out double sensorWidth) && sensorWidth > 0 &&
+        double.TryParse(SensorHeight, NumberStyles.Float, CultureInfo.InvariantCulture,
+            out double sensorHeight) && sensorHeight > 0) {
+      horizontalFov = Math.Atan(sensorWidth / (2 * FocalLength)) * _rad2Deg * 2;
+      verticalFov = Math.Atan(sensorHeight / (2 * FocalLength)) * _rad2Deg * 2;
+    }
+
+    return new SurveyGridPreviewState(
+        _polygon.Select(point => new PointLatLngAlt(point)).ToArray(),
+        Result.Select(point => new PointLatLngAlt(point)).ToArray(),
+        new PointLatLngAlt(_home), Corridor, ShowBoundary, ShowGrid, ShowMarkers,
+        ShowInternals, ShowFootprints, Angle, CamDirection, HoldHeading, Heading,
+        horizontalFov, verticalFov);
+  }
+
+  private void PublishPreview(bool fit) => PreviewChanged?.Invoke(GetPreviewState(), fit);
 
   private void ComputeStats(List<PointLatLngAlt> grid) {
     if (grid.Count == 0) {
@@ -645,6 +750,8 @@ public partial class GridUIViewModel : ViewModelBase {
     Set("grid_min_lane_separation", MinLaneSeparation);
     Set("grid_internals", ShowInternals);
     Set("grid_footprints", ShowFootprints);
+    Set("grid_corridor", Corridor);
+    Set("grid_corridor_width", CorridorWidth);
     Set("grid_clockwise_laps", ClockwiseLaps);
     Set("grid_laps", Laps);
     Set("grid_match_spiral_perimeter", MatchSpiralPerimeter);
@@ -652,7 +759,6 @@ public partial class GridUIViewModel : ViewModelBase {
 
   private void LoadSettings() {
     Altitude = GetD("grid_alt", Altitude);
-    Angle = GetD("grid_angle", Angle);
     FlyingSpeed = GetD("grid_speed", FlyingSpeed);
     UseSpeed = GetB("grid_use_speed", UseSpeed);
     TriggerMode = GetChoice("grid_trigger_mode", TriggerMode, TriggerModes);
@@ -684,6 +790,8 @@ public partial class GridUIViewModel : ViewModelBase {
     MinLaneSeparation = GetD("grid_min_lane_separation", MinLaneSeparation);
     ShowInternals = GetB("grid_internals", ShowInternals);
     ShowFootprints = GetB("grid_footprints", ShowFootprints);
+    Corridor = GetB("grid_corridor", Corridor);
+    CorridorWidth = GetD("grid_corridor_width", CorridorWidth);
     ClockwiseLaps = (int)GetD("grid_clockwise_laps", ClockwiseLaps);
     Laps = (int)GetD("grid_laps", Laps);
     MatchSpiralPerimeter = GetB("grid_match_spiral_perimeter", MatchSpiralPerimeter);
@@ -739,6 +847,8 @@ public partial class GridUIViewModel : ViewModelBase {
   internal void ApplyGridData(GridData data) {
     _suppressRecalc = true;
     _polygon = data.poly?.ToList() ?? new List<PointLatLngAlt>();
+    StartPointNumber = Math.Clamp(StartPointNumber, 1, Math.Max(1, _polygon.Count));
+    OnPropertyChanged(nameof(BoundaryPointCount));
     Altitude = (double)data.alt;
     Angle = (double)data.angle;
     CamDirection = data.camdir;
