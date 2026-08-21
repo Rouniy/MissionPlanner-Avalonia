@@ -4,10 +4,14 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using MissionPlanner;
 using MissionPlanner.Joystick;
+using MissionPlanner.Utilities;
 
 namespace MissionPlannerAvalonia.Services;
 
@@ -36,6 +40,58 @@ internal static class JoystickProvider {
   }
 }
 
+internal sealed class JoydevAxisRange {
+  public int Minimum { get; set; }
+  public int Maximum { get; set; }
+}
+
+internal sealed class JoydevCalibrationProfile {
+  public int Version { get; set; } = 1;
+  public Dictionary<int, JoydevAxisRange> Axes { get; set; } = new();
+}
+
+internal readonly record struct JoydevCalibrationResult(int CalibratedAxes, int IgnoredAxes);
+
+internal static class JoydevCalibrationStore {
+  private const string _keyPrefix = "joystick_range_v1_";
+
+  public static JoydevCalibrationProfile Load(string deviceName) {
+    try {
+      var json = Settings.Instance[Key(deviceName)];
+      var profile = string.IsNullOrWhiteSpace(json)
+          ? null
+          : JsonSerializer.Deserialize<JoydevCalibrationProfile>(json);
+      if (profile?.Version != 1 || profile.Axes == null) {
+        return new JoydevCalibrationProfile();
+      }
+
+      profile.Axes = profile.Axes
+          .Where(entry => entry.Key is >= 0 and < 128 && IsValid(entry.Value))
+          .ToDictionary(entry => entry.Key, entry => entry.Value);
+      return profile;
+    } catch (Exception ex) {
+      log4net.LogManager.GetLogger(typeof(JoydevCalibrationStore))
+          .Warn("Ignoring invalid joystick range calibration", ex);
+      return new JoydevCalibrationProfile();
+    }
+  }
+
+  public static void Save(string deviceName, JoydevCalibrationProfile profile) {
+    Settings.Instance[Key(deviceName)] = JsonSerializer.Serialize(profile);
+  }
+
+  public static void Clear(string deviceName) => Settings.Instance[Key(deviceName)] = "";
+
+  internal static bool IsValid(JoydevAxisRange? range) =>
+      range != null && range.Minimum >= short.MinValue && range.Maximum <= short.MaxValue &&
+      range.Maximum - range.Minimum >= LinuxJoydevJoystick.MinimumCalibrationSpan;
+
+  private static string Key(string deviceName) {
+    var hash = SHA256.HashData(Encoding.UTF8.GetBytes(deviceName ?? ""));
+    return _keyPrefix + Convert.ToHexString(hash).ToLowerInvariant();
+  }
+}
+
 internal sealed class LinuxJoydevJoystick : JoystickBase {
   private const int _eventSize = 8;
   private const byte _eventButton = 0x01;
@@ -44,23 +100,36 @@ internal sealed class LinuxJoydevJoystick : JoystickBase {
   private const ushort _midpoint = 32768;
   private const short _pollInput = 0x0001;
   private const short _pollFailure = 0x0008 | 0x0010 | 0x0020;
+  internal const int MinimumCalibrationSpan = 4096;
 
   private readonly object _lifecycleSync = new();
   private readonly object _stateSync = new();
   private readonly ushort[] _axes = Enumerable.Repeat(_midpoint, 128).ToArray();
+  private readonly short[] _rawAxes = new short[128];
+  private readonly bool[] _rawAxesSeen = new bool[128];
   private readonly bool[] _buttons = new bool[128];
+  private readonly int[] _calibrationMinimum = new int[128];
+  private readonly int[] _calibrationMaximum = new int[128];
 
   private FileStream? _stream;
   private Thread? _readerThread;
   private JoydevState _snapshot = JoydevState.Empty;
+  private JoydevCalibrationProfile _calibration = new();
+  private int _axisCount;
   private int _buttonCount;
   private bool _stopping;
+  private bool _calibrating;
 
   public LinuxJoydevJoystick(Func<MAVLinkInterface> currentInterface) : base(currentInterface) {
     state = _snapshot;
   }
 
   public override bool AcquireJoystick(string name) {
+    // start() normally assigns JoystickBase.name before calling AcquireJoystick(), but the
+    // range-calibration UI deliberately opens a detached, read-only session directly. Keep
+    // the selected device identity here as well so its profile is saved under the same key.
+    this.name = name;
+
     lock (_lifecycleSync) {
       if (_stream != null) {
         return true;
@@ -73,6 +142,7 @@ internal sealed class LinuxJoydevJoystick : JoystickBase {
       stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite,
           _eventSize, FileOptions.None);
       ReadDeviceCounts(stream);
+      _calibration = JoydevCalibrationStore.Load(name);
       log.Info("Opened joydev device " + path);
     } catch (Exception ex) {
       log.Error("Unable to open joydev device " + name, ex);
@@ -110,6 +180,9 @@ internal sealed class LinuxJoydevJoystick : JoystickBase {
     lock (_lifecycleSync) {
       _stopping = true;
       enabled = false;
+      lock (_stateSync) {
+        _calibrating = false;
+      }
       stream = _stream;
       thread = _readerThread;
     }
@@ -151,12 +224,110 @@ internal sealed class LinuxJoydevJoystick : JoystickBase {
 
   public override int getNumberPOV() => 0;
 
+  public bool IsRangeCalibrating {
+    get {
+      lock (_stateSync) {
+        return _calibrating;
+      }
+    }
+  }
+
+  public int CalibratedAxisCount {
+    get {
+      lock (_stateSync) {
+        return _calibration.Axes.Count;
+      }
+    }
+  }
+
+  public void BeginRangeCalibration() {
+    lock (_stateSync) {
+      Array.Fill(_calibrationMinimum, int.MaxValue);
+      Array.Fill(_calibrationMaximum, int.MinValue);
+      for (int axis = 0; axis < _rawAxes.Length; axis++) {
+        if (!_rawAxesSeen[axis]) {
+          continue;
+        }
+        _calibrationMinimum[axis] = _rawAxes[axis];
+        _calibrationMaximum[axis] = _rawAxes[axis];
+      }
+      _calibrating = true;
+    }
+  }
+
+  public JoydevCalibrationResult FinishRangeCalibration() {
+    JoydevCalibrationProfile updated;
+    int calibrated = 0;
+    int ignored = 0;
+    lock (_stateSync) {
+      if (!_calibrating) {
+        return new JoydevCalibrationResult(0, 0);
+      }
+
+      updated = CloneProfile(_calibration);
+      int count = Math.Clamp(_axisCount, 0, _rawAxes.Length);
+      for (int axis = 0; axis < count; axis++) {
+        int minimum = _calibrationMinimum[axis];
+        int maximum = _calibrationMaximum[axis];
+        if (minimum != int.MaxValue && maximum - minimum >= MinimumCalibrationSpan) {
+          updated.Axes[axis] = new JoydevAxisRange { Minimum = minimum, Maximum = maximum };
+          calibrated++;
+        } else {
+          ignored++;
+        }
+      }
+
+      _calibrating = false;
+      if (calibrated > 0) {
+        _calibration = updated;
+        RebuildSnapshot();
+      }
+    }
+
+    if (calibrated > 0) {
+      JoydevCalibrationStore.Save(name, updated);
+    }
+    return new JoydevCalibrationResult(calibrated, ignored);
+  }
+
+  public void CancelRangeCalibration() {
+    lock (_stateSync) {
+      _calibrating = false;
+    }
+  }
+
+  public void ClearRangeCalibration() {
+    lock (_stateSync) {
+      _calibrating = false;
+      _calibration = new JoydevCalibrationProfile();
+      RebuildSnapshot();
+    }
+    JoydevCalibrationStore.Clear(name);
+  }
+
   public override void Dispose() {
     UnAcquireJoyStick();
     base.Dispose();
   }
 
   internal static ushort NormalizeAxis(short value) => (ushort)((int)value - short.MinValue);
+
+  internal static ushort NormalizeAxis(short value, int minimum, int maximum) {
+    if (maximum - minimum < MinimumCalibrationSpan || minimum < short.MinValue ||
+        maximum > short.MaxValue) {
+      return NormalizeAxis(value);
+    }
+    if (value <= minimum) {
+      return ushort.MinValue;
+    }
+    if (value >= maximum) {
+      return ushort.MaxValue;
+    }
+
+    long span = maximum - minimum;
+    long numerator = ((long)value - minimum) * ushort.MaxValue;
+    return (ushort)((numerator + span / 2) / span);
+  }
 
   internal static IReadOnlyList<string> GetDevices() {
     var devices = new List<string>();
@@ -292,8 +463,20 @@ internal sealed class LinuxJoydevJoystick : JoystickBase {
 
     lock (_stateSync) {
       if (type == _eventAxis) {
-        _axes[number] = NormalizeAxis(value);
+        if (number >= _axes.Length) {
+          return;
+        }
+        _rawAxes[number] = value;
+        _rawAxesSeen[number] = true;
+        if (_calibrating) {
+          _calibrationMinimum[number] = Math.Min(_calibrationMinimum[number], value);
+          _calibrationMaximum[number] = Math.Max(_calibrationMaximum[number], value);
+        }
+        _axes[number] = NormalizeAxis(value, RangeFor(number));
       } else if (type == _eventButton) {
+        if (number >= _buttons.Length) {
+          return;
+        }
         _buttons[number] = value != 0;
         int observedCount = number + 1;
         int knownCount = _buttonCount;
@@ -312,6 +495,11 @@ internal sealed class LinuxJoydevJoystick : JoystickBase {
     try {
       byte count = 0;
       if (Native.ioctl(stream.SafeFileHandle.DangerousGetHandle(),
+              unchecked((int)IoReadByte('j', 0x11)), ref count) == 0) {
+        Volatile.Write(ref _axisCount, count);
+      }
+      count = 0;
+      if (Native.ioctl(stream.SafeFileHandle.DangerousGetHandle(),
               unchecked((int)IoReadByte('j', 0x12)), ref count) == 0) {
         Volatile.Write(ref _buttonCount, count);
       }
@@ -323,6 +511,32 @@ internal sealed class LinuxJoydevJoystick : JoystickBase {
 
   private static uint IoReadByte(uint type, uint number) =>
       (2u << 30) | (1u << 16) | (type << 8) | number;
+
+  private JoydevAxisRange? RangeFor(int axis) =>
+      _calibration.Axes.TryGetValue(axis, out var range) && JoydevCalibrationStore.IsValid(range)
+          ? range
+          : null;
+
+  private static ushort NormalizeAxis(short value, JoydevAxisRange? range) => range == null
+      ? NormalizeAxis(value)
+      : NormalizeAxis(value, range.Minimum, range.Maximum);
+
+  private void RebuildSnapshot() {
+    for (int axis = 0; axis < _axes.Length; axis++) {
+      if (_rawAxesSeen[axis]) {
+        _axes[axis] = NormalizeAxis(_rawAxes[axis], RangeFor(axis));
+      }
+    }
+    Volatile.Write(ref _snapshot, new JoydevState(_axes, _buttons));
+  }
+
+  private static JoydevCalibrationProfile CloneProfile(JoydevCalibrationProfile source) => new() {
+    Version = source.Version,
+    Axes = source.Axes.ToDictionary(entry => entry.Key, entry => new JoydevAxisRange {
+      Minimum = entry.Value.Minimum,
+      Maximum = entry.Value.Maximum,
+    }),
+  };
 
   [StructLayout(LayoutKind.Sequential)]
   private struct PollDescriptor {

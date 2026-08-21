@@ -161,6 +161,25 @@ public partial class BackstageViewModel : ViewModelBase, IDeactivationAware, IDi
     SelectedPage = page;
   }
 
+  public bool SelectPage(string header) {
+    var page = Pages.FirstOrDefault(candidate =>
+        string.Equals(candidate.Header, header, StringComparison.Ordinal));
+    if (page == null || page.IsHeader) {
+      return false;
+    }
+
+    if (page.Group is { IsExpanded: false } group) {
+      group.IsExpanded = true;
+    }
+    RefreshVisibility();
+    if (!page.Visible) {
+      return false;
+    }
+
+    SelectedPage = page;
+    return true;
+  }
+
   private BackstagePage? _currentGroup;
 
   protected BackstagePage Add(

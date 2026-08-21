@@ -1791,6 +1791,14 @@ public partial class FlightPlannerViewModel : ViewModelBase {
 }
 
 public partial class WpRow : ObservableObject {
+  private static readonly List<WeakReference<WpRow>> _instances = new();
+
+  public WpRow() {
+    lock (_instances) {
+      _instances.Add(new WeakReference<WpRow>(this));
+    }
+  }
+
   [ObservableProperty]
   private int _seq;
 
@@ -1845,14 +1853,32 @@ public partial class WpRow : ObservableObject {
   [ObservableProperty]
   private string _mgrs = "";
 
-  public static readonly string[] CommandList = System.Enum.GetNames(typeof(MAVLink.MAV_CMD));
+  public static ObservableCollection<string> CommandList { get; } =
+      new(Services.MissionCommandCatalog.Names());
 
   public string CommandName {
-    get => ((MAVLink.MAV_CMD)Command).ToString();
+    get => Services.MissionCommandCatalog.GetName(Command) ?? ((MAVLink.MAV_CMD)Command).ToString();
     set {
-      if (System.Enum.TryParse<MAVLink.MAV_CMD>(value, out var cmd)) {
-        Command = (ushort)cmd;
+      if (Services.MissionCommandCatalog.TryGetId(value, out var id)) {
+        Command = id;
         OnPropertyChanged(nameof(CommandName));
+      }
+    }
+  }
+
+  public static void RefreshCommandCatalog() {
+    var names = Services.MissionCommandCatalog.Names();
+    CommandList.Clear();
+    foreach (var name in names) {
+      CommandList.Add(name);
+    }
+    lock (_instances) {
+      for (int index = _instances.Count - 1; index >= 0; index--) {
+        if (_instances[index].TryGetTarget(out var row)) {
+          row.OnPropertyChanged(nameof(CommandName));
+        } else {
+          _instances.RemoveAt(index);
+        }
       }
     }
   }

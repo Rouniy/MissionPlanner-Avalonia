@@ -1,0 +1,65 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  mc:Ignorable="d"
+  d:DesignWidth="700"
+  d:DesignHeight="620"
+  x:Class="MissionPlannerAvalonia.Views.SerialOutputCotView"
+  x:DataType="vm:SerialOutputCotViewModel"
+  Background="{DynamicResource MpControlBg}"
+>
+  <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" Margin="16">
+    <TextBlock Grid.Row="0" Text="Cursor-on-Target / TAK Output" FontSize="16" Foreground="#DDD" />
+    <TextBlock Grid.Row="1" Margin="0,6,0,12" Foreground="#AAA" TextWrapping="Wrap"
+               Text="Emits CoT 2.0 XML for every MAVLink system through UDP multicast/client, TCP client/host, UDP host, or a serial port." />
+
+    <Grid Grid.Row="2" ColumnDefinitions="130,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+          RowSpacing="8">
+      <TextBlock Grid.Row="0" Grid.Column="0" Text="Endpoint" Foreground="#DDD" VerticalAlignment="Center" />
+      <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding Endpoints}"
+                SelectedItem="{Binding SelectedEndpoint}" />
+      <Button Grid.Row="0" Grid.Column="2" Content="Refresh" Command="{Binding RefreshEndpointsCommand}"
+              Margin="6,0,0,0" />
+
+      <TextBlock Grid.Row="1" Grid.Column="0" Text="Host / listen IP" Foreground="#DDD" VerticalAlignment="Center"
+                 IsVisible="{Binding IsNetworkEndpoint}" />
+      <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Host}" IsVisible="{Binding IsNetworkEndpoint}" />
+      <TextBlock Grid.Row="2" Grid.Column="0" Text="Network port" Foreground="#DDD" VerticalAlignment="Center"
+                 IsVisible="{Binding IsNetworkEndpoint}" />
+      <NumericUpDown Grid.Row="2" Grid.Column="1" Value="{Binding Port}" Minimum="1" Maximum="65535"
+                     IsVisible="{Binding IsNetworkEndpoint}" />
+
+      <TextBlock Grid.Row="3" Grid.Column="0" Text="Serial baud" Foreground="#DDD" VerticalAlignment="Center"
+                 IsVisible="{Binding IsSerialEndpoint}" />
+      <ComboBox Grid.Row="3" Grid.Column="1" ItemsSource="{Binding Bauds}" SelectedItem="{Binding Baud}"
+                IsVisible="{Binding IsSerialEndpoint}" />
+      <TextBlock Grid.Row="4" Grid.Column="0" Text="Update (seconds)" Foreground="#DDD" VerticalAlignment="Center" />
+      <NumericUpDown Grid.Row="4" Grid.Column="1" Value="{Binding UpdateSeconds}" Minimum="0.1" Maximum="3600"
+                     Increment="0.5" />
+      <TextBlock Grid.Row="5" Grid.Column="0" Text="Event type" Foreground="#DDD" VerticalAlignment="Center" />
+      <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding EventType}" />
+      <TextBlock Grid.Row="6" Grid.Column="0" Text="UID / callsign" Foreground="#DDD" VerticalAlignment="Center" />
+      <Grid Grid.Row="6" Grid.Column="1" ColumnDefinitions="*,*" ColumnSpacing="8">
+        <TextBox Grid.Column="0" Watermark="UID prefix" Text="{Binding UidPrefix}" />
+        <TextBox Grid.Column="1" Watermark="Optional callsign" Text="{Binding Callsign}" />
+      </Grid>
+    </Grid>
+
+    <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" Margin="0,12">
+      <Button Content="{Binding ConnectButtonText}" Command="{Binding ToggleConnectCommand}" MinWidth="90" />
+      <CheckBox Content="Indent XML" IsChecked="{Binding IndentXml}" VerticalAlignment="Center" />
+      <TextBlock Text="{Binding Status}" Foreground="{DynamicResource MpAccentBrush}"
+                 VerticalAlignment="Center" TextWrapping="Wrap" />
+    </StackPanel>
+
+    <Border Grid.Row="4" Background="{DynamicResource MpInputBg}" CornerRadius="4" Padding="8">
+      <ScrollViewer>
+        <TextBlock Text="{Binding LastEvent}" Foreground="#DDD" FontFamily="Consolas,monospace"
+                   FontSize="11" TextWrapping="Wrap" />
+      </ScrollViewer>
+    </Border>
+  </Grid>
+</UserControl>

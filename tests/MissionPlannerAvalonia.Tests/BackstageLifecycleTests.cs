@@ -17,14 +17,28 @@ public class BackstageLifecycleTests {
     Assert.Equal(1, second.DeactivationCount);
   }
 
+  [Fact]
+  public void SelectPage_expands_group_and_selects_named_tool() {
+    using var backstage = new TestBackstage();
+    backstage.AdvancedGroup.IsExpanded = false;
+
+    Assert.True(backstage.SelectPage("Advanced Tool"));
+    Assert.True(backstage.AdvancedGroup.IsExpanded);
+    Assert.Same(backstage.AdvancedTool, backstage.SelectedPage);
+  }
+
   private sealed class TestBackstage : BackstageViewModel {
     public TestBackstage() {
       Add("First", () => new LifecycleViewModel());
       Second = Add("Second", () => new LifecycleViewModel());
+      AdvancedGroup = Add(">> Advanced", () => new LifecycleViewModel());
+      AdvancedTool = Add("Advanced Tool", () => new LifecycleViewModel(), sub: true);
       SelectFirst();
     }
 
     public BackstagePage Second { get; }
+    public BackstagePage AdvancedGroup { get; }
+    public BackstagePage AdvancedTool { get; }
   }
 
   private sealed class LifecycleViewModel : ViewModelBase, IDeactivationAware {

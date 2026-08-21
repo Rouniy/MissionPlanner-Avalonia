@@ -19,6 +19,7 @@ public class ConfigAdvancedViewModel : ActionPageViewModel {
     Action("MAVLink Inspector", () => Views.MAVLinkInspectorWindow.OpenWindow());
     Action("Mavlink Mirror", () => Views.SerialPassThroughWindow.OpenWindow());
     Action("NMEA", () => Views.SerialOutputNMEAWindow.OpenWindow());
+    Action("Cursor-on-Target / TAK", () => Views.SerialOutputCotWindow.OpenWindow());
     Action("Follow Me", () => Views.FollowMeWindow.OpenWindow());
     Action("MAVLink Signing", () => _ = ManageSigningAsync());
     Action("FFT", () => Views.ConfigFFTWindow.OpenWindow());

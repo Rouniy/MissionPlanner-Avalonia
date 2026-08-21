@@ -31,6 +31,7 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
   private readonly DispatcherTimer _timer;
   private readonly SemaphoreSlim _detectionGate = new(1, 1);
   private JoystickBase? _joystick;
+  private LinuxJoydevJoystick? _rangeCalibrationJoystick;
   private CancellationTokenSource? _detectCts;
   private string? _lastPumpError;
 
@@ -68,7 +69,11 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private bool _isDetecting;
 
+  [ObservableProperty]
+  private string _rangeCalibrationLabel = "Calibrate Range";
+
   public bool IsEnabled => _joystick != null && _joystick.enabled;
+  public bool IsRangeCalibrationSupported => OperatingSystem.IsLinux();
   public int ValueMinimum => ManualControl ? -1000 : 1000;
   public int ValueMaximum => ManualControl ? 1000 : 2000;
 
@@ -102,7 +107,7 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
       Elevons = active.elevons;
       ManualControl = active.manual_control;
       EnableLabel = "Disable";
-      Status = "Joystick enabled: " + active.name;
+      Status = "Joystick enabled: " + active.name + CalibrationStatus(active);
       BuildButtonRows();
     }
     _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
@@ -157,6 +162,10 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private void ToggleEnable() {
+    if (_rangeCalibrationJoystick != null) {
+      Status = "Finish range calibration before enabling joystick control.";
+      return;
+    }
     if (_joystick == null || !_joystick.enabled) {
       if (!JoystickProvider.IsSupported) {
         Status = "Joystick input is not yet supported on this platform.";
@@ -199,7 +208,7 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
       BuildButtonRows();
 
       EnableLabel = "Disable";
-      Status = "Joystick enabled: " + SelectedDevice;
+      Status = "Joystick enabled: " + SelectedDevice + CalibrationStatus(joy);
       RawInput = "Waiting for joystick input…";
     } else {
       var joystick = _joystick;
@@ -211,6 +220,10 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private void Save() {
+    if (_rangeCalibrationJoystick != null) {
+      Status = "Finish range calibration before saving the channel configuration.";
+      return;
+    }
     if (_joystick == null) {
       Status = "Please enable a joystick before saving.";
       return;
@@ -219,6 +232,81 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
     ApplyConfigTo(_joystick);
     _joystick.saveconfig();
     Status = "Joystick configuration saved.";
+  }
+
+  [RelayCommand]
+  private void ToggleRangeCalibration() {
+    if (!OperatingSystem.IsLinux()) {
+      Status = "Joystick range calibration is handled by the operating-system driver on this platform.";
+      return;
+    }
+    if (_comPort.MAV.cs.armed) {
+      Status = "Disarm the vehicle before calibrating joystick ranges.";
+      return;
+    }
+
+    if (_rangeCalibrationJoystick == null) {
+      if (string.IsNullOrEmpty(SelectedDevice)) {
+        Status = "Select a joystick before calibrating its range.";
+        return;
+      }
+
+      var calibration = new LinuxJoydevJoystick(() => _comPort) {
+        LostAction = () => { },
+      };
+      ApplyConfigTo(calibration);
+      calibration.manual_control = ManualControl;
+      if (!calibration.AcquireJoystick(SelectedDevice)) {
+        calibration.Dispose();
+        Status = "Unable to open the joystick for range calibration.";
+        return;
+      }
+
+      calibration.BeginRangeCalibration();
+      _rangeCalibrationJoystick = calibration;
+      RangeCalibrationLabel = "Finish Calibration";
+      if (_joystick is { enabled: true } active) {
+        _control.Stop(active, "Joystick control paused for safe range calibration.");
+      }
+      Status = "Control output is paused. Move every required stick and dial to both endpoints, " +
+               "then return throttle low and the other sticks to centre before clicking Finish Calibration.";
+      return;
+    }
+
+    var result = _rangeCalibrationJoystick.FinishRangeCalibration();
+    DisposeRangeCalibration();
+    RangeCalibrationLabel = "Calibrate Range";
+    Status = result.CalibratedAxes > 0
+        ? $"Joystick range calibration saved for {result.CalibratedAxes} axes. " +
+          "The endpoints now map monotonically to the full output range; enable joystick control again."
+        : "No full axis movements were detected. Start calibration and move each required axis to both endpoints.";
+  }
+
+  [RelayCommand]
+  private void ResetRangeCalibration() {
+    if (!OperatingSystem.IsLinux()) {
+      Status = "Joystick range calibration is handled by the operating-system driver on this platform.";
+      return;
+    }
+    if (string.IsNullOrEmpty(SelectedDevice)) {
+      Status = "Select a joystick before resetting its range calibration.";
+      return;
+    }
+    if (_comPort.MAV.cs.armed) {
+      Status = "Disarm the vehicle before resetting joystick ranges.";
+      return;
+    }
+
+    if (_rangeCalibrationJoystick != null) {
+      _rangeCalibrationJoystick.ClearRangeCalibration();
+      DisposeRangeCalibration();
+    } else if (_joystick is LinuxJoydevJoystick linux && _joystick.enabled) {
+      linux.ClearRangeCalibration();
+    } else {
+      JoydevCalibrationStore.Clear(SelectedDevice);
+    }
+    RangeCalibrationLabel = "Calibrate Range";
+    Status = "Joystick range calibration reset; the native joydev range is active.";
   }
 
   [RelayCommand]
@@ -487,26 +575,34 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
   }
 
   private void Pump() {
-    if (_joystick == null || !_joystick.enabled) {
+    JoystickBase? input = _rangeCalibrationJoystick ?? _joystick;
+    if (input == null || (_rangeCalibrationJoystick == null && !input.enabled)) {
       return;
     }
-    if (!_joystick.IsJoystickValid()) {
-      HandleJoystickLost(_joystick);
+    if (!input.IsJoystickValid()) {
+      if (ReferenceEquals(input, _rangeCalibrationJoystick)) {
+        DisposeRangeCalibration();
+        RangeCalibrationLabel = "Calibrate Range";
+        Status = "Joystick disconnected during range calibration.";
+        RawInput = "Joystick disconnected.";
+      } else {
+        HandleJoystickLost(input);
+      }
       return;
     }
 
-    _joystick.elevons = Elevons;
-    _joystick.manual_control = ManualControl;
+    input.elevons = Elevons;
+    input.manual_control = ManualControl;
 
     try {
-      var state = _joystick.GetCurrentState();
-      RawInput = JoystickDetector.Describe(state, _joystick.getNumButtons());
+      var state = input.GetCurrentState();
+      RawInput = JoystickDetector.Describe(state, input.getNumButtons());
       foreach (var row in Axes) {
-        row.Value = _joystick.getValueForChannel(row.ChannelNo);
+        row.Value = input.getValueForChannel(row.ChannelNo);
       }
 
       foreach (var row in Buttons) {
-        row.Pressed = _joystick.isButtonPressed(row.Index);
+        row.Pressed = input.isButtonPressed(row.Index);
       }
       _lastPumpError = null;
     } catch (Exception ex) {
@@ -532,10 +628,13 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
       }
       _joystick = null;
       EnableLabel = "Enable";
-      RawInput = reason.StartsWith("Joystick disconnected", StringComparison.Ordinal)
-          ? "Joystick disconnected."
-          : "Raw input appears here after the joystick is enabled.";
-      Status = reason;
+      if (_rangeCalibrationJoystick == null) {
+        RangeCalibrationLabel = "Calibrate Range";
+        RawInput = reason.StartsWith("Joystick disconnected", StringComparison.Ordinal)
+            ? "Joystick disconnected."
+            : "Raw input appears here after the joystick is enabled.";
+        Status = reason;
+      }
       OnPropertyChanged(nameof(IsEnabled));
     }
 
@@ -557,7 +656,19 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
     }
   }
 
-  partial void OnSelectedDeviceChanged(string value) => _detectCts?.Cancel();
+  partial void OnSelectedDeviceChanged(string value) {
+    _detectCts?.Cancel();
+    if (_rangeCalibrationJoystick != null) {
+      DisposeRangeCalibration();
+      RangeCalibrationLabel = "Calibrate Range";
+      Status = "Joystick range calibration cancelled because the selected device changed.";
+    }
+  }
+
+  private static string CalibrationStatus(JoystickBase joystick) =>
+      joystick is LinuxJoydevJoystick { CalibratedAxisCount: > 0 } linux
+          ? $"; range calibration loaded for {linux.CalibratedAxisCount} axes."
+          : ".";
 
   private static joystickaxis ParseAxis(string value) {
     if (Enum.TryParse(value, out joystickaxis axis)) {
@@ -769,9 +880,20 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
     _detectCts?.Cancel();
     _control.Stopped -= OnJoystickStopped;
     _control.SendError -= OnJoystickSendError;
+    DisposeRangeCalibration();
     // The global service owns an enabled joystick. Closing the setup page must not stop control;
     // Mission Planner keeps joystick output active while the operator returns to Flight Data.
     _joystick = null;
+  }
+
+  private void DisposeRangeCalibration() {
+    var calibration = _rangeCalibrationJoystick;
+    _rangeCalibrationJoystick = null;
+    if (calibration == null) {
+      return;
+    }
+    calibration.CancelRangeCalibration();
+    calibration.Dispose();
   }
 }
 

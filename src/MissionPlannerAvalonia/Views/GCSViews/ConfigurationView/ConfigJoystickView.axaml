@@ -22,7 +22,7 @@
       Margin="0,4,0,12"
     />
 
-    <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" Margin="0,0,0,12">
+    <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" Margin="0,0,0,12">
       <TextBlock Grid.Column="0" Text="Device" Classes="fieldlbl" VerticalAlignment="Center" Margin="0,0,8,0" />
       <ComboBox
         Grid.Column="1"
@@ -33,6 +33,20 @@
       <Button Grid.Column="2" Content="Refresh" Command="{Binding RefreshDevicesCommand}" Margin="8,0,0,0" />
       <CheckBox Grid.Column="3" Content="Elevons" IsChecked="{Binding Elevons}" Margin="16,0,0,0" />
       <CheckBox Grid.Column="4" Content="Manual Control" IsChecked="{Binding ManualControl}" Margin="8,0,0,0" />
+      <Button
+        Grid.Column="5"
+        Content="{Binding RangeCalibrationLabel}"
+        Command="{Binding ToggleRangeCalibrationCommand}"
+        IsVisible="{Binding IsRangeCalibrationSupported}"
+        Margin="8,0,0,0"
+      />
+      <Button
+        Grid.Column="6"
+        Content="Reset Range"
+        Command="{Binding ResetRangeCalibrationCommand}"
+        IsVisible="{Binding IsRangeCalibrationSupported}"
+        Margin="8,0,0,0"
+      />
     </Grid>
 
     <ScrollViewer Grid.Row="3">
@@ -65,16 +79,24 @@
                   ItemsSource="{Binding $parent[ItemsControl].((cv:ConfigJoystickViewModel)DataContext).AxisOptions}"
                   SelectedItem="{Binding Axis}"
                 />
-                <ProgressBar
-                  Grid.Column="2"
-                  Minimum="{Binding $parent[ItemsControl].((cv:ConfigJoystickViewModel)DataContext).ValueMinimum}"
-                  Maximum="{Binding $parent[ItemsControl].((cv:ConfigJoystickViewModel)DataContext).ValueMaximum}"
-                  Value="{Binding Value}"
-                  Height="20"
-                  Margin="8,0"
-                  Foreground="{DynamicResource MpAccentBrush}"
-                  VerticalAlignment="Center"
-                />
+                <Grid Grid.Column="2" Margin="8,0">
+                  <ProgressBar
+                    Minimum="{Binding $parent[ItemsControl].((cv:ConfigJoystickViewModel)DataContext).ValueMinimum}"
+                    Maximum="{Binding $parent[ItemsControl].((cv:ConfigJoystickViewModel)DataContext).ValueMaximum}"
+                    Value="{Binding Value}"
+                    Height="20"
+                    Foreground="{DynamicResource MpAccentBrush}"
+                    VerticalAlignment="Center"
+                  />
+                  <TextBlock
+                    Text="{Binding Value}"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Foreground="White"
+                    FontWeight="Bold"
+                    FontSize="11"
+                  />
+                </Grid>
                 <NumericUpDown
                   Grid.Column="3"
                   Width="64"

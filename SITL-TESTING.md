@@ -83,6 +83,11 @@ relies on them. Tick what behaves; report what doesn't.
 
 **Joystick**
 - [ ] Setup → Joystick: enable the device, map roll/pitch/throttle/yaw, and verify raw values move.
+- [ ] On Linux, if the raw endpoints do not reach `0..65535`, press **Calibrate Range**, move every
+  required axis to both endpoints, return throttle low and the other sticks to centre, then press
+  **Finish Calibration**. Control output is released while calibration is active; enable the
+  joystick again and verify the mapped numeric outputs now reach the configured RC limits
+  monotonically (normally about `1000..2000`).
 - [ ] Leave Setup: control remains active in Flight Data and moves SITL RC inputs at 20 Hz.
 - [ ] Press **Disable Joystick** in Flight Data: control stops and all RC overrides are released.
 
@@ -94,6 +99,17 @@ relies on them. Tick what behaves; report what doesn't.
 - [ ] **Serial Ports / ADSB**: OPTIONS bitmask flyouts toggle the right bits.
 - [ ] **Full Parameter List**: edit one param, write, refresh — value persisted.
 - [ ] **Antenna Tracker** page only enables on ArduTracker firmware (expected: disabled otherwise).
+
+**Developer tools**
+- [ ] Press **Ctrl+F**: Setup opens directly on **Developer Tools**; Ctrl+I/G/L open MAVLink
+  Inspector, NMEA Output and DataFlash Spectrogram without closing the current connection.
+- [ ] Setup → Advanced → **Mission Command List**: add a temporary vendor command (for example ID
+  `60000`), save it, and verify its name and P1-P7 labels appear immediately in Flight Planner.
+- [ ] Tools → **Cursor-on-Target / TAK Output**: start UDP Client or TAK Multicast output and verify
+  a CoT 2.0 event is emitted for the connected SITL system at the selected interval.
+- [ ] Keep SITL disarmed while checking QNH, recovery parameter restore, MAVFTP download, reboot or
+  calibration-recovery actions. Do not exercise bootloader/DFU actions unless testing disposable
+  controller hardware specifically for that purpose.
 
 **Stability**
 - [ ] Switch between all six top tabs repeatedly — no crash, no frozen telemetry.

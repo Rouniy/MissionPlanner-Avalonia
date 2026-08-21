@@ -42,7 +42,7 @@
           <MenuItem Header="Connection List (not ported)" IsEnabled="False" />
         </ContextMenu>
       </Border.ContextMenu>
-      <Grid ColumnDefinitions="*,Auto,Auto">
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto">
         <ScrollViewer
           Grid.Column="0"
           HorizontalScrollBarVisibility="Auto"
@@ -124,8 +124,25 @@
           </StackPanel>
         </ScrollViewer>
 
+        <Menu Grid.Column="1" Background="Transparent" VerticalAlignment="Center">
+          <MenuItem Header="TOOLS">
+            <MenuItem Header="Developer Tools     Ctrl+F" Click="OnAdvancedTools" />
+            <Separator />
+            <MenuItem Header="MAVLink Inspector     Ctrl+I" Click="OnMavlinkInspector" />
+            <MenuItem Header="MAVLink Mirror" Click="OnMavlinkMirror" />
+            <MenuItem Header="NMEA Output     Ctrl+G" Click="OnNmeaOutput" />
+            <MenuItem Header="Cursor-on-Target / TAK Output" Click="OnCotOutput" />
+            <MenuItem Header="DataFlash Spectrogram     Ctrl+L" Click="OnSpectrogram" />
+            <Separator />
+            <MenuItem Header="Link Statistics" Click="OnLinkStats" />
+            <MenuItem Header="Connection Options" Click="OnConnectionOptions" />
+            <MenuItem Header="Download Logs (MAVLink)" Click="OnDownloadLogs" />
+            <MenuItem Header="Tlog Convert (KML/GPX/Matlab)" Click="OnMavlinkLogConvert" />
+          </MenuItem>
+        </Menu>
+
         <Button
-          Grid.Column="1"
+          Grid.Column="2"
           Command="{Binding OpenArduPilotSiteCommand}"
           Background="Transparent"
           BorderThickness="0"
@@ -145,7 +162,7 @@
         </Button>
 
         <StackPanel
-          Grid.Column="2"
+          Grid.Column="3"
           Orientation="Horizontal"
           VerticalAlignment="Center"
           Spacing="6"

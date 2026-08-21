@@ -38,6 +38,19 @@ public partial class MainWindow : Window {
       case Key.F12:
         vm.Connection.ToggleConnectCommand.Execute(null);
         break;
+      case Key.F when ctrl:
+        vm.Setup.SelectPage("Developer Tools");
+        vm.NavigateCommand.Execute("SETUP");
+        break;
+      case Key.I when ctrl:
+        MAVLinkInspectorWindow.OpenWindow();
+        break;
+      case Key.G when ctrl:
+        SerialOutputNMEAWindow.OpenWindow();
+        break;
+      case Key.L when ctrl:
+        SpectrogramWindow.OpenWindow();
+        break;
       case Key.Y when ctrl:
         vm.SaveToEepromCommand.Execute(null);
         break;
@@ -71,4 +84,25 @@ public partial class MainWindow : Window {
   private void OnDownloadLogs(object? sender, RoutedEventArgs e) => LogDownloadWindow.OpenWindow();
 
   private void OnMavlinkLogConvert(object? sender, RoutedEventArgs e) => MavlinkLogWindow.OpenWindow();
+
+  private void OnAdvancedTools(object? sender, RoutedEventArgs e) {
+    if (Vm is { } vm) {
+      vm.Setup.SelectPage("Developer Tools");
+      vm.NavigateCommand.Execute("SETUP");
+    }
+  }
+
+  private void OnMavlinkInspector(object? sender, RoutedEventArgs e) =>
+      MAVLinkInspectorWindow.OpenWindow();
+
+  private void OnMavlinkMirror(object? sender, RoutedEventArgs e) =>
+      SerialPassThroughWindow.OpenWindow();
+
+  private void OnNmeaOutput(object? sender, RoutedEventArgs e) =>
+      SerialOutputNMEAWindow.OpenWindow();
+
+  private void OnCotOutput(object? sender, RoutedEventArgs e) =>
+      SerialOutputCotWindow.OpenWindow();
+
+  private void OnSpectrogram(object? sender, RoutedEventArgs e) => SpectrogramWindow.OpenWindow();
 }

@@ -20,6 +20,36 @@ public class JoystickInputTests {
     Assert.Equal(expected, LinuxJoydevJoystick.NormalizeAxis(input));
   }
 
+  [Theory]
+  [InlineData(-25337, 0)]
+  [InlineData(0, 32768)]
+  [InlineData(25337, 65535)]
+  [InlineData(short.MinValue, 0)]
+  [InlineData(short.MaxValue, 65535)]
+  public void Calibrated_joydev_axis_expands_and_clamps_device_endpoints(short input,
+      ushort expected) {
+    Assert.Equal(expected, LinuxJoydevJoystick.NormalizeAxis(input, -25337, 25337));
+  }
+
+  [Fact]
+  public void Calibrated_joydev_axis_is_monotonic_over_the_entire_input_range() {
+    ushort previous = 0;
+    for (int value = short.MinValue; value <= short.MaxValue; value++) {
+      ushort current = LinuxJoydevJoystick.NormalizeAxis((short)value, -25337, 25337);
+      Assert.True(current >= previous,
+          $"Normalization decreased at raw value {value}: {previous} -> {current}");
+      previous = current;
+    }
+  }
+
+  [Fact]
+  public void Invalid_range_keeps_the_original_joydev_mapping() {
+    const short raw = -25337;
+
+    Assert.Equal(LinuxJoydevJoystick.NormalizeAxis(raw),
+        LinuxJoydevJoystick.NormalizeAxis(raw, -100, 100));
+  }
+
   [Fact]
   public void Joydev_state_keeps_button_numbers_indexed() {
     var axes = Enumerable.Repeat((ushort)32768, 128).ToArray();
@@ -92,6 +122,7 @@ public class JoystickInputTests {
 
       using var joystick = new LinuxJoydevJoystick(() => null!);
       Assert.True(joystick.AcquireJoystick(path));
+      Assert.Equal(path, joystick.name);
 
       var deadline = DateTime.UtcNow.AddSeconds(2);
       while (joystick.GetCurrentState().X != ushort.MaxValue && DateTime.UtcNow < deadline) {

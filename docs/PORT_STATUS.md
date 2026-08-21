@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 128 tests verified; the existing packages predate the latest feature round |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 148 tests verified; Linux `.deb` is rebuilt at the end of each release pass, while the existing `tar.gz` predates the latest feature rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -44,6 +44,22 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 ## Features restored during this synchronization
 
 - MAVLink signing key management: add/use/delete/disable.
+- A visible cross-platform Tools menu exposes MAVLink Inspector, MAVLink Mirror, NMEA output,
+  Cursor-on-Target/TAK output, spectrogram, link/connection diagnostics and log tools.
+  Upstream-equivalent Ctrl+F/Ctrl+G/Ctrl+L
+  shortcuts are restored, with Ctrl+I added for direct MAVLink Inspector access.
+- The hidden upstream `temp.cs` developer form is replaced by an explicit Avalonia Developer Tools
+  page. It ports MAVLink packet and hardware-ID decoders, APJ embedded-defaults editing, DataFlash
+  splitting, DashWare CSV, raw GPS-correction extraction, log organization, arbitrary MAVFTP file
+  download (including `@SYS/threads.txt`), parameter-recovery restore, QNH, forced recovery
+  calibration flags, reboot/DFU/bootloader actions and remote DataFlash logging. Vehicle-changing
+  actions require a live link, a disarmed vehicle and explicit confirmation where destructive.
+- Mission Command List is a native editor for upstream-compatible `PlannerExtraCommand` and
+  `PlannerExtraCommandIDs` settings. Custom numeric MAV_CMD values and P1-P7 labels are immediately
+  reflected in the Flight Planner command picker and column headers.
+- Cursor-on-Target 2.0 output emits every MAVLink system with invariant XML timestamps/coordinates
+  over TAK multicast, UDP client/host, TCP client/host or a serial port. UID prefix, callsign,
+  event type and update interval are configurable in the native window.
 - Warning engine startup, cross-platform speech adapter and warning editor.
 - FFT log analysis window.
 - DataFlash spectrogram for ACC/GYR sensors 1–5 with X/Y/Z plots.
@@ -55,7 +71,11 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   preview and Avalonia-safe axis/button detection; Windows continues to use upstream DirectInput.
   An application-level 20 Hz sender now mirrors upstream RC override/manual-control behaviour,
   including the native UDP RC path for the built-in SITL and safe release on disable/link loss. It
-  remains active after leaving Setup and can be released immediately from Flight Data.
+  remains active after leaving Setup and can be released immediately from Flight Data. Opt-in,
+  per-device Linux range calibration expands controllers whose real HID endpoints do not cover
+  their advertised range; uncalibrated devices keep the original bit-for-bit mapping. Calibration
+  uses a detached read-only joydev session and releases active control first, so endpoint movements
+  cannot reach SITL or a real vehicle.
 - Persisted serial, TCP, UDP client/listener and WebSocket endpoints can auto-connect at normal app
   startup without reopening the endpoint prompt.
 - Survey Grid now generates upstream-style mission commands: optional takeoff, speed, heading hold,
@@ -132,22 +152,22 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 128 passed, 0 failed.
+- Automated tests: 148 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 156 MB.
 - Headless Xvfb startup: reaches the normal application event loop.
-- `tar.gz` and `.deb` targets: the last artifacts were rebuilt from the earlier 104-test source on
-  2026-08-21; `lintian`, dependency simulation and extracted-package Xvfb smokes passed then. They
-  must be rebuilt before release because they do not contain the current joystick/survey changes.
+- The `.deb` target was rebuilt from the current 148-test source on 2026-08-21; package structure,
+  dependencies and an extracted-package Xvfb event-loop smoke were verified. The existing
+  `tar.gz` is older and must still be rebuilt before release.
 - Debian install: registered as `missionplanner-avalonia 2026.8.0`; launcher, desktop entry, icon,
   man page and dependency metadata verified.
 - Installed-package smoke test: `/usr/lib/missionplanner-avalonia` remains byte-for-byte unchanged;
   runtime files are routed to isolated XDG config/data/cache/state roots.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
-The previous handoff artifacts (now stale relative to source) are
-`out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` and
-`out/packages/missionplanner-avalonia_2026.8.0_amd64.deb`. The apphost is an x86-64 ELF PIE, native
-libraries are ELF `.so` files and the `.dll` files are managed assemblies.
+The current Debian artifact is `out/packages/missionplanner-avalonia_2026.8.0_amd64.deb`; any
+existing `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source.
+The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
+managed assemblies.
 
 ## Runtime path behavior
 
@@ -195,7 +215,7 @@ not remove required Windows-native files from `win-x64` builds.
 | Survey grid advanced helpers | All | Core mission-command generation is ported. Upstream split-mission output, sample-photo preview, terrain-following adjustment and the camera-profile editor remain absent. |
 | Grid v2 / SimpleGrid variants | All | The alternative upstream/plugin grid workflows remain absent. |
 | DroneCAN file browser | All, hardware-specific | Node parameters and firmware upload work; general node file browsing is not exposed. |
-| Secondary log/interchange tools | All | Tlog conversion is present; tlog parameter/waypoint extraction, ULog UI, offline MagFit and CoT output remain to be ported. |
+| Secondary log/interchange tools | All | Tlog conversion, DataFlash split/DashWare and GPS-correction extraction are present; tlog parameter/waypoint extraction, ULog UI and offline MagFit remain to be ported. |
 | Direct DroneCAN SLCAN adapter mode | All, hardware-specific | UI reports unsupported; MAVLink-CAN1/CAN2 works. Direct serial lifecycle needs porting and native testing. |
 | Antenna tracker interfaces other than Maestro | All, hardware-specific | Configuration rejects other drivers; port/test each driver independently. |
 | Traditional-heli live curve/servo visualization | All | Writable configuration is present; remaining ZedGraph visuals need Avalonia replacements. |
@@ -222,7 +242,8 @@ not remove required Windows-native files from `win-x64` builds.
 | Log tooling extras | All | OSD video rendering from tlog, LogIndex with map thumbnails, log download over SCP, tlog→CSV/human-readable text/graph in the tlog converter, and MAVLink Inspector "Graph It" are not ported. |
 | Geo-reference gaps | All | GPS EXIF and TRIG matching are ported. Shutter lag, Estimate Offset, AMSL base altitude and KML network-link export remain absent. |
 | Geomagnetic K-index | All | The upstream K-index fetch and warning is not ported. |
-| Misc upstream tools | All | The hidden developer tool window (`temp.cs`), translation/resource editor, OpenGL 3D terrain view, MicroDrones serial downlink, vehicle default-settings loader, DevopsUI, menu auto-hide and menu icon sets are not ported. |
+| Remaining developer utilities | All | The safe portable subset of `temp.cs` is now a native Developer Tools page. Translation/resource editor, OpenGL 3D terrain view, MicroDrones serial downlink, vehicle default-settings loader, DevopsUI, custom GDAL/DEM browser and optical-flow live calibration image still need dedicated Avalonia implementations. |
+| CoT advanced identity fields | All | CoT 2.0 transport, type, UID and callsign are ported. Upstream's per-system TAKV/contact endpoint/VMF identity grid is not yet exposed. |
 
 ## Intentionally disabled or replaced
 
@@ -240,11 +261,15 @@ not remove required Windows-native files from `win-x64` builds.
 | Usage analytics | This port has no analytics sender; the Config page states that analytics are disabled rather than presenting a preference with no runtime consumer. |
 | Windows SimpleBLE/libusb DLLs in Linux packages | Explicitly filtered only for Linux; shipping PE native libraries on Linux would not provide BLE/USB support. |
 | NativeAOT as release format | Disabled by default on every target. Supported releases are self-contained CoreCLR builds. |
+| Developer crash/flight commands | The upstream developer form's autopilot lockup, automatic arm/takeoff and flight-termination actions are intentionally not exposed. They can crash or command a live aircraft and are not required for normal diagnostics. |
 
 ## Native-platform acceptance still required
 
 A Flysky FS-i6XCN was used for a Linux joydev smoke: the port-native reader opened it through
 `/dev/input/by-id`, reported 16 buttons, returned live raw axis/button state and shut down cleanly.
+Its advertised `-127..127` HID axes only reached about `-90..90` physically, producing roughly
+`7431..58105` instead of the full unsigned range; the new per-device range calibration specifically
+covers this mismatch and its endpoint/clamping/monotonicity behaviour is unit-tested.
 The 20 Hz MAVLink and built-in-SITL packet paths are unit-tested; hands-on auto-detect/mapping and
 RC output to a live vehicle or SITL still need acceptance. Camera-footprint projection is
 unit-tested, but a live `CAMERA_FEEDBACK` source is still required for acceptance. No USB flight

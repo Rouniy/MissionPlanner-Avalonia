@@ -76,7 +76,7 @@ public partial class FlightPlannerView : UserControl {
     }
   }
 
-  private static readonly string[] _defaultParamLabels = { "P1", "P2", "P3", "P4" };
+  private static readonly string[] _defaultParamLabels = { "P1", "P2", "P3", "P4", "Lat", "Lon", "Alt" };
   [Obsolete]
   private static readonly Dictionary<MAVLink.MAV_CMD, string[]> _paramLabels = new() {
     [MAVLink.MAV_CMD.WAYPOINT] = new[] { "Delay", "—", "—", "Yaw" },
@@ -104,11 +104,15 @@ public partial class FlightPlannerView : UserControl {
     var cmd = (MAVLink.MAV_CMD)row.Command;
     Services.MavCmdInfo.EnsureLoaded(Services.MavCmdInfo.CurrentSubtree());
     var xml = Services.MavCmdInfo.Get(cmd.ToString());
-    var labels = _paramLabels.TryGetValue(cmd, out var l) ? l : _defaultParamLabels;
-    for (int i = 0; i < 4; i++) {
+    var labels = Services.MissionCommandCatalog.GetLabels(row.Command)
+        ?? xml
+        ?? (_paramLabels.TryGetValue(cmd, out var l)
+            ? l.Concat(_defaultParamLabels.Skip(4)).ToArray()
+            : _defaultParamLabels);
+    for (int i = 0; i < 7; i++) {
       int col = _pColIndex + i;
       if (col < grid.Columns.Count) {
-        string name = xml != null && !string.IsNullOrEmpty(xml[i]) ? xml[i] : labels[i];
+        string name = i < labels.Length && !string.IsNullOrEmpty(labels[i]) ? labels[i] : _defaultParamLabels[i];
         grid.Columns[col].Header = string.IsNullOrEmpty(name) ? "—" : name;
       }
     }

@@ -1,0 +1,39 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:cv="using:MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView"
+  mc:Ignorable="d"
+  d:DesignWidth="1000"
+  d:DesignHeight="680"
+  x:Class="MissionPlannerAvalonia.Views.GCSViews.ConfigurationView.ConfigMavCommandView"
+  x:DataType="cv:ConfigMavCommandViewModel"
+  Background="{DynamicResource MpControlBg}"
+>
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16">
+    <TextBlock Grid.Row="0" Classes="pagetitle" Text="Mission Command List" />
+    <TextBlock Grid.Row="1" Text="{Binding Status}" Classes="fieldlbl" TextWrapping="Wrap"
+               Margin="0,4,0,12" />
+    <DataGrid Grid.Row="2" ItemsSource="{Binding Commands}" SelectedItem="{Binding SelectedCommand}"
+              AutoGenerateColumns="False" GridLinesVisibility="All">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="70" />
+        <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="190" />
+        <DataGridTextColumn Header="P1" Binding="{Binding P1}" Width="100" />
+        <DataGridTextColumn Header="P2" Binding="{Binding P2}" Width="100" />
+        <DataGridTextColumn Header="P3" Binding="{Binding P3}" Width="100" />
+        <DataGridTextColumn Header="P4" Binding="{Binding P4}" Width="100" />
+        <DataGridTextColumn Header="P5 / X" Binding="{Binding P5}" Width="100" />
+        <DataGridTextColumn Header="P6 / Y" Binding="{Binding P6}" Width="100" />
+        <DataGridTextColumn Header="P7 / Z" Binding="{Binding P7}" Width="100" />
+      </DataGrid.Columns>
+    </DataGrid>
+    <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+      <Button Content="Add" Command="{Binding AddCommand}" />
+      <Button Content="Remove" Command="{Binding RemoveCommand}" />
+      <Button Content="Save" Command="{Binding SaveCommand}" />
+      <Button Content="Reload" Command="{Binding ReloadCommand}" />
+    </StackPanel>
+  </Grid>
+</UserControl>
