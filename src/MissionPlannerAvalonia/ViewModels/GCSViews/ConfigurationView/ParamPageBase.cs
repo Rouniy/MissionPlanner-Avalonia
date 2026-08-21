@@ -40,6 +40,10 @@ public partial class ParamPageBase : ViewModelBase {
       await Services.Dialogs.Alert("Refresh parameters", "Not connected — cannot fetch params.");
       return;
     }
+    if (comPort.MAV.cs.armed && !await Services.Dialogs.MessageShowAgain(
+            "Refresh Params", Strings.WarningUpdateParamList, "WarningUpdateParamList")) {
+      return;
+    }
 
     try {
       await Task.Run(() => comPort.getParamListMavftp(comPort.MAV.sysid, comPort.MAV.compid));

@@ -17,6 +17,9 @@ public static class SpeechAnnouncer {
   private static DateTime _lastCustom = DateTime.MinValue;
   private static DateTime _lastLowSpeed = DateTime.MinValue;
   private static DateTime _lastAltWarning = DateTime.MinValue;
+  private static DateTime _connectedAt = DateTime.MinValue;
+  private static DateTime _lastNoData = DateTime.MinValue;
+  private static string _lastMessageHigh = "";
   private static double _altMax;
 
   public static void Start() {
@@ -41,6 +44,9 @@ public static class SpeechAnnouncer {
     _lastBattery = now;
     _lastLowSpeed = now;
     _lastAltWarning = now;
+    _connectedAt = now;
+    _lastNoData = now;
+    _lastMessageHigh = "";
     _lastArmed = false;
     _altMax = 0;
   }
@@ -80,23 +86,50 @@ public static class SpeechAnnouncer {
       }
     }
 
+    // Upstream keeps arm/disarm announcements outside the armed-only gate, but all regular
+    // status, battery, mode and waypoint speech obeys this setting.
+    if (s.GetBoolean("speech_armed_only", false) && !armed) {
+      return;
+    }
+
+    var now = DateTime.UtcNow;
+    if (ShouldWarnNoData(
+            now, mav.lastvalidpacket, _connectedAt, _lastNoData, armed)) {
+      string message = NoDataMessage(now, mav.lastvalidpacket);
+      cs.messageHigh = message;
+      _lastMessageHigh = message;
+      _lastNoData = now;
+      Speech.Speak(message);
+      return;
+    }
+
+    string messageHigh = cs.messageHigh ?? "";
+    if (ShouldSpeakHighMessage(messageHigh, _lastMessageHigh)) {
+      _lastMessageHigh = messageHigh;
+      Speech.Speak(messageHigh);
+      return;
+    }
+    if (!string.IsNullOrWhiteSpace(messageHigh)) {
+      _lastMessageHigh = messageHigh;
+    }
+
     if (s.GetBoolean("speechbatteryenabled") &&
-        (DateTime.UtcNow - _lastBattery).TotalSeconds > 30) {
+        (now - _lastBattery).TotalSeconds > 30) {
       float warnvolt = s.GetFloat("speechbatteryvolt", 9.6f);
       float warnpercent = s.GetFloat("speechbatterypercent", 20f);
       bool lowVolt = cs.battery_voltage <= warnvolt && cs.battery_voltage >= 5.0;
       bool lowPercent = cs.battery_remaining < warnpercent && cs.battery_voltage >= 5.0 &&
                         cs.battery_remaining != 0.0;
       if (lowVolt || lowPercent) {
-        _lastBattery = DateTime.UtcNow;
+        _lastBattery = now;
         Speak(mav, s["speechbattery"] ?? "WARNING, Battery at {batv} Volt, {batp} percent");
         return;
       }
     }
 
     if (s.GetBoolean("speechcustomenabled") &&
-        (DateTime.UtcNow - _lastCustom).TotalSeconds > 30) {
-      _lastCustom = DateTime.UtcNow;
+        (now - _lastCustom).TotalSeconds > 30) {
+      _lastCustom = now;
       Speak(mav, s["speechcustom"] ?? "Heading to Waypoint {wpn}");
       return;
     }
@@ -110,26 +143,46 @@ public static class SpeechAnnouncer {
       _altMax = Math.Max(_altMax, altRaw);
       float warnalt = s.GetFloat("speechaltheight", float.MaxValue);
       if (s.GetBoolean("speechaltenabled") && altRaw != 0 && altRaw <= warnalt &&
-          _altMax > warnalt && (DateTime.UtcNow - _lastAltWarning).TotalSeconds > 10) {
-        _lastAltWarning = DateTime.UtcNow;
+          _altMax > warnalt && (now - _lastAltWarning).TotalSeconds > 10) {
+        _lastAltWarning = now;
         Speak(mav, s["speechalt"] ?? "WARNING, low altitude {alt}");
         return;
       }
     }
 
     if (s.GetBoolean("speechlowspeedenabled") && armed &&
-        (DateTime.UtcNow - _lastLowSpeed).TotalSeconds > 10) {
+        (now - _lastLowSpeed).TotalSeconds > 10) {
       float warnAirspeed = s.GetFloat("speechlowairspeedtrigger");
       float warnGroundspeed = s.GetFloat("speechlowgroundspeedtrigger");
       if (cs.airspeed < warnAirspeed) {
-        _lastLowSpeed = DateTime.UtcNow;
+        _lastLowSpeed = now;
         Speak(mav, s["speechlowairspeed"] ?? "Low Air Speed {asp}");
       } else if (cs.groundspeed < warnGroundspeed) {
-        _lastLowSpeed = DateTime.UtcNow;
+        _lastLowSpeed = now;
         Speak(mav, s["speechlowgroundspeed"] ?? "Low Ground Speed {gsp}");
       }
     }
   }
+
+  internal static bool ShouldWarnNoData(
+      DateTime now, DateTime lastValidPacket, DateTime connectedAt,
+      DateTime lastWarning, bool armed) {
+    if (!armed || connectedAt == DateTime.MinValue || lastValidPacket == DateTime.MinValue) {
+      return false;
+    }
+    return now > connectedAt.AddSeconds(30)
+        && now > lastValidPacket.AddSeconds(3)
+        && now > lastWarning.AddSeconds(5);
+  }
+
+  internal static string NoDataMessage(DateTime now, DateTime lastValidPacket) =>
+      $"WARNING No Data for {(int)Math.Max(0, (now - lastValidPacket).TotalSeconds)} Seconds";
+
+  internal static bool ShouldSpeakHighMessage(string? message, string? lastMessage) =>
+      !string.IsNullOrWhiteSpace(message)
+      && !string.Equals(message, lastMessage, StringComparison.Ordinal)
+      && !message.StartsWith("PX4v2 ", StringComparison.Ordinal)
+      && !message.StartsWith("PreArm:", StringComparison.Ordinal);
 
   private static void Speak(MissionPlanner.MAVState mav, string template) {
     try {

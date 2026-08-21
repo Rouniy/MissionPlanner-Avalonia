@@ -21,6 +21,10 @@ public partial class MainWindow : Window {
     if (vm == null) {
       return;
     }
+    var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
+    if (ShouldPreserveFocusedInput(focused as Control, e.Key)) {
+      return;
+    }
     bool ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
     switch (e.Key) {
       case Key.D1 when ctrl && vm.ActiveTab == "DATA":
@@ -91,6 +95,21 @@ public partial class MainWindow : Window {
 
   internal static int ShortcutTabIndex(Key key) =>
       key == Key.D0 ? 9 : (int)key - (int)Key.D1;
+
+  internal static bool ShouldPreserveFocusedInput(Control? focused, Key key) {
+    if (key is Key.F2 or Key.F3 or Key.F4 or Key.F5 or Key.F12) {
+      return false;
+    }
+    for (Control? control = focused; control != null; control = control.Parent as Control) {
+      if (control is TextBox or NumericUpDown or ComboBox or DataGrid or Slider) {
+        return true;
+      }
+      if (key == Key.Space && control is Button) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   private void OnFullScreen(object? sender, RoutedEventArgs e) {
     if (WindowState == WindowState.FullScreen) {

@@ -2,6 +2,7 @@ using System.Linq;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using MissionPlanner;
 using MissionPlannerAvalonia.ViewModels;
 
 namespace MissionPlannerAvalonia.Views;
@@ -9,6 +10,7 @@ namespace MissionPlannerAvalonia.Views;
 public partial class RawParamsView : UserControl {
   private static readonly FilePickerFileType _paramFilter =
       new("Parameter File") { Patterns = new[] { "*.param", "*.parm" } };
+  private bool _warningShown;
 
   public RawParamsView() {
     InitializeComponent();
@@ -17,6 +19,16 @@ public partial class RawParamsView : UserControl {
     this.FindControl<Button>("CompareBtn")!.Click += OnCompare;
     this.FindControl<Button>("LoadFrameDefaultsBtn")!.Click += OnLoadFrameDefaults;
     this.FindControl<DataGrid>("ParamsGrid")!.CellEditEnded += (_, _) => Vm?.PersistFavs();
+    AttachedToVisualTree += (_, _) => ShowRawParameterWarning();
+  }
+
+  private void ShowRawParameterWarning() {
+    if (_warningShown) {
+      return;
+    }
+    _warningShown = true;
+    _ = Services.Dialogs.MessageShowAgain(
+        Strings.RawParamWarning, Strings.RawParamWarningi, "RawParamWarning");
   }
 
   private RawParamsViewModel? Vm => DataContext as RawParamsViewModel;

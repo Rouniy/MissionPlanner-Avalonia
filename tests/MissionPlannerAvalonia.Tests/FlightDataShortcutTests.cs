@@ -1,3 +1,5 @@
+using Avalonia.Controls;
+using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using MissionPlannerAvalonia.ViewModels;
 using MissionPlannerAvalonia.Views;
@@ -24,5 +26,14 @@ public class FlightDataShortcutTests {
   public void Playback_speed_shortcuts_match_upstream_steps(
       double current, int direction, double expected) {
     Assert.Equal(expected, FlightDataViewModel.NextTlogSpeed(current, direction), 6);
+  }
+
+  [AvaloniaFact]
+  public void Shell_shortcuts_do_not_steal_editing_keys_or_button_space() {
+    Assert.True(MainWindow.ShouldPreserveFocusedInput(new TextBox(), Key.X));
+    Assert.True(MainWindow.ShouldPreserveFocusedInput(new NumericUpDown(), Key.OemPlus));
+    Assert.True(MainWindow.ShouldPreserveFocusedInput(new Button(), Key.Space));
+    Assert.False(MainWindow.ShouldPreserveFocusedInput(new TextBox(), Key.F5));
+    Assert.False(MainWindow.ShouldPreserveFocusedInput(null, Key.X));
   }
 }

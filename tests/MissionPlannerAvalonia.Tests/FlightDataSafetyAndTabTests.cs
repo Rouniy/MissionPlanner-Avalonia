@@ -43,6 +43,14 @@ public class FlightDataSafetyAndTabTests {
     Assert.DoesNotContain("ALT_HOLD", trackerModes);
   }
 
+  [Theory]
+  [InlineData(false, false)]
+  [InlineData(true, true)]
+  public void Mode_changes_are_confirmation_gated_during_failsafe(
+      bool failsafe, bool expected) {
+    Assert.Equal(expected, FlightDataViewModel.RequiresModeFailsafeConfirmation(failsafe));
+  }
+
   [Fact]
   public void Home_waypoint_has_the_upstream_label() {
     Assert.Equal("0 (Home)", new WaypointOption(0, "0 (Home)").ToString());

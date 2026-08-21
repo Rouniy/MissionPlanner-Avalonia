@@ -20,6 +20,20 @@ public static class Speech {
   private static bool _pumping;
   private static int _stopVersion;
 
+  internal static bool ShouldSpeakForArmedState(bool enabled, bool armedOnly, bool armed) =>
+      enabled && (!armedOnly || armed);
+
+  private static bool AdapterEnabledForCurrentVehicle() {
+    try {
+      return ShouldSpeakForArmedState(
+          Enabled,
+          Settings.Instance.GetBoolean("speech_armed_only", false),
+          AppState.comPort.MAV.cs.armed);
+    } catch {
+      return Enabled;
+    }
+  }
+
   public static void Speak(string text) {
     if (!Enabled || string.IsNullOrWhiteSpace(text)) {
       return;
@@ -173,7 +187,7 @@ public static class Speech {
 
   private sealed class SpeechAdapter : ISpeech {
     public bool speechEnable {
-      get => Enabled;
+      get => AdapterEnabledForCurrentVehicle();
       set => Enabled = value;
     }
 
@@ -191,7 +205,11 @@ public static class Speech {
       }
     }
 
-    public void SpeakAsync(string text) => Speak(text);
+    public void SpeakAsync(string text) {
+      if (AdapterEnabledForCurrentVehicle()) {
+        Speak(text);
+      }
+    }
 
     public void SpeakAsyncCancelAll() => Stop();
   }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -194,7 +195,8 @@ public partial class ConfigInitialParamsViewModel : ViewModelBase {
 
     Results.Clear();
     foreach (var kv in np) {
-      var cur = _comPort.MAV.param.ContainsKey(kv.Key)
+      bool exists = _comPort.MAV.param.ContainsKey(kv.Key);
+      var cur = exists
           ? _comPort.MAV.param[kv.Key].Value.ToString("0.######", CultureInfo.InvariantCulture)
           : "n/a";
       Results.Add(new ParamCompareRow {
@@ -202,6 +204,8 @@ public partial class ConfigInitialParamsViewModel : ViewModelBase {
         Current = cur,
         NewValue = kv.Value.ToString("0.######", CultureInfo.InvariantCulture),
         Value = kv.Value,
+        Exists = exists,
+        Use = exists,
       });
     }
     HasResults = Results.Count > 0;
@@ -215,8 +219,14 @@ public partial class ConfigInitialParamsViewModel : ViewModelBase {
       Status = "Not connected.";
       return;
     }
+    var writable = SelectWritableRows(Results, _comPort.MAV.param.Keys);
+    if (writable.Count == 0) {
+      Status = "No selected parameters exist on the connected vehicle.";
+      return;
+    }
+
     var fail = 0;
-    foreach (var row in Results) {
+    foreach (var row in writable) {
       try {
         var ok = await Task.Run(() => _comPort.setParam(row.Name, row.Value, true));
         if (!ok) {
@@ -227,9 +237,16 @@ public partial class ConfigInitialParamsViewModel : ViewModelBase {
       }
     }
     Status = fail == 0
-        ? "Initial Parameters successfully updated. Check parameters before flight! " +
+        ? $"{writable.Count} initial parameter(s) successfully updated. "
+          + "Check parameters before flight! " +
           "After test flight set ATC_THR_MIX_MAN to 0.5."
         : fail + " parameter(s) failed to write.";
+  }
+
+  internal static IReadOnlyList<ParamCompareRow> SelectWritableRows(
+      IEnumerable<ParamCompareRow> rows, IEnumerable<string> availableParameters) {
+    var available = availableParameters.ToHashSet(StringComparer.OrdinalIgnoreCase);
+    return rows.Where(row => row.Use && row.Exists && available.Contains(row.Name)).ToList();
   }
 }
 
@@ -238,4 +255,10 @@ public partial class ParamCompareRow : ObservableObject {
   public string Current { get; set; } = "";
   public string NewValue { get; set; } = "";
   public double Value { get; set; }
+
+  [ObservableProperty]
+  private bool _exists;
+
+  [ObservableProperty]
+  private bool _use;
 }

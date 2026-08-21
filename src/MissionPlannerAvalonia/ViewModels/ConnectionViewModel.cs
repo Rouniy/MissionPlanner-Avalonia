@@ -208,6 +208,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
   public void Shutdown() {
     StopReader();
+    Services.Speech.Stop();
     try {
       if (_comPort.BaseStream?.IsOpen == true) {
         _comPort.Close();
@@ -675,6 +676,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       }
       CloseLogs();
     }
+    Services.Speech.Stop();
     self.Dispose();
 
     Avalonia.Threading.Dispatcher.UIThread.Post(() => {
@@ -840,6 +842,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
   internal async Task DisconnectAsync(string status) {
     StopReader();
+    Services.Speech.Stop();
     _connectedAtUtc = DateTime.MinValue;
     await Task.Run(() => {
       try {

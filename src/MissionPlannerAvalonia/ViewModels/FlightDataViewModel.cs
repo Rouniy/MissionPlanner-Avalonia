@@ -1452,6 +1452,14 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       Messages += "Not connected.\n";
       return;
     }
+    if (RequiresModeFailsafeConfirmation(_comPort.MAV.cs.failsafe)
+        && !await Services.Dialogs.Confirm(
+            "Failsafe",
+            "The vehicle is currently in failsafe. Changing mode can override its automatic "
+            + "recovery action. Change mode anyway?")) {
+      Messages += "Mode change cancelled while the vehicle is in failsafe.\n";
+      return;
+    }
     string modeName = SelectedMode;
     var request = new MAVLink.mavlink_set_mode_t();
     if (!_comPort.translateMode(
@@ -1514,6 +1522,8 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       return [];
     }
   }
+
+  internal static bool RequiresModeFailsafeConfirmation(bool failsafe) => failsafe;
 
   [RelayCommand]
   [Obsolete]

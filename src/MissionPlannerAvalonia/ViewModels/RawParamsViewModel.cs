@@ -86,6 +86,10 @@ public partial class RawParamsViewModel : ViewModelBase {
       await Services.Dialogs.Alert("Refresh parameters", "Not connected — cannot fetch params.");
       return;
     }
+    if (_comPort.MAV.cs.armed && !await Services.Dialogs.MessageShowAgain(
+            "Refresh Params", Strings.WarningUpdateParamList, "WarningUpdateParamList")) {
+      return;
+    }
 
     try {
 
@@ -129,6 +133,12 @@ public partial class RawParamsViewModel : ViewModelBase {
       return;
     }
 
+    pending = OrderPendingForWrite(pending);
+    if (!await Services.Dialogs.Confirm(
+            "Confirm Parameter Changes", BuildWriteConfirmation(pending))) {
+      return;
+    }
+
     int ok = 0;
     bool reboot = false;
     var fw = _comPort.MAV.cs.firmware.ToString();
@@ -160,6 +170,59 @@ public partial class RawParamsViewModel : ViewModelBase {
       await Services.Dialogs.Alert("Write parameters",
           $"Wrote {ok} of {pending.Count}. The rest were not acknowledged — try again.");
     }
+    await ReconcileParameterCountAfterWrite();
+  }
+
+  private async Task ReconcileParameterCountAfterWrite() {
+    var parameters = _comPort.MAV.param;
+    if (parameters.TotalReceived == parameters.TotalReported) {
+      return;
+    }
+    if (_comPort.MAV.cs.armed) {
+      await Services.Dialogs.Alert("Params",
+          "The number of available parameters changed. A full refresh is unsafe while armed, "
+          + "so some parameters may remain hidden until the vehicle is disarmed and refreshed.");
+      parameters.TotalReported = parameters.TotalReceived;
+      return;
+    }
+
+    await Services.Dialogs.Alert("Params",
+        "The number of available parameters changed. The complete list will now be refreshed.");
+    try {
+      await Task.Run(() => _comPort.getParamListMavftp(
+          _comPort.MAV.sysid, _comPort.MAV.compid));
+      LoadFromMav();
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Refresh failed", ex.Message);
+    }
+  }
+
+  internal static string BuildWriteConfirmation(
+      IReadOnlyList<(ParamRow row, double val)> pending) {
+    const int maxDetails = 20;
+    if (pending.Count > maxDetails) {
+      return $"You are about to change {pending.Count} parameters. Continue?";
+    }
+    string details = string.Join(Environment.NewLine, pending.Select(change =>
+        $"{change.row.Name}: {change.row.CurrentValue.ToString(CultureInfo.InvariantCulture)}"
+        + $" -> {change.val.ToString(CultureInfo.InvariantCulture)}"));
+    return $"You are about to change {pending.Count} parameter(s). "
+        + $"Review the changes below:\n\n{details}\n\nContinue?";
+  }
+
+  internal static IReadOnlyList<string> ParameterWriteOrder(IEnumerable<string> names) {
+    var ordered = names.ToList();
+    ordered.SortENABLE();
+    return ordered;
+  }
+
+  private static List<(ParamRow row, double val)> OrderPendingForWrite(
+      IReadOnlyList<(ParamRow row, double val)> pending) {
+    var byName = pending.ToDictionary(
+        change => change.row.Name, StringComparer.OrdinalIgnoreCase);
+    return ParameterWriteOrder(byName.Keys)
+        .Select(name => byName[name])
+        .ToList();
   }
 
   [RelayCommand]
@@ -419,7 +482,8 @@ public partial class RawParamsViewModel : ViewModelBase {
       IEnumerable<ParamRow> current, IReadOnlyDictionary<string, double> imported) {
     var rows = new List<ParamComparisonRow>();
     foreach (var row in current) {
-      if (imported.TryGetValue(row.Name, out double importedValue)
+      if (!IsProtectedFileParameter(row.Name)
+          && imported.TryGetValue(row.Name, out double importedValue)
           && importedValue != row.CurrentValue) {
         rows.Add(new ParamComparisonRow(row.Name, row.CurrentValue, importedValue));
       }
@@ -433,7 +497,8 @@ public partial class RawParamsViewModel : ViewModelBase {
         .ToDictionary(row => row.Name, row => row.FileValue, StringComparer.OrdinalIgnoreCase);
     int staged = 0;
     foreach (var row in current) {
-      if (selected.TryGetValue(row.Name, out double importedValue)) {
+      if (!IsProtectedFileParameter(row.Name)
+          && selected.TryGetValue(row.Name, out double importedValue)) {
         row.ValueText = importedValue.ToString(CultureInfo.InvariantCulture);
         staged++;
       }
