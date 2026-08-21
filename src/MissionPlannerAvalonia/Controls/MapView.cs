@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using Avalonia;
 using Avalonia.Input;
@@ -12,16 +13,13 @@ using Mapsui.Projections;
 using Mapsui.Styles;
 using Mapsui.Tiling.Layers;
 using Mapsui.UI.Avalonia;
+using MissionPlanner.Utilities;
 using MissionPlannerAvalonia.Services;
 using NetTopologySuite.Geometries;
 
 namespace MissionPlannerAvalonia.Controls;
 
 public class MapView : MapControl {
-  private const string _satelliteName = "Satellite";
-  private const string _satelliteUrl =
-      "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
-
   private TileLayer _baseLayer;
   private readonly WritableLayer _track = new() { Name = "Track" };
   private readonly WritableLayer _missionRoute = new() { Name = "Mission route" };
@@ -51,6 +49,7 @@ public class MapView : MapControl {
   private int _lastGuidedY;
   private float _lastGuidedZ;
   private bool _guidedWasVisible;
+  private bool _viewportRestored;
 
   public (double Lat, double Lng) LastClickLatLng { get; private set; }
 
@@ -87,7 +86,7 @@ public class MapView : MapControl {
   public MapView() {
 
     var map = new Map { BackColor = new Color(0x26, 0x27, 0x28) };
-    _baseLayer = MapTileSourceFactory.CreateLayer(_satelliteName, _satelliteUrl, "© Esri");
+    _baseLayer = MapTileSourceFactory.CreateMapLayer(MapTileSourceFactory.CurrentMapType);
     map.Layers.Add(_baseLayer);
 
     map.Layers.Add(_missionRoute);
@@ -121,20 +120,83 @@ public class MapView : MapControl {
 
   protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e) {
     base.OnAttachedToVisualTree(e);
+    RestoreLastViewport();
     MapTileSourceFactory.AccessModeChanged += OnTileAccessModeChanged;
+    MapTileSourceFactory.MapTypeChanged += OnMapTypeChanged;
     _timer.Start();
   }
 
   protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e) {
+    SaveLastViewport();
     _timer.Stop();
     MapTileSourceFactory.AccessModeChanged -= OnTileAccessModeChanged;
+    MapTileSourceFactory.MapTypeChanged -= OnMapTypeChanged;
     base.OnDetachedFromVisualTree(e);
   }
+
+  private void RestoreLastViewport() {
+    if (_viewportRestored) {
+      return;
+    }
+    _viewportRestored = true;
+    try {
+      var settings = Settings.Instance;
+      if (!double.TryParse(settings["maplast_lat"], NumberStyles.Any,
+              CultureInfo.InvariantCulture, out double lat)
+          || !double.TryParse(settings["maplast_lng"], NumberStyles.Any,
+              CultureInfo.InvariantCulture, out double lng)
+          || !double.TryParse(settings["maplast_zoom"], NumberStyles.Any,
+              CultureInfo.InvariantCulture, out double zoom)
+          || !double.IsFinite(lat) || !double.IsFinite(lng) || !double.IsFinite(zoom)
+          || (lat == 0 && lng == 0)) {
+        return;
+      }
+      var (x, y) = SphericalMercator.FromLonLat(lng, lat);
+      Map.Navigator.CenterOnAndZoomTo(new MPoint(x, y), ResolutionForLevel(
+          Math.Clamp((int)Math.Round(zoom), 1, 21)));
+      ZoomLevel = Math.Clamp((int)Math.Round(zoom), 1, 21);
+      _centered = true;
+    } catch {
+      // A stale viewport is non-fatal; the next live vehicle update will centre the map.
+    }
+  }
+
+  private void SaveLastViewport() {
+    try {
+      var viewport = Map.Navigator.Viewport;
+      if (!double.IsFinite(viewport.CenterX) || !double.IsFinite(viewport.CenterY)
+          || !double.IsFinite(viewport.Resolution) || viewport.Resolution <= 0) {
+        return;
+      }
+      var (lng, lat) = SphericalMercator.ToLonLat(viewport.CenterX, viewport.CenterY);
+      double zoom = ZoomLevelForResolution(viewport.Resolution);
+      var settings = Settings.Instance;
+      settings["maplast_lat"] = lat.ToString(CultureInfo.InvariantCulture);
+      settings["maplast_lng"] = lng.ToString(CultureInfo.InvariantCulture);
+      settings["maplast_zoom"] = zoom.ToString("0.###", CultureInfo.InvariantCulture);
+      settings.Save();
+    } catch {
+      // Saving the viewport must never prevent Flight Data from closing.
+    }
+  }
+
+  internal static double ZoomLevelForResolution(double resolution) =>
+      Math.Log(156543.03392804097 / resolution, 2);
 
   private void OnTileAccessModeChanged() {
     Dispatcher.UIThread.Post(() => {
       Map.Layers.Remove(_baseLayer);
-      _baseLayer = MapTileSourceFactory.CreateLayer(_satelliteName, _satelliteUrl, "© Esri");
+      _baseLayer = MapTileSourceFactory.CreateMapLayer(MapTileSourceFactory.CurrentMapType);
+      Map.Layers.Add(_baseLayer);
+      Map.Layers.MoveToBottom(_baseLayer);
+      RefreshGraphics();
+    });
+  }
+
+  private void OnMapTypeChanged(string mapType) {
+    Dispatcher.UIThread.Post(() => {
+      Map.Layers.Remove(_baseLayer);
+      _baseLayer = MapTileSourceFactory.CreateMapLayer(mapType);
       Map.Layers.Add(_baseLayer);
       Map.Layers.MoveToBottom(_baseLayer);
       RefreshGraphics();

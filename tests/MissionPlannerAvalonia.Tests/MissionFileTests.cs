@@ -84,6 +84,31 @@ public class MissionFileTests {
   }
 
   [AvaloniaFact]
+  public async Task Waypoint_file_switches_out_of_the_fence_store() {
+    var source = new FlightPlannerViewModel { HomeLat = 40, HomeLng = 28, HomeAlt = 100 };
+    source.Waypoints.Add(new WpRow {
+      Command = (ushort)MAVLink.MAV_CMD.WAYPOINT,
+      Lat = 40.1,
+      Lng = 28.1,
+      Alt = 50,
+    });
+    string path = Path.Combine(Path.GetTempPath(), $"mp_test_{Guid.NewGuid():N}.waypoints");
+    try {
+      await source.SaveFileAsync(path);
+      var target = new FlightPlannerViewModel { MissionType = "Fence" };
+      target.SetFenceReturn(41, 29);
+
+      await target.LoadFileAsync(path);
+
+      Assert.Equal("Mission", target.MissionType);
+      Assert.Single(target.Waypoints);
+      Assert.Equal((ushort)MAVLink.MAV_CMD.WAYPOINT, target.Waypoints[0].Command);
+    } finally {
+      File.Delete(path);
+    }
+  }
+
+  [AvaloniaFact]
   public async Task Polygon_round_trip_preserves_vertices_and_closure_is_not_duplicated() {
     var vm = new FlightPlannerViewModel();
     vm.AddPolygonPoint(40.1, 28.2);

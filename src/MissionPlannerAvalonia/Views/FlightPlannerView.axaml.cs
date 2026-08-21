@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -11,8 +12,6 @@ using Avalonia.Layout;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using MissionPlannerAvalonia.ViewModels;
-using SharpKml.Dom;
-using SharpKml.Engine;
 
 namespace MissionPlannerAvalonia.Views;
 
@@ -20,6 +19,7 @@ public partial class FlightPlannerView : UserControl {
   private FlightPlannerViewModel? _wired;
   private bool _polygonDrawMode;
   private int _noFlyLoadVersion;
+  private bool _tilePrefetchRunning;
 
   private const int _pColIndex = 2;
 
@@ -38,8 +38,10 @@ public partial class FlightPlannerView : UserControl {
     LoadAutoNoFly();
     AttachedToVisualTree += (_, _) =>
         Services.NoFlyOverlay.VisibilityChanged += OnNoFlyVisibilityChanged;
-    DetachedFromVisualTree += (_, _) =>
-        Services.NoFlyOverlay.VisibilityChanged -= OnNoFlyVisibilityChanged;
+    DetachedFromVisualTree += (_, _) => {
+      Services.NoFlyOverlay.VisibilityChanged -= OnNoFlyVisibilityChanged;
+      Vm?.SavePlannerSettings();
+    };
   }
 
   private async void LoadAutoNoFly() {
@@ -144,9 +146,12 @@ public partial class FlightPlannerView : UserControl {
     zm.Click += (_, _) => Map.ZoomToMission();
     var zv = new MenuItem { Header = "Vehicle" };
     zv.Click += (_, _) => Map.ZoomToVehicle();
+    var zs = new MenuItem { Header = "Search Place…" };
+    zs.Click += (_, _) => _ = SearchPlaceAsync();
     zoomto.Items.Add(zh);
     zoomto.Items.Add(zm);
     zoomto.Items.Add(zv);
+    zoomto.Items.Add(zs);
     menu.Items.Add(zoomto);
     var rotate = new MenuItem { Header = "Rotate" };
     var rcw = new MenuItem { Header = "Clockwise 15°" };
@@ -155,10 +160,21 @@ public partial class FlightPlannerView : UserControl {
     rccw.Click += (_, _) => Map.RotateBy(-15);
     var rreset = new MenuItem { Header = "Reset (North Up)" };
     rreset.Click += (_, _) => Map.ResetRotation();
+    var rset = new MenuItem { Header = "Set Heading…" };
+    rset.Click += (_, _) => _ = SetMapHeadingAsync();
     rotate.Items.Add(rcw);
     rotate.Items.Add(rccw);
     rotate.Items.Add(rreset);
+    rotate.Items.Add(rset);
     menu.Items.Add(rotate);
+    menu.Items.Add(Item("Prefetch Visible Area…",
+        (_, _, _) => _ = PrefetchMapTilesAsync(pathOnly: false)));
+    menu.Items.Add(Item("Prefetch WP Path…",
+        (_, _, _) => _ = PrefetchMapTilesAsync(pathOnly: true)));
+    menu.Items.Add(Item("Enter UTM Coordinate…",
+        (vm, lat, lng) => _ = vm.AddWaypointFromUtmAsync(lat, lng)));
+    menu.Items.Add(Item("Set Tracker Home…",
+        (vm, lat, lng) => _ = vm.SetTrackerHomeAsync(lat, lng)));
 
     var missionOnly = new List<Control>();
     void AddMissionOnly(Control c) {
@@ -195,11 +211,12 @@ public partial class FlightPlannerView : UserControl {
     loiter.Items.Add(Item("Circles", (vm, lat, lng) => _ = vm.AddLoiterCircles(lat, lng)));
     AddMissionOnly(loiter);
     AddMissionOnly(Item("Jump", (vm, _, _) => _ = vm.AddJump()));
-    AddMissionOnly(Item("Jump to Start", (vm, _, _) => vm.AddJumpStart()));
+    AddMissionOnly(Item("Jump to Start", (vm, _, _) => _ = vm.AddJumpStart()));
     var autowp = new MenuItem { Header = "Auto WP" };
     autowp.Items.Add(Item("Circle", (vm, lat, lng) => _ = vm.CreateWpCircle(lat, lng)));
     autowp.Items.Add(Item("Spline Circle", (vm, lat, lng) => _ = vm.CreateSplineCircle(lat, lng)));
     autowp.Items.Add(Item("Circle Survey", (vm, lat, lng) => _ = vm.CreateCircleSurvey(lat, lng)));
+    autowp.Items.Add(Item("Text", (vm, lat, lng) => _ = vm.CreateTextWaypoints(lat, lng)));
     AddMissionOnly(autowp);
     AddMissionOnly(Item("Elevation Graph", (_, _, _) => ShowElevationGraph()));
     menu.Items.Add(new Separator());
@@ -218,6 +235,7 @@ public partial class FlightPlannerView : UserControl {
     menu.Items.Add(new Separator());
     var poi = new MenuItem { Header = "POI" };
     poi.Items.Add(Item("Add POI", (vm, lat, lng) => _ = vm.AddPoi(lat, lng)));
+    poi.Items.Add(Item("Edit POI", (vm, lat, lng) => _ = vm.EditNearestPoi(lat, lng)));
     poi.Items.Add(Item("Delete POI", (vm, lat, lng) => vm.DeleteNearestPoi(lat, lng)));
     poi.Items.Add(Item("POI at Coords", (vm, _, _) => _ = vm.AddPoiAtCoords()));
     poi.Items.Add(Item("Clear POIs", (vm, _, _) => vm.ClearPois()));
@@ -247,6 +265,7 @@ public partial class FlightPlannerView : UserControl {
     poly.Items.Add(draw);
     poly.Items.Add(Item("Clear", (vm, _, _) => vm.ClearPolygon()));
     poly.Items.Add(Item("From Current Waypoints", (vm, _, _) => vm.BuildPolygonFromWaypoints()));
+    poly.Items.Add(Item("Offset…", (vm, _, _) => _ = vm.OffsetDrawnPolygonAsync()));
     poly.Items.Add(Item("Area", (vm, _, _) => vm.PolygonArea()));
     var loadPolygon = new MenuItem { Header = "Load .poly…" };
     loadPolygon.Click += OnLoadPolygon;
@@ -308,7 +327,9 @@ public partial class FlightPlannerView : UserControl {
   private FlightPlannerViewModel? Vm => DataContext as FlightPlannerViewModel;
 
   private static readonly FilePickerFileType _wpType = new("Mission Planner files") {
-    Patterns = new[] { "*.waypoints", "*.txt", "*.mission", "*.plan", "*.fen", "*.ral", "*.poly" },
+    Patterns = new[] {
+      "*.waypoints", "*.txt", "*.mission", "*.plan", "*.fen", "*.ral", "*.poly", "*.kml", "*.kmz",
+    },
   };
 
   private static readonly FilePickerFileType _jsonMissionType = new("Mission/QGC JSON") {
@@ -327,8 +348,8 @@ public partial class FlightPlannerView : UserControl {
     Patterns = new[] { "*.poly" },
   };
 
-  private static readonly FilePickerFileType _kmlType = new("KML") {
-    Patterns = new[] { "*.kml" },
+  private static readonly FilePickerFileType _kmlType = new("KML/KMZ") {
+    Patterns = new[] { "*.kml", "*.kmz" },
   };
 
   private void WireViewModel() {
@@ -381,6 +402,9 @@ public partial class FlightPlannerView : UserControl {
       Map.SetHome(Vm.HomeLat, Vm.HomeLng);
     } else if (e.PropertyName == nameof(FlightPlannerViewModel.MissionType)) {
       Map.SetRenderMode(Vm.MissionType);
+    } else if (e.PropertyName == nameof(FlightPlannerViewModel.WpRadius)
+               || e.PropertyName == nameof(FlightPlannerViewModel.LoiterRadius)) {
+      OnWaypointsChanged();
     }
   }
 
@@ -547,9 +571,15 @@ public partial class FlightPlannerView : UserControl {
     }
 
     try {
-      var track = ParseKmlTrack(path);
+      var track = Services.KmlMissionReader.Read(path).Overlay
+          .Select(point => (point.Lat, point.Lng)).ToList();
       if (track.Count >= 2) {
         Map.ShowKmlTrack(track);
+        if (Vm != null) {
+          Vm.Status = $"KML/KMZ overlay loaded ({track.Count} point(s)).";
+        }
+      } else if (Vm != null) {
+        Vm.Status = "No line or polygon geometry found in the KML/KMZ file.";
       }
     } catch (Exception ex) {
       if (Vm != null) {
@@ -558,38 +588,110 @@ public partial class FlightPlannerView : UserControl {
     }
   }
 
-  private static List<(double Lat, double Lng)> ParseKmlTrack(string path) {
-    var track = new List<(double, double)>();
-    KmlFile kml;
-    using (var fs = File.OpenRead(path)) {
-      kml = KmlFile.Load(fs);
+  private async Task SearchPlaceAsync() {
+    string? place = await PromptAsync(
+        "Zoom To", "Location", "Perth Airport, Australia");
+    if (string.IsNullOrWhiteSpace(place)) {
+      return;
     }
 
-    if (kml.Root == null) {
-      return track;
-    }
-
-    foreach (var el in kml.Root.Flatten()) {
-      switch (el) {
-        case LineString ls when ls.Coordinates != null:
-          foreach (var v in ls.Coordinates) {
-            track.Add((v.Latitude, v.Longitude));
-          }
-
-          break;
-        case LinearRing lr when lr.Coordinates != null:
-          foreach (var v in lr.Coordinates) {
-            track.Add((v.Latitude, v.Longitude));
-          }
-
-          break;
-        case SharpKml.Dom.Point pt when pt.Coordinate != null:
-          track.Add((pt.Coordinate.Latitude, pt.Coordinate.Longitude));
-          break;
+    try {
+      GMap.NET.GeoCoderStatusCode status = GMap.NET.GeoCoderStatusCode.Unknow;
+      GMap.NET.PointLatLng? point = await Task.Run(() =>
+          GMap.NET.MapProviders.GMapProviders.OpenStreetMap.GetPoint(place, out status));
+      if (point is { } location && status == GMap.NET.GeoCoderStatusCode.G_GEO_SUCCESS) {
+        Map.CenterOnAndZoom(location.Lat, location.Lng, 15);
+        ZoomSlider.Value = 15;
+        if (Vm != null) {
+          Vm.Status = "Map centred on " + place;
+        }
+        return;
+      }
+      if (Vm != null) {
+        Vm.Status = $"Location not found ({status}): {place}";
+      }
+    } catch (Exception ex) {
+      if (Vm != null) {
+        Vm.Status = "Location search failed: " + ex.Message;
       }
     }
+  }
 
-    return track;
+  private async Task SetMapHeadingAsync() {
+    string? input = await PromptAsync(
+        "Rotate map", "New up heading (degrees)",
+        Map.Rotation.ToString("0.##", CultureInfo.InvariantCulture));
+    if (double.TryParse(input, NumberStyles.Any, CultureInfo.InvariantCulture,
+            out double heading) && double.IsFinite(heading)) {
+      Map.RotateTo(heading);
+    } else if (input != null && Vm != null) {
+      Vm.Status = "Invalid map heading.";
+    }
+  }
+
+  private async Task PrefetchMapTilesAsync(bool pathOnly) {
+    if (Vm == null) {
+      return;
+    }
+    if (_tilePrefetchRunning) {
+      Vm.Status = "Tile prefetch is already running.";
+      return;
+    }
+    int current = Math.Clamp(Map.CurrentZoomLevel, 1, 21);
+    string? minimumInput = await PromptAsync(
+        "Tile prefetch", "Minimum zoom (1-21)", current.ToString(CultureInfo.InvariantCulture));
+    if (minimumInput == null) {
+      return;
+    }
+    string? maximumInput = await PromptAsync(
+        "Tile prefetch", "Maximum zoom (1-21)",
+        Math.Min(current + 2, 21).ToString(CultureInfo.InvariantCulture));
+    if (maximumInput == null) {
+      return;
+    }
+    if (!int.TryParse(minimumInput, NumberStyles.Integer, CultureInfo.InvariantCulture,
+            out int minimum)
+        || !int.TryParse(maximumInput, NumberStyles.Integer, CultureInfo.InvariantCulture,
+            out int maximum)
+        || minimum is < 1 or > 21 || maximum is < 1 or > 21 || minimum > maximum) {
+      Vm.Status = "Invalid tile-prefetch zoom range.";
+      return;
+    }
+
+    IReadOnlyList<BruTile.TileInfo> tiles = pathOnly
+        ? Services.MapTileSourceFactory.PathTiles(
+            Vm.Waypoints
+                .Where(row => Services.MissionRoute.IsNavigation(row.Command)
+                              && (row.Lat != 0 || row.Lng != 0))
+                .Select(row => (row.Lat, row.Lng)).ToList(), minimum, maximum)
+        : Services.MapTileSourceFactory.AreaTiles(Map.VisibleTileExtent, minimum, maximum);
+    if (tiles.Count == 0) {
+      Vm.Status = pathOnly ? "No waypoint path to prefetch." : "The visible map area is empty.";
+      return;
+    }
+    if (tiles.Count > 20000) {
+      Vm.Status = $"Tile prefetch has {tiles.Count} tiles; reduce the area or zoom range.";
+      return;
+    }
+    if (tiles.Count > 2000 && !await Services.Dialogs.Confirm(
+          "Tile prefetch", $"Download and cache {tiles.Count} map tiles?")) {
+      Vm.Status = "Tile prefetch cancelled.";
+      return;
+    }
+
+    try {
+      _tilePrefetchRunning = true;
+      var progress = new Progress<(int Done, int Total)>(value =>
+          Vm.Status = $"Prefetching map tiles: {value.Done}/{value.Total}…");
+      Services.MapPrefetchResult result = await Services.MapTileSourceFactory.PrefetchAsync(
+          Vm.MapType, tiles, progress);
+      Vm.Status = $"Tile prefetch complete: {result.Downloaded}/{result.Total} cached"
+          + (result.Failed > 0 ? $", {result.Failed} failed." : ".");
+    } catch (Exception ex) {
+      Vm.Status = "Tile prefetch failed: " + ex.Message;
+    } finally {
+      _tilePrefetchRunning = false;
+    }
   }
 
   private async void OnInjectCustomMap(object? sender, RoutedEventArgs e) {

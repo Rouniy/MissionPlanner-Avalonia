@@ -10,6 +10,7 @@ using Mapsui.Projections;
 using Mapsui.Styles;
 using Mapsui.Tiling.Layers;
 using Mapsui.UI.Avalonia;
+using MissionPlanner;
 using MissionPlannerAvalonia.Services;
 using NetTopologySuite.Geometries;
 
@@ -44,6 +45,7 @@ public class FlightPlannerMap : MapControl {
   private bool _graticuleOn;
   private bool _centered;
   private int _dragIndex = -1;
+  private bool _pressedOnWaypoint;
 
   private readonly HashSet<int> _groupSet = new();
   private readonly Dictionary<int, (double Lat, double Lng)> _groupSnapshot = new();
@@ -113,8 +115,8 @@ public class FlightPlannerMap : MapControl {
       IReadOnlyList<(int Seq, double Lat, double Lng, ushort Cmd, double P1, double P2, double P3,
           double P4)> wps,
       double wpRadius, double loiterRadius) {
-    _wpRadius = wpRadius;
-    _loiterRadius = loiterRadius;
+    _wpRadius = RadiusInMeters(wpRadius, CurrentState.multiplierdist);
+    _loiterRadius = RadiusInMeters(loiterRadius, CurrentState.multiplierdist);
     _wps.Clear();
     foreach (var w in wps) {
       if (w.Lat == 0 && w.Lng == 0) {
@@ -231,6 +233,7 @@ public class FlightPlannerMap : MapControl {
   public void SetMapType(string type) {
     _mapType = type;
     _customTileUrl = null;
+    MapTileSourceFactory.SetMapType(type);
     ReplaceBase(BuildTileLayer(type));
   }
 
@@ -313,12 +316,19 @@ public class FlightPlannerMap : MapControl {
         : rally ? new Color(0x40, 0xE0, 0x40)
         : new Color(0xFF, 0xCC, 0x00);
 
-    var line = new List<MPoint>(_wps.Count);
+    var routePoints = new List<MPoint>(_wps.Count);
+    var routeWaypoints = new List<
+        (int Seq, double Lat, double Lng, ushort Cmd, double P1, double P2, double P3, double P4)>(
+        _wps.Count);
     for (int i = 0; i < _wps.Count; i++) {
       var w = _wps[i];
       var (x, y) = SphericalMercator.FromLonLat(w.Lng, w.Lat);
       var pt = new MPoint(x, y);
-      line.Add(pt);
+      bool routeItem = fence || rally || MissionRoute.IsNavigation(w.Cmd);
+      if (routeItem) {
+        routePoints.Add(pt);
+        routeWaypoints.Add(w);
+      }
       var (radius, ringColor, ringFill) = RingFor(w.Cmd, w.P1, w.P2, w.P3);
       if (radius > 0) {
         _rings.Add(BuildRing(w.Lng, w.Lat, radius, ringColor, ringFill));
@@ -327,28 +337,31 @@ public class FlightPlannerMap : MapControl {
     }
 
     if (!rally) {
-      if (fence && line.Count >= 3) {
-        line.Add(line[0]);
-        AddPolyline(_route, line, markerColor, 3);
+      if (fence && routePoints.Count >= 3) {
+        routePoints.Add(routePoints[0]);
+        AddPolyline(_route, routePoints, markerColor, 3);
       } else {
-        AddRoute(line, markerColor, 4);
+        AddRoute(routePoints, routeWaypoints, markerColor, 4);
       }
-      AddDistanceLabels();
+      AddDistanceLabels(routeWaypoints);
     }
 
-    if (mission && line.Count > 2 && (_homeLatLng.Lat != 0 || _homeLatLng.Lng != 0)) {
+    if (mission && routePoints.Count > 2 && (_homeLatLng.Lat != 0 || _homeLatLng.Lng != 0)) {
       var (hx, hy) = SphericalMercator.FromLonLat(_homeLatLng.Lng, _homeLatLng.Lat);
       var hp = new MPoint(hx, hy);
-      double dLast = Haversine(_homeLatLng.Lat, _homeLatLng.Lng, _wps[^1].Lat, _wps[^1].Lng);
-      double dFirst = Haversine(_homeLatLng.Lat, _homeLatLng.Lng, _wps[0].Lat, _wps[0].Lng);
+      double dLast = Haversine(_homeLatLng.Lat, _homeLatLng.Lng,
+          routeWaypoints[^1].Lat, routeWaypoints[^1].Lng);
+      double dFirst = Haversine(_homeLatLng.Lat, _homeLatLng.Lng,
+          routeWaypoints[0].Lat, routeWaypoints[0].Lng);
       bool dash = dLast < 5000 && dFirst < 5000;
-      AddPolyline(_route, new[] { line[^1], hp, line[0] }, new Color(255, 255, 0), 2, dash);
+      AddPolyline(_route, new[] { routePoints[^1], hp, routePoints[0] },
+          new Color(255, 255, 0), 2, dash);
     }
 
-    if (mission && _wps.Count >= 2) {
-      for (int i = 0; i < _wps.Count - 1; i++) {
-        var a = _wps[i];
-        var b = _wps[i + 1];
+    if (mission && routeWaypoints.Count >= 2) {
+      for (int i = 0; i < routeWaypoints.Count - 1; i++) {
+        var a = routeWaypoints[i];
+        var b = routeWaypoints[i + 1];
         var (mx, my) = SphericalMercator.FromLonLat((a.Lng + b.Lng) / 2, (a.Lat + b.Lat) / 2);
         var mp = new MPoint(mx, my);
         _midSegs.Add((mp, a.Seq));
@@ -371,10 +384,11 @@ public class FlightPlannerMap : MapControl {
     RefreshGraphics();
   }
 
-  private void AddDistanceLabels() {
-    for (int i = 1; i < _wps.Count; i++) {
-      var a = _wps[i - 1];
-      var b = _wps[i];
+  private void AddDistanceLabels(IReadOnlyList<
+      (int Seq, double Lat, double Lng, ushort Cmd, double P1, double P2, double P3, double P4)> route) {
+    for (int i = 1; i < route.Count; i++) {
+      var a = route[i - 1];
+      var b = route[i];
       double d = Haversine(a.Lat, a.Lng, b.Lat, b.Lng);
       var (x, y) = SphericalMercator.FromLonLat((a.Lng + b.Lng) / 2, (a.Lat + b.Lat) / 2);
       var f = new PointFeature(new MPoint(x, y));
@@ -397,6 +411,11 @@ public class FlightPlannerMap : MapControl {
         * Math.Sin(dLng / 2) * Math.Sin(dLng / 2);
     return r * 2 * Math.Atan2(Math.Sqrt(h), Math.Sqrt(1 - h));
   }
+
+  internal static double RadiusInMeters(double displayValue, double displayMultiplier) =>
+      displayValue / (double.IsFinite(displayMultiplier) && displayMultiplier > 0
+          ? displayMultiplier
+          : 1);
 
   private (double Radius, Color Color, Color? Fill) RingFor(ushort cmd, double p1, double p2,
       double p3) {
@@ -491,14 +510,16 @@ public class FlightPlannerMap : MapControl {
   }
 
   // ponytail: centripetal Catmull-Rom is a rendering stand-in for upstream Spline2 physics
-  private void AddRoute(IReadOnlyList<MPoint> pts, Color color, double widthPx) {
+  private void AddRoute(IReadOnlyList<MPoint> pts, IReadOnlyList<
+      (int Seq, double Lat, double Lng, ushort Cmd, double P1, double P2, double P3, double P4)> route,
+      Color color, double widthPx) {
     if (pts.Count < 2) {
       return;
     }
 
     var outc = new List<Coordinate> { new(pts[0].X, pts[0].Y) };
     for (int i = 0; i < pts.Count - 1; i++) {
-      bool spline = (MAVLink.MAV_CMD)_wps[i + 1].Cmd == MAVLink.MAV_CMD.SPLINE_WAYPOINT;
+      bool spline = (MAVLink.MAV_CMD)route[i + 1].Cmd == MAVLink.MAV_CMD.SPLINE_WAYPOINT;
       if (spline) {
         var p0 = pts[Math.Max(0, i - 1)];
         var p1 = pts[i];
@@ -531,14 +552,7 @@ public class FlightPlannerMap : MapControl {
   }
 
   private static TileLayer BuildTileLayer(string type) {
-    string url = type switch {
-      "GoogleSatelliteMap" => "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
-      "GoogleHybridMap" => "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-      "OpenStreetMap" => "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-      _ =>
-          "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    };
-    return MapTileSourceFactory.CreateLayer(type, url);
+    return MapTileSourceFactory.CreateMapLayer(type);
   }
 
   private void OnMapPointerPressed(object? sender, MapEventArgs e) {
@@ -546,6 +560,7 @@ public class FlightPlannerMap : MapControl {
     LastClickLatLng = (lat, lng);
     int idx = HitTest(e.ScreenPosition);
     if (idx >= 0) {
+      _pressedOnWaypoint = true;
 
       if (_groupSet.Count > 0 && _groupSet.Contains(idx)) {
         _groupDragging = true;
@@ -686,6 +701,7 @@ public class FlightPlannerMap : MapControl {
   protected override void OnPointerPressed(Avalonia.Input.PointerPressedEventArgs e) {
     _pressPoint = e.GetPosition(this);
     _didDrag = false;
+    _pressedOnWaypoint = false;
     _ctrlHeld = e.KeyModifiers.HasFlag(Avalonia.Input.KeyModifiers.Control);
     base.OnPointerPressed(e);
   }
@@ -694,6 +710,7 @@ public class FlightPlannerMap : MapControl {
     base.OnPointerReleased(e);
     if (e.InitialPressMouseButton == Avalonia.Input.MouseButton.Left
         && _dragIndex < 0 && !_didDrag && !_ctrlHeld
+        && !_pressedOnWaypoint
         && Distance(e.GetPosition(this), _pressPoint) < _hitThresholdPx) {
 
       int after = HitTestMidpoint(e.GetPosition(this));
@@ -703,6 +720,7 @@ public class FlightPlannerMap : MapControl {
         MapClicked?.Invoke(LastClickLatLng.Lat, LastClickLatLng.Lng);
       }
     }
+    _pressedOnWaypoint = false;
   }
 
   private static double Distance(Avalonia.Point a, Avalonia.Point b) {
@@ -805,6 +823,27 @@ public class FlightPlannerMap : MapControl {
   public void RotateBy(double deg) => Map.Navigator.RotateTo(Map.Navigator.Viewport.Rotation + deg);
 
   public void ResetRotation() => Map.Navigator.RotateTo(0);
+
+  public double Rotation => Map.Navigator.Viewport.Rotation;
+
+  public int CurrentZoomLevel => (int)Math.Round(
+      Math.Log(156543.03392804097 / Map.Navigator.Viewport.Resolution, 2));
+
+  public BruTile.Extent VisibleTileExtent {
+    get {
+      MRect extent = Map.Navigator.Viewport.ToExtent();
+      return new BruTile.Extent(extent.MinX, extent.MinY, extent.MaxX, extent.MaxY);
+    }
+  }
+
+  public void RotateTo(double degrees) => Map.Navigator.RotateTo((degrees % 360 + 360) % 360);
+
+  public void CenterOnAndZoom(double lat, double lng, double level) {
+    var (x, y) = SphericalMercator.FromLonLat(lng, lat);
+    Map.Navigator.CenterOnAndZoomTo(
+        new MPoint(x, y), 156543.03392804097 / Math.Pow(2, Math.Clamp(level, 1, 21)));
+    _centered = true;
+  }
 
   public void SetZoomLevel(double level) =>
       Map.Navigator.ZoomTo(156543.03392804097 / Math.Pow(2, level));

@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 240 tests verified; the existing Linux packages predate the latest planner, Flight Data and map rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 262 tests verified; the existing Linux packages predate the latest planner, Flight Data and map rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -138,6 +138,16 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   checks.
 - Mission file compatibility for QGC WPL, Mission Planner `.mission`, QGC `.plan`, `.poly`, legacy
   `.fen`/`.ral`, and load-and-append. QGC Plan round-trips mission, polygon/circle fence, and rally data.
+- Flight Planner imports KML/KMZ LineStrings as missions and Point placemarks as persistent POIs;
+  map overlays also accept KMZ. Its upstream planner settings, default altitude frame, absolute-altitude
+  write confirmation, display-unit conversions and last Flight Data viewport are restored. Portable map
+  tools now include place search, arbitrary heading, UTM entry, polygon offset and Tracker Home.
+- Flight Planner and Flight Data use the same persisted map provider and update together. Google,
+  OpenStreetMap, Esri and Bing have distinct tile sources; the Bing selector no longer silently serves
+  Esri imagery.
+- Planner map tools can prefetch either the visible area or a buffered waypoint path across a selected
+  zoom range into the shared offline cache. Auto-WP Text uses the cross-platform vector path backend
+  and selected distance/altitude units instead of requiring the Windows-only stick font/GDI path.
 - Flight Planner now keeps a bounded undo history across Mission/Fence/Rally edits, home changes,
   map operations, generated patterns and direct grid edits. Ctrl+Z, file open/save and normal/fast
   mission-transfer shortcuts mirror upstream, while the existing KML overlay loader is reachable
@@ -187,7 +197,7 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 240 passed, 0 failed.
+- Automated tests: 262 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 156 MB.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The `.deb` target was rebuilt from the then-current 158-test source on 2026-08-21; package structure,
@@ -268,7 +278,7 @@ not remove required Windows-native files from `win-x64` builds.
 | Flight Data map extras | All | Mission/Home/current-WP, fence, rally, Guided target, POIs, camera feedback and mission-distance progress are ported. Marine AIS targets, OA/proximity objects on the map, optional airport overlays, live gimbal/camera target and photo-overlap count remain absent. |
 | Pre-flight checklist engine | All | Only the manual checklist and six fixed automatic checks exist; the upstream configurable rule engine (`checklistDefault.xml`, condition types, colours, editor) is absent. |
 | DisplayView profiles | All | `DisplayViewExtensions.custompath` is set, but no screen consumes `DisplayConfiguration` to show/hide individual widgets (tab-level Customize is ported). |
-| Planner map tools | All | Tile prefetch (area and along-WP-path), offset polygon, Tracker Home from map, dedicated legacy rally shortcuts, and KML/KMZ/DXF support beyond the current flattened `.kml` track overlay are not ported. Rally data itself is read, written and cleared through the Mission Type selector. |
+| Planner map tools | All | Dedicated legacy rally shortcuts, panel docking toggle, DXF and style-preserving/multi-layer KML rendering remain absent. KML/KMZ mission/POI import and flattened overlays, tile prefetch for visible areas and WP paths, Auto-WP text, polygon offset, place search, arbitrary heading, UTM entry and Tracker Home are ported. Rally data itself is read, written and cleared through the Mission Type selector. |
 | Full Parameter List extras | All | Reset-to-default is ported. The ArduPilot GitHub parameter-file browser/comparison remains absent. |
 | ADS-B connection settings | All | The toggle controls MAVLink traffic rendering. The upstream external ADS-B server/port connection and configuration prompt are not implemented. |
 | SSH terminal | All | The upstream companion-computer SSH terminal (`Renci.SshNet`) is not ported; the terminal is MAVLink NSH only. |

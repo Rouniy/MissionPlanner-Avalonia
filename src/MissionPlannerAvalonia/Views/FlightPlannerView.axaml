@@ -19,17 +19,21 @@
 
       <Grid Grid.Row="2" RowDefinitions="Auto,*">
         <WrapPanel Grid.Row="0" Margin="6,4" VerticalAlignment="Center">
-          <ctl:FormField Label="WP Radius" LabelWidth="66" Margin="0,2,12,2">
+          <ctl:FormField Label="{Binding WpRadiusLabel}" LabelWidth="92" Margin="0,2,12,2">
             <NumericUpDown Classes="sm" Value="{Binding WpRadius}" />
           </ctl:FormField>
-          <ctl:FormField Label="Loiter Radius" LabelWidth="80" Margin="0,2,12,2">
+          <ctl:FormField Label="{Binding LoiterRadiusLabel}" LabelWidth="104" Margin="0,2,12,2">
             <NumericUpDown Classes="sm" Value="{Binding LoiterRadius}" />
           </ctl:FormField>
-          <ctl:FormField Label="Default Alt" LabelWidth="66" Margin="0,2,12,2">
-            <NumericUpDown Classes="sm" Value="{Binding DefaultAlt}" />
+          <ctl:FormField Label="{Binding DefaultAltLabel}" LabelWidth="92" Margin="0,2,12,2">
+            <NumericUpDown Classes="sm" Value="{Binding DefaultAltDisplay}" />
           </ctl:FormField>
-          <ctl:FormField Label="Alt Warn" LabelWidth="56" Margin="0,2,12,2">
-            <NumericUpDown Classes="sm" Value="{Binding AltWarn}" />
+          <ctl:FormField Label="Alt Mode" LabelWidth="56" Margin="0,2,12,2">
+            <ComboBox Width="92" ItemsSource="{Binding DefaultFrames}"
+                      SelectedItem="{Binding DefaultFrame}" />
+          </ctl:FormField>
+          <ctl:FormField Label="{Binding AltWarnLabel}" LabelWidth="80" Margin="0,2,12,2">
+            <NumericUpDown Classes="sm" Value="{Binding AltWarnDisplay}" />
           </ctl:FormField>
           <Button Content="Add WP" Command="{Binding AddWaypointCommand}" Margin="0,0,8,0" />
           <CheckBox Content="Spline" IsChecked="{Binding SplineDefault}" Foreground="#E0E0E0"
@@ -90,7 +94,7 @@
             <DataGridTextColumn Header="P4" Binding="{Binding P4}" Width="70" />
             <DataGridTextColumn Header="Lat" Binding="{Binding Lat}" Width="120" />
             <DataGridTextColumn Header="Lon" Binding="{Binding Lng}" Width="120" />
-            <DataGridTextColumn Header="Alt" Binding="{Binding Alt}" Width="80" />
+            <DataGridTextColumn Header="Alt" Binding="{Binding AltDisplay}" Width="80" />
             <DataGridTemplateColumn Header="Frame" Width="90">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate x:DataType="vm:WpRow">
@@ -199,8 +203,8 @@
           <ctl:FormField Orientation="Vertical" Label="Long">
             <TextBox HorizontalAlignment="Stretch" Text="{Binding HomeLng}" />
           </ctl:FormField>
-          <ctl:FormField Orientation="Vertical" Label="ASL">
-            <TextBox HorizontalAlignment="Stretch" Text="{Binding HomeAlt}" />
+          <ctl:FormField Orientation="Vertical" Label="{Binding HomeAltLabel}">
+            <TextBox HorizontalAlignment="Stretch" Text="{Binding HomeAltDisplay}" />
           </ctl:FormField>
           <Button
             Content="Set from Vehicle"

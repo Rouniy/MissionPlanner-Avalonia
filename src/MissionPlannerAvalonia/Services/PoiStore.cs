@@ -23,12 +23,32 @@ public static class PoiStore {
   public static void Add(double lat, double lng, double alt, string name) =>
       Add(new PoiPoint(lat, lng, alt, name));
 
+  public static int AddRange(IEnumerable<PoiPoint> points) {
+    var additions = points.ToList();
+    if (additions.Count == 0) {
+      return 0;
+    }
+    _points.AddRange(additions);
+    Save();
+    return additions.Count;
+  }
+
   public static bool Remove(PoiPoint p) {
     bool removed = _points.Remove(p);
     if (removed) {
       Save();
     }
     return removed;
+  }
+
+  public static bool Replace(PoiPoint existing, PoiPoint replacement) {
+    int index = _points.IndexOf(existing);
+    if (index < 0) {
+      return false;
+    }
+    _points[index] = replacement;
+    Save();
+    return true;
   }
 
   public static void Clear() {

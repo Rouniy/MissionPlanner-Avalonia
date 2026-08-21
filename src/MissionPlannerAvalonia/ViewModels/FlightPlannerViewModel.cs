@@ -43,8 +43,62 @@ public partial class FlightPlannerViewModel : ViewModelBase {
         _altWarn = aw;
       }
       _verifyHeight = s.GetBoolean("fpverifyheight", false);
+      LoadPlannerSettings(s);
     } catch {
 
+    }
+  }
+
+  private void LoadPlannerSettings(Settings settings) {
+    HomeLat = LoadDouble(settings, "TXT_homelat", HomeLat);
+    HomeLng = LoadDouble(settings, "TXT_homelng", HomeLng);
+    HomeAlt = FromDisplayAltitude(
+        LoadDouble(settings, "TXT_homealt", ToDisplayAltitude(HomeAlt)));
+    WpRadius = LoadDouble(settings, "TXT_WPRad", WpRadius);
+    LoiterRadius = LoadDouble(settings, "TXT_loiterrad", LoiterRadius);
+    DefaultAlt = FromDisplayAltitude(
+        LoadDouble(settings, "TXT_DefaultAlt", ToDisplayAltitude(DefaultAlt)));
+
+    string? savedMapType = settings["MapType"];
+    if (!string.IsNullOrWhiteSpace(savedMapType) && MapTypes.Contains(savedMapType)) {
+      MapType = savedMapType;
+    }
+    ShowGrid = settings.GetBoolean("FP_showgrid", false);
+
+    string? savedFrame = settings["FPaltmode"];
+    if (byte.TryParse(savedFrame, NumberStyles.Integer, CultureInfo.InvariantCulture,
+            out byte frame)) {
+      DefaultFrame = FrameName(frame);
+    } else if (settings["CMB_altmode"] is { Length: > 0 } legacyFrame
+               && DefaultFrames.Contains(legacyFrame)) {
+      DefaultFrame = legacyFrame;
+    }
+  }
+
+  private static double LoadDouble(Settings settings, string key, double fallback) {
+    if (double.TryParse(settings[key], NumberStyles.Any, CultureInfo.InvariantCulture,
+            out double value) && double.IsFinite(value)) {
+      return value;
+    }
+    return fallback;
+  }
+
+  internal void SavePlannerSettings() {
+    try {
+      var settings = Settings.Instance;
+      settings["TXT_homelat"] = F(HomeLat);
+      settings["TXT_homelng"] = F(HomeLng);
+      settings["TXT_homealt"] = HomeAltDisplay.ToString(CultureInfo.InvariantCulture);
+      settings["TXT_WPRad"] = WpRadius.ToString(CultureInfo.InvariantCulture);
+      settings["TXT_loiterrad"] = LoiterRadius.ToString(CultureInfo.InvariantCulture);
+      settings["TXT_DefaultAlt"] = DefaultAltDisplay.ToString(CultureInfo.InvariantCulture);
+      settings["FPaltmode"] = DefaultFrameId.ToString(CultureInfo.InvariantCulture);
+      settings["CMB_altmode"] = DefaultFrame;
+      settings["MapType"] = MapType;
+      settings["FP_showgrid"] = ShowGrid.ToString();
+      settings.Save();
+    } catch {
+      // Planner state is a convenience; a read-only or damaged settings file must not close it.
     }
   }
 
@@ -182,19 +236,38 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   public void DeleteNearestPoi(double lat, double lng) {
-    Services.PoiPoint? best = null;
-    double bestD = double.MaxValue;
-    foreach (var p in Services.PoiStore.All) {
-      double d = (p.Lat - lat) * (p.Lat - lat) + (p.Lng - lng) * (p.Lng - lng);
-      if (d < bestD) {
-        bestD = d;
-        best = p;
-      }
-    }
+    Services.PoiPoint? best = NearestPoi(lat, lng);
     if (best != null) {
       Services.PoiStore.Remove(best);
       PoiChanged?.Invoke();
     }
+  }
+
+  public async Task EditNearestPoi(double lat, double lng) {
+    Services.PoiPoint? poi = NearestPoi(lat, lng);
+    if (poi == null) {
+      Status = "No POI to edit.";
+      return;
+    }
+    string? name = await Services.Dialogs.InputBox("Edit POI", "Name", poi.Name);
+    if (name != null && Services.PoiStore.Replace(poi, poi with { Name = name })) {
+      PoiChanged?.Invoke();
+      Status = "POI updated.";
+    }
+  }
+
+  private static Services.PoiPoint? NearestPoi(double lat, double lng) {
+    Services.PoiPoint? best = null;
+    double bestDistance = double.MaxValue;
+    foreach (var point in Services.PoiStore.All) {
+      double distance = (point.Lat - lat) * (point.Lat - lat)
+          + (point.Lng - lng) * (point.Lng - lng);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = point;
+      }
+    }
+    return best;
   }
 
   public void ClearPois() {
@@ -220,7 +293,8 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   public void BuildPolygonFromWaypoints() {
     DrawnPolygon.Clear();
     foreach (var w in Waypoints) {
-      if (w.Lat == 0 && w.Lng == 0) {
+      if (w.Command != (ushort)MAVLink.MAV_CMD.WAYPOINT
+          || (w.Lat == 0 && w.Lng == 0)) {
         continue;
       }
       DrawnPolygon.Add(new PointLatLngAlt(w.Lat, w.Lng, w.Alt));
@@ -277,6 +351,89 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     return Status;
   }
 
+  public async Task OffsetDrawnPolygonAsync() {
+    if (DrawnPolygon.Count < 3) {
+      Status = "Need at least 3 polygon points to offset.";
+      return;
+    }
+    string? input = await Services.Dialogs.InputBox(
+        "Offset polygon",
+        "Offset in metres (negative makes the polygon smaller)",
+        "0");
+    if (!double.TryParse(input, NumberStyles.Any, CultureInfo.InvariantCulture,
+            out double meters) || !double.IsFinite(meters) || meters == 0) {
+      Status = input == null ? "Polygon offset cancelled." : "Invalid polygon offset.";
+      return;
+    }
+
+    IReadOnlyList<PointLatLngAlt> offset = Services.PlannerGeometry.OffsetPolygon(
+        DrawnPolygon, meters);
+    if (offset.Count < 3) {
+      Status = "The requested offset collapses the polygon.";
+      return;
+    }
+    using var undo = BeginUndoMutation();
+    DrawnPolygon.Clear();
+    DrawnPolygon.AddRange(offset);
+    DrawnPolygonChanged?.Invoke();
+    Status = $"Polygon offset by {meters:0.##} m.";
+  }
+
+  public async Task AddWaypointFromUtmAsync(double defaultLat, double defaultLng) {
+    var (defaultZone, defaultEasting, defaultNorthing) = Services.Geo.ToUtm(defaultLat, defaultLng);
+    string zoneText = Math.Abs(defaultZone).ToString(CultureInfo.InvariantCulture) +
+        (defaultZone < 0 ? "S" : "N");
+    string? zoneInput = await Services.Dialogs.InputBox(
+        "UTM waypoint", "Zone (for example 50S or 11N)", zoneText);
+    if (zoneInput == null) {
+      return;
+    }
+    string? eastingInput = await Services.Dialogs.InputBox(
+        "UTM waypoint", "Easting", defaultEasting.ToString("0.##", CultureInfo.InvariantCulture));
+    if (eastingInput == null) {
+      return;
+    }
+    string? northingInput = await Services.Dialogs.InputBox(
+        "UTM waypoint", "Northing", defaultNorthing.ToString("0.##", CultureInfo.InvariantCulture));
+    if (!Services.Geo.TryParseUtmZone(zoneInput, out int zone)
+        || !double.TryParse(eastingInput, NumberStyles.Any, CultureInfo.InvariantCulture,
+            out double easting)
+        || !double.TryParse(northingInput, NumberStyles.Any, CultureInfo.InvariantCulture,
+            out double northing)) {
+      await Services.Dialogs.Alert("UTM waypoint", "Invalid UTM zone, easting or northing.");
+      return;
+    }
+
+    try {
+      var (lat, lng) = Services.Geo.FromUtm(easting, northing, zone);
+      AddWaypointAt(lat, lng);
+      Status = $"Added waypoint from UTM {zoneInput.Trim().ToUpperInvariant()}.";
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("UTM waypoint", "Conversion failed: " + ex.Message);
+    }
+  }
+
+  public async Task SetTrackerHomeAsync(double lat, double lng) {
+    double currentMeters = _comPort.MAV.cs.TrackerLocation.Alt != 0
+        ? _comPort.MAV.cs.TrackerLocation.Alt
+        : _comPort.MAV.cs.HomeAlt;
+    double displayAlt = currentMeters * CurrentState.multiplieralt;
+    string? input = await Services.Dialogs.InputBox(
+        "Tracker Home",
+        $"Tracker ASL altitude ({CurrentState.AltUnit})",
+        displayAlt.ToString("0.##", CultureInfo.InvariantCulture));
+    if (!double.TryParse(input, NumberStyles.Any, CultureInfo.InvariantCulture,
+            out double entered)) {
+      if (input != null) {
+        await Services.Dialogs.Alert("Tracker Home", "Invalid altitude.");
+      }
+      return;
+    }
+    _comPort.MAV.cs.TrackerLocation = new PointLatLngAlt(
+        lat, lng, entered / CurrentState.multiplieralt);
+    Status = "Tracker Home set from the map.";
+  }
+
   private static double PolygonAreaM2(IReadOnlyList<PointLatLngAlt> pts) {
     double lat0 = pts.Average(p => p.Lat) * Math.PI / 180;
     const double mPerDeg = 111320.0;
@@ -291,7 +448,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     return Math.Abs(sum) / 2;
   }
 
-  public void InsertWaypointAfterSeq(int afterSeq, double lat, double lng) {
+  public void InsertWaypointAfterSeq(int afterSeq, double lat, double lng, bool? spline = null) {
     int idx = -1;
     for (int i = 0; i < Waypoints.Count; i++) {
       if (Waypoints[i].Seq == afterSeq) {
@@ -304,12 +461,15 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       return;
     }
     using var undo = BeginUndoMutation();
-    var cmd = SplineDefault ? MAVLink.MAV_CMD.SPLINE_WAYPOINT : MAVLink.MAV_CMD.WAYPOINT;
+    var cmd = (spline ?? SplineDefault)
+        ? MAVLink.MAV_CMD.SPLINE_WAYPOINT
+        : MAVLink.MAV_CMD.WAYPOINT;
     Waypoints.Insert(idx + 1, new WpRow {
       Command = (ushort)cmd,
+      Frame = DefaultFrameId,
       Lat = lat,
       Lng = lng,
-      Alt = VerifyPlaceAlt(lat, lng, DefaultAlt, (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT),
+      Alt = VerifyPlaceAlt(lat, lng, DefaultAlt, DefaultFrameId),
     });
     Renumber();
     WaypointsChanged?.Invoke();
@@ -368,6 +528,32 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   [ObservableProperty]
   private double _defaultAlt = 100;
 
+  public double DefaultAltDisplay {
+    get => ToDisplayAltitude(DefaultAlt);
+    set => DefaultAlt = FromDisplayAltitude(value);
+  }
+
+  public string DefaultAltLabel => $"Default Alt ({CurrentState.AltUnit})";
+
+  public IReadOnlyList<string> DefaultFrames { get; } = WpRow.FrameList;
+
+  [ObservableProperty]
+  private string _defaultFrame = "Relative";
+
+  internal byte DefaultFrameId => FrameId(DefaultFrame);
+
+  internal static byte FrameId(string? frame) => frame switch {
+    "Absolute" => (byte)MAVLink.MAV_FRAME.GLOBAL,
+    "Terrain" => (byte)MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT,
+    _ => (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT,
+  };
+
+  internal static string FrameName(byte frame) => frame switch {
+    (byte)MAVLink.MAV_FRAME.GLOBAL => "Absolute",
+    (byte)MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT => "Terrain",
+    _ => "Relative",
+  };
+
   [ObservableProperty]
   private double _wpRadius = 90;
 
@@ -377,10 +563,22 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   [ObservableProperty]
   private double _altWarn;
 
+  public double AltWarnDisplay {
+    get => ToDisplayAltitude(AltWarn);
+    set => AltWarn = FromDisplayAltitude(value);
+  }
+
+  public string AltWarnLabel => $"Alt Warn ({CurrentState.AltUnit})";
+
+  public string WpRadiusLabel => $"WP Radius ({CurrentState.DistanceUnit})";
+
+  public string LoiterRadiusLabel => $"Loiter Radius ({CurrentState.DistanceUnit})";
+
   [ObservableProperty]
   private bool _verifyHeight;
 
   partial void OnAltWarnChanged(double value) {
+    OnPropertyChanged(nameof(AltWarnDisplay));
     try {
       Settings.Instance["fpminaltwarning"] = value.ToString(CultureInfo.InvariantCulture);
     } catch {
@@ -404,6 +602,13 @@ public partial class FlightPlannerViewModel : ViewModelBase {
 
   [ObservableProperty]
   private double _homeAlt;
+
+  public double HomeAltDisplay {
+    get => ToDisplayAltitude(HomeAlt);
+    set => HomeAlt = FromDisplayAltitude(value);
+  }
+
+  public string HomeAltLabel => $"ASL ({CurrentState.AltUnit})";
 
   [ObservableProperty]
   private bool _showGrid;
@@ -596,7 +801,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       Status = "No waypoints to write.";
       return;
     }
-    if (type == MAVLink.MAV_MISSION_TYPE.MISSION && !await ConfirmAltitudesAsync(rows)) {
+    if (type == MAVLink.MAV_MISSION_TYPE.MISSION && !await ConfirmMissionSafetyAsync(rows)) {
       return;
     }
     Status = $"Writing {rows.Count} {MissionType.ToLowerInvariant()} point(s)…";
@@ -628,6 +833,19 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       Status = "Write failed: " + ex.Message;
     }
   }
+
+  private async Task<bool> ConfirmMissionSafetyAsync(List<WpRow> rows) {
+    if (ContainsAbsoluteAltitude(rows) && !await Services.Dialogs.Confirm(
+          "Absolute altitude",
+          "This mission contains absolute (AMSL) altitudes. Write it to the vehicle?")) {
+      Status = "Write aborted: absolute altitude was not confirmed.";
+      return false;
+    }
+    return await ConfirmAltitudesAsync(rows);
+  }
+
+  internal static bool ContainsAbsoluteAltitude(IEnumerable<WpRow> rows) =>
+      rows.Any(row => row.Frame == (byte)MAVLink.MAV_FRAME.GLOBAL);
 
   private async Task<bool> ConfirmAltitudesAsync(List<WpRow> rows) {
     for (int a = 0; a < rows.Count; a++) {
@@ -663,7 +881,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       Status = "No waypoints to write.";
       return;
     }
-    if (!await ConfirmAltitudesAsync(rows)) {
+    if (!await ConfirmMissionSafetyAsync(rows)) {
       return;
     }
     Status = $"Writing {rows.Count} waypoint(s) (fast)…";
@@ -949,6 +1167,10 @@ public partial class FlightPlannerViewModel : ViewModelBase {
         case ".ral":
           await LoadLegacyRallyAsync(path, append);
           return;
+        case ".kml":
+        case ".kmz":
+          LoadKmlMission(path, append);
+          return;
       }
 
       var lines = await File.ReadAllLinesAsync(path);
@@ -979,9 +1201,12 @@ public partial class FlightPlannerViewModel : ViewModelBase {
             }
         );
       }
+      if (MissionType != "Mission") {
+        MissionType = "Mission";
+      }
       if (rows.FirstOrDefault() is { Seq: 0, Command: (ushort)MAVLink.MAV_CMD.WAYPOINT } home) {
         rows.RemoveAt(0);
-        if (!append && MissionType == "Mission") {
+        if (!append) {
           HomeLat = home.Lat;
           HomeLng = home.Lng;
           HomeAlt = home.Alt;
@@ -992,6 +1217,32 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     } catch (Exception ex) {
       Status = "Load failed: " + ex.Message;
     }
+  }
+
+  private void LoadKmlMission(string path, bool append) {
+    Services.KmlMissionContent content = Services.KmlMissionReader.Read(path);
+    var rows = content.Route.Select((point, index) => new WpRow {
+      Seq = index,
+      Command = (ushort)(SplineDefault
+          ? MAVLink.MAV_CMD.SPLINE_WAYPOINT
+          : MAVLink.MAV_CMD.WAYPOINT),
+      Frame = DefaultFrameId,
+      Lat = point.Lat,
+      Lng = point.Lng,
+      Alt = point.Alt,
+    }).ToList();
+    if (rows.Count > 0) {
+      if (MissionType != "Mission") {
+        MissionType = "Mission";
+      }
+      ReplaceOrAppend(rows, append);
+    }
+    if (content.Pois.Count > 0) {
+      Services.PoiStore.AddRange(content.Pois);
+      PoiChanged?.Invoke();
+    }
+    Status = $"{(append ? "Appended" : "Loaded")} {rows.Count} KML waypoint(s) and " +
+        $"{content.Pois.Count} POI(s) from {Path.GetFileName(path)}.";
   }
 
   private static string ToWplLine(WpRow row, int sequence, bool current) =>
@@ -1392,12 +1643,12 @@ public partial class FlightPlannerViewModel : ViewModelBase {
         break;
       case "Rally":
         AddCommandRow(MAVLink.MAV_CMD.RALLY_POINT, lat, lng,
-            VerifyPlaceAlt(lat, lng, DefaultAlt, (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT));
+            VerifyPlaceAlt(lat, lng, DefaultAlt, DefaultFrameId), frame: DefaultFrameId);
         break;
       default:
         AddCommandRow(SplineDefault ? MAVLink.MAV_CMD.SPLINE_WAYPOINT : MAVLink.MAV_CMD.WAYPOINT,
             lat, lng,
-            VerifyPlaceAlt(lat, lng, DefaultAlt, (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT));
+            VerifyPlaceAlt(lat, lng, DefaultAlt, DefaultFrameId), frame: DefaultFrameId);
         break;
     }
   }
@@ -1406,9 +1657,13 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   private bool _splineDefault;
 
   public void AddSplineWp(double lat, double lng) {
+    if (SelectedWaypoint != null) {
+      InsertWaypointAfterSeq(SelectedWaypoint.Seq, lat, lng, spline: true);
+      return;
+    }
     using var undo = BeginUndoMutation();
     AddCommandRow(MAVLink.MAV_CMD.SPLINE_WAYPOINT, lat, lng,
-        VerifyPlaceAlt(lat, lng, DefaultAlt, (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT));
+        VerifyPlaceAlt(lat, lng, DefaultAlt, DefaultFrameId), frame: DefaultFrameId);
   }
 
   public void InsertAtCurrentPosition() {
@@ -1420,21 +1675,28 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     AddWaypointAt(cs.lat, cs.lng);
   }
 
-  public void AddJumpStart() {
+  public async Task AddJumpStart() {
+    string? input = await Services.Dialogs.InputBox(
+        "Jump repeat", "Number of times to repeat", "5");
+    if (!double.TryParse(input, NumberStyles.Any, CultureInfo.InvariantCulture,
+            out double repeat)) {
+      return;
+    }
     using var undo = BeginUndoMutation();
-    AddCommandRow(MAVLink.MAV_CMD.DO_JUMP, 0, 0, 0, p1: 1, p2: -1);
+    AddCommandRow(MAVLink.MAV_CMD.DO_JUMP, 0, 0, 0, p1: 1, p2: repeat);
   }
 
   public async Task CreateWpCircle(double lat, double lng) {
-    if (await Ask("Radius", "Radius", "50") is not { } s1 || !int.TryParse(s1, out var radius)) {
+    if (await Ask("Radius", $"Radius ({CurrentState.DistanceUnit})", "50") is not { } s1
+        || !int.TryParse(s1, out var radius)) {
       return;
     }
     if (await Ask("Points", "Number of points to generate Circle", "20") is not { } s2
-        || !int.TryParse(s2, out var points) || points == 0) {
+        || !int.TryParse(s2, out var points) || points <= 0) {
       return;
     }
     if (await Ask("Points", "Direction of circle (-1 or 1)", "1") is not { } s3
-        || !int.TryParse(s3, out var direction)) {
+        || !int.TryParse(s3, out var direction) || direction is not (-1 or 1)) {
       return;
     }
     if (await Ask("angle", "Angle of first point (whole degrees)", "0") is not { } s4
@@ -1454,23 +1716,27 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     for (; a <= startangle + 360 && a >= 0; a += step) {
       var p = center.newpos(a, rad);
       AddCommandRow(MAVLink.MAV_CMD.WAYPOINT, p.Lat, p.Lng,
-          VerifyPlaceAlt(p.Lat, p.Lng, DefaultAlt, (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT));
+          VerifyPlaceAlt(p.Lat, p.Lng, DefaultAlt, DefaultFrameId), frame: DefaultFrameId);
       n++;
     }
     Status = $"WP circle: {n} point(s).";
   }
 
   public async Task CreateSplineCircle(double lat, double lng) {
-    if (await Ask("Radius", "Radius", "50") is not { } s1 || !int.TryParse(s1, out var radius)) {
+    if (await Ask("Radius", $"Radius ({CurrentState.DistanceUnit})", "50") is not { } s1
+        || !int.TryParse(s1, out var radius)) {
       return;
     }
-    if (await Ask("min alt", "Min Alt", "5") is not { } s2 || !int.TryParse(s2, out var minalt)) {
+    if (await Ask("min alt", $"Min Alt ({CurrentState.AltUnit})", "5") is not { } s2
+        || !int.TryParse(s2, out var minalt)) {
       return;
     }
-    if (await Ask("max alt", "Max Alt", "20") is not { } s3 || !int.TryParse(s3, out var maxalt)) {
+    if (await Ask("max alt", $"Max Alt ({CurrentState.AltUnit})", "20") is not { } s3
+        || !int.TryParse(s3, out var maxalt)) {
       return;
     }
-    if (await Ask("alt step", "alt step", "5") is not { } s4 || !int.TryParse(s4, out var altstep)) {
+    if (await Ask("alt step", $"Alt step ({CurrentState.AltUnit})", "5") is not { } s4
+        || !int.TryParse(s4, out var altstep) || altstep <= 0 || maxalt < minalt) {
       return;
     }
     if (await Ask("angle", "Angle of first point (whole degrees)", "0") is not { } s5
@@ -1480,15 +1746,18 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     int points = 4;
     double step = 360.0 / points;
     using var undo = BeginUndoMutation();
-    AddCommandRow(MAVLink.MAV_CMD.DO_SET_ROI, lat, lng, 0);
+    AddCommandRow(MAVLink.MAV_CMD.DO_SET_ROI, lat, lng, 0, frame: DefaultFrameId);
     var center = new PointLatLngAlt(lat, lng);
+    double radiusMeters = radius / CurrentState.multiplierdist;
     bool startup = true;
-    for (int stepalt = minalt; stepalt <= maxalt;) {
-      for (double a = 0; a <= startangle + 360 && a >= 0; a += step) {
-        var p = center.newpos(a, radius);
-        AddCommandRow(MAVLink.MAV_CMD.SPLINE_WAYPOINT, p.Lat, p.Lng, stepalt);
+    for (double stepalt = minalt; stepalt <= maxalt;) {
+      for (double a = startangle; a <= startangle + 360; a += step) {
+        var p = center.newpos(a, radiusMeters);
+        AddCommandRow(MAVLink.MAV_CMD.SPLINE_WAYPOINT, p.Lat, p.Lng,
+            FromDisplayAltitude(stepalt),
+            frame: DefaultFrameId);
         if (!startup) {
-          stepalt += altstep / points;
+          stepalt += altstep / (double)points;
         }
       }
       if (startup) {
@@ -1500,21 +1769,25 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   public async Task CreateCircleSurvey(double lat, double lng) {
-    if (await Ask("", "startalt", "10") is not { } s1 || !int.TryParse(s1, out var startalt)) {
+    if (await Ask("", $"Start altitude ({CurrentState.AltUnit})", "10") is not { } s1
+        || !int.TryParse(s1, out var startalt)) {
       return;
     }
-    if (await Ask("", "endalt", "20") is not { } s2 || !int.TryParse(s2, out var endalt)) {
+    if (await Ask("", $"End altitude ({CurrentState.AltUnit})", "20") is not { } s2
+        || !int.TryParse(s2, out var endalt)) {
       return;
     }
-    if (await Ask("", "seperation", "2") is not { } s3 || !int.TryParse(s3, out var seperation)
-        || seperation == 0) {
+    if (await Ask("", $"Altitude separation ({CurrentState.AltUnit})", "2") is not { } s3
+        || !int.TryParse(s3, out var seperation)
+        || seperation <= 0 || endalt < startalt) {
       return;
     }
-    if (await Ask("", "radius", "5") is not { } s4 || !int.TryParse(s4, out var radius)) {
+    if (await Ask("", $"Radius ({CurrentState.DistanceUnit})", "5") is not { } s4
+        || !int.TryParse(s4, out var radius)) {
       return;
     }
     if (await Ask("", "photos", "50") is not { } s5 || !int.TryParse(s5, out var photos)
-        || photos == 0) {
+        || photos <= 0) {
       return;
     }
     if (await Ask("", "start heading", "0") is not { } s6
@@ -1523,15 +1796,67 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     }
     using var undo = BeginUndoMutation();
     var center = new PointLatLngAlt(lat, lng);
-    AddCommandRow(MAVLink.MAV_CMD.DO_SET_ROI, lat, lng, 0);
+    double radiusMeters = radius / CurrentState.multiplierdist;
+    AddCommandRow(MAVLink.MAV_CMD.DO_SET_ROI, lat, lng, 0, frame: DefaultFrameId);
     for (int alt = startalt; alt <= endalt; alt += seperation) {
-      for (int heading = startheading; heading <= startheading + 360; heading += 360 / photos) {
-        var np = center.newpos(heading, radius);
-        AddCommandRow(MAVLink.MAV_CMD.WAYPOINT, np.Lat, np.Lng, alt, p1: 2);
+      for (int photo = 0; photo <= photos; photo++) {
+        double heading = startheading + photo * 360.0 / photos;
+        var np = center.newpos(heading, radiusMeters);
+        AddCommandRow(MAVLink.MAV_CMD.WAYPOINT, np.Lat, np.Lng,
+            FromDisplayAltitude(alt), p1: 2,
+            frame: DefaultFrameId);
         AddCommandRow(MAVLink.MAV_CMD.DO_DIGICAM_CONTROL, 0, 0, 0, p2: 1);
       }
     }
     Status = "Circle survey added.";
+  }
+
+  public async Task CreateTextWaypoints(double lat, double lng) {
+    string? text = await Ask("Text waypoints", "Text", "MP");
+    if (string.IsNullOrWhiteSpace(text)) {
+      return;
+    }
+    string? sizeInput = await Ask(
+        "Text waypoints", $"Character size ({CurrentState.DistanceUnit})", "5");
+    string? rotationInput = await Ask("Text waypoints", "Rotation (degrees)", "0");
+    if (!double.TryParse(sizeInput, NumberStyles.Any, CultureInfo.InvariantCulture,
+            out double displaySize)
+        || !double.TryParse(rotationInput, NumberStyles.Any, CultureInfo.InvariantCulture,
+            out double rotation)
+        || displaySize <= 0) {
+      await Services.Dialogs.Alert("Text waypoints", "Invalid size or rotation.");
+      return;
+    }
+
+    double sizeMeters = displaySize / CurrentState.multiplierdist;
+    IReadOnlyList<(double X, double Y)> geometry = Services.PlannerTextGeometry.Create(
+        text, sizeMeters, rotation);
+    if (geometry.Count == 0) {
+      Status = "The selected font produced no text path.";
+      return;
+    }
+    if (geometry.Count > 700 && !await Services.Dialogs.Confirm(
+          "Large text mission",
+          $"The text creates {geometry.Count} waypoints and may exceed the vehicle limit. Continue?")) {
+      Status = "Text waypoint generation cancelled.";
+      return;
+    }
+
+    var origin = new PointLatLngAlt(lat, lng);
+    int zone = origin.GetUTMZone();
+    double[] projected = origin.ToUTM(zone);
+    if (MissionType != "Mission") {
+      MissionType = "Mission";
+    }
+    using var undo = BeginUndoMutation();
+    foreach (var point in geometry) {
+      PointLatLngAlt location = new utmpos(
+          projected[0] + point.X, projected[1] - point.Y, zone).ToLLA();
+      AddCommandRow(MAVLink.MAV_CMD.WAYPOINT, location.Lat, location.Lng,
+          VerifyPlaceAlt(location.Lat, location.Lng, DefaultAlt, DefaultFrameId),
+          frame: DefaultFrameId);
+    }
+    Status = $"Text '{text}' added as {geometry.Count} waypoint(s).";
   }
 
   private static Task<string?> Ask(string title, string prompt, string value) =>
@@ -1634,7 +1959,13 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     return row;
   }
 
-  public void InsertWaypointAt(double lat, double lng) => AddWaypointAt(lat, lng);
+  public void InsertWaypointAt(double lat, double lng) {
+    if (SelectedWaypoint != null) {
+      InsertWaypointAfterSeq(SelectedWaypoint.Seq, lat, lng, spline: false);
+    } else {
+      AddWaypointAt(lat, lng);
+    }
+  }
 
   public void DeleteNearest(double lat, double lng) {
     WpRow? best = null;
@@ -1661,33 +1992,54 @@ public partial class FlightPlannerViewModel : ViewModelBase {
 
   public void AddLand(double lat, double lng) {
     using var undo = BeginUndoMutation();
-    AddCommandRow(MAVLink.MAV_CMD.LAND, lat, lng, 0);
+    AddCommandRow(MAVLink.MAV_CMD.LAND, lat, lng, 0, frame: DefaultFrameId);
   }
 
   public async Task AddTakeoff(double lat, double lng) {
-    var s = await Services.Dialogs.InputBox("Takeoff", "Takeoff alt (m)", DefaultAlt.ToString("0", CultureInfo.InvariantCulture));
-    if (double.TryParse(s, out var alt)) {
-      using var undo = BeginUndoMutation();
-      AddCommandRow(MAVLink.MAV_CMD.TAKEOFF, lat, lng, alt);
+    double defaultDisplayAlt = ToDisplayAltitude(10);
+    string? altitudeInput = await Services.Dialogs.InputBox(
+        "Takeoff", $"Takeoff altitude ({CurrentState.AltUnit})",
+        defaultDisplayAlt.ToString("0", CultureInfo.InvariantCulture));
+    if (!double.TryParse(altitudeInput, NumberStyles.Any, CultureInfo.InvariantCulture,
+            out double displayAltitude)) {
+      return;
     }
+
+    double pitch = 0;
+    bool plane = _comPort.MAV.cs.firmware is Firmwares.ArduPlane or Firmwares.Ateryx;
+    bool skipPitch = _comPort.MAV.param.ContainsKey("Q_OPTIONS")
+                     && (((int)ParamValue("Q_OPTIONS") & (1 << 1)) == 0);
+    if (plane && !skipPitch) {
+      string? pitchInput = await Services.Dialogs.InputBox(
+          "Takeoff", "Takeoff pitch (degrees)", "15");
+      if (!double.TryParse(pitchInput, NumberStyles.Any, CultureInfo.InvariantCulture,
+              out pitch)) {
+        return;
+      }
+    }
+
+    using var undo = BeginUndoMutation();
+    AddCommandRow(MAVLink.MAV_CMD.TAKEOFF, lat, lng,
+        FromDisplayAltitude(displayAltitude), p1: pitch, frame: DefaultFrameId);
   }
 
   [Obsolete]
   public void AddRoi(double lat, double lng) {
     using var undo = BeginUndoMutation();
-    AddCommandRow(MAVLink.MAV_CMD.DO_SET_ROI, lat, lng, DefaultAlt);
+    AddCommandRow(MAVLink.MAV_CMD.DO_SET_ROI, lat, lng, DefaultAlt, frame: DefaultFrameId);
   }
 
   public void AddLoiterForever(double lat, double lng) {
     using var undo = BeginUndoMutation();
-    AddCommandRow(MAVLink.MAV_CMD.LOITER_UNLIM, lat, lng, DefaultAlt);
+    AddCommandRow(MAVLink.MAV_CMD.LOITER_UNLIM, lat, lng, DefaultAlt, frame: DefaultFrameId);
   }
 
   public async Task AddLoiterTime(double lat, double lng) {
     var s = await Services.Dialogs.InputBox("Loiter Time", "Seconds", "60");
     if (double.TryParse(s, out var sec)) {
       using var undo = BeginUndoMutation();
-      AddCommandRow(MAVLink.MAV_CMD.LOITER_TIME, lat, lng, DefaultAlt, p1: sec);
+      AddCommandRow(MAVLink.MAV_CMD.LOITER_TIME, lat, lng, DefaultAlt, p1: sec,
+          frame: DefaultFrameId);
     }
   }
 
@@ -1695,7 +2047,8 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     var s = await Services.Dialogs.InputBox("Loiter Circles", "Turns", "3");
     if (double.TryParse(s, out var turns)) {
       using var undo = BeginUndoMutation();
-      AddCommandRow(MAVLink.MAV_CMD.LOITER_TURNS, lat, lng, DefaultAlt, p1: turns);
+      AddCommandRow(MAVLink.MAV_CMD.LOITER_TURNS, lat, lng, DefaultAlt, p1: turns,
+          frame: DefaultFrameId);
     }
   }
 
@@ -1727,14 +2080,55 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   public async Task ModifyAllAlt() {
-    var s = await Services.Dialogs.InputBox("Modify Alt", "New altitude for all waypoints (m)",
-        DefaultAlt.ToString("0", CultureInfo.InvariantCulture));
-    if (double.TryParse(s, out var alt)) {
-      using var undo = BeginUndoMutation();
-      foreach (var w in Waypoints) {
-        w.Alt = alt;
-      }
-      WaypointsChanged?.Invoke();
+    string? expression = await Services.Dialogs.InputBox(
+        "Altitude change",
+        $"Enter an altitude change in {CurrentState.AltUnit} (20 = up 20, *2 = altitude × 2)",
+        "0");
+    if (expression == null) {
+      return;
+    }
+    if (!TryParseAltitudeChange(expression, CurrentState.multiplieralt,
+            out bool multiply, out double operand)) {
+      await Services.Dialogs.Alert("Altitude change", "Invalid number entered.");
+      return;
+    }
+    using var undo = BeginUndoMutation();
+    ApplyAltitudeChange(Waypoints, multiply, operand);
+    WaypointsChanged?.Invoke();
+  }
+
+  internal static bool TryModifyAltitudes(
+      IEnumerable<WpRow> rows, string expression, double displayMultiplier) {
+    if (!TryParseAltitudeChange(expression, displayMultiplier,
+            out bool multiply, out double operand)) {
+      return false;
+    }
+    ApplyAltitudeChange(rows, multiply, operand);
+    return true;
+  }
+
+  private static bool TryParseAltitudeChange(
+      string expression, double displayMultiplier, out bool multiply, out double operand) {
+    string value = expression.Trim();
+    multiply = value.StartsWith('*');
+    if (multiply) {
+      value = value[1..].Trim();
+    }
+    if (!double.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture,
+            out operand) || !double.IsFinite(operand)
+        || !double.IsFinite(displayMultiplier) || displayMultiplier <= 0) {
+      return false;
+    }
+    if (!multiply) {
+      operand /= displayMultiplier;
+    }
+    return true;
+  }
+
+  private static void ApplyAltitudeChange(
+      IEnumerable<WpRow> rows, bool multiply, double operand) {
+    foreach (var row in rows) {
+      row.Alt = multiply ? row.Alt * operand : row.Alt + operand;
     }
   }
 
@@ -1844,7 +2238,8 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   public string GenerateSurveyGrid(double altitude, double spacing, double angle) {
-    var polygon = Waypoints.Where(w => !(w.Lat == 0 && w.Lng == 0))
+    var polygon = Waypoints.Where(w => Services.MissionRoute.IsNavigation(w.Command)
+                                      && !(w.Lat == 0 && w.Lng == 0))
                       .Select(w => new PointLatLngAlt(w.Lat, w.Lng, altitude))
                       .ToList();
     if (polygon.Count < 3) {
@@ -1882,7 +2277,8 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   public (System.Collections.Generic.List<PointLatLngAlt> polygon, PointLatLngAlt home)? BuildSurveyArea() {
-    var polygon = Waypoints.Where(w => !(w.Lat == 0 && w.Lng == 0))
+    var polygon = Waypoints.Where(w => Services.MissionRoute.IsNavigation(w.Command)
+                                      && !(w.Lat == 0 && w.Lng == 0))
                       .Select(w => new PointLatLngAlt(w.Lat, w.Lng, DefaultAlt))
                       .ToList();
     if (polygon.Count < 3) {
@@ -2005,7 +2401,8 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       double total = 0, prev = 0;
       bool first = true;
       foreach (var w in Waypoints) {
-        if (w.Lat == 0 && w.Lng == 0) {
+        if ((MissionType == "Mission" && !Services.MissionRoute.IsNavigation(w.Command))
+            || (w.Lat == 0 && w.Lng == 0)) {
           w.Grad = w.Angle = w.Dist = w.Az = "";
           continue;
         }
@@ -2021,7 +2418,8 @@ public partial class FlightPlannerViewModel : ViewModelBase {
           w.Grad = (grad * 100).ToString("0.0", CultureInfo.InvariantCulture);
           w.Angle = ((180.0 / Math.PI) * Math.Atan(grad)).ToString("0.0",
               CultureInfo.InvariantCulture);
-          w.Dist = leg.ToString("0.0", CultureInfo.InvariantCulture);
+          w.Dist = (leg * CurrentState.multiplierdist).ToString(
+              "0.0", CultureInfo.InvariantCulture);
           w.Az = ((cur.GetBearing(last) + 180) % 360).ToString("0", CultureInfo.InvariantCulture);
 
           if (!first) {
@@ -2034,10 +2432,13 @@ public partial class FlightPlannerViewModel : ViewModelBase {
         first = false;
       }
 
-      TotalDist = total.ToString("0", CultureInfo.InvariantCulture);
-      PrevDist = prev.ToString("0", CultureInfo.InvariantCulture);
+      TotalDist = (total * CurrentState.multiplierdist).ToString(
+          "0", CultureInfo.InvariantCulture);
+      PrevDist = (prev * CurrentState.multiplierdist).ToString(
+          "0", CultureInfo.InvariantCulture);
       HomeDist = (home != null && last != null && last != home)
-                     ? last.GetDistance(home).ToString("0", CultureInfo.InvariantCulture)
+                     ? (last.GetDistance(home) * CurrentState.multiplierdist)
+                         .ToString("0", CultureInfo.InvariantCulture)
                      : "0";
     } finally {
       _recomputing = false;
@@ -2048,7 +2449,24 @@ public partial class FlightPlannerViewModel : ViewModelBase {
 
   partial void OnHomeLngChanged(double value) => RecomputeGrid();
 
-  partial void OnHomeAltChanged(double value) => RecomputeGrid();
+  partial void OnHomeAltChanged(double value) {
+    OnPropertyChanged(nameof(HomeAltDisplay));
+    RecomputeGrid();
+  }
+
+  partial void OnDefaultAltChanged(double value) =>
+      OnPropertyChanged(nameof(DefaultAltDisplay));
+
+  internal static double ToDisplayAltitude(double metres, double? multiplier = null) =>
+      metres * ValidAltitudeMultiplier(multiplier);
+
+  internal static double FromDisplayAltitude(double value, double? multiplier = null) =>
+      value / ValidAltitudeMultiplier(multiplier);
+
+  private static double ValidAltitudeMultiplier(double? multiplier) {
+    double value = multiplier ?? CurrentState.multiplieralt;
+    return double.IsFinite(value) && value > 0 ? value : 1;
+  }
 
   private void Replace(IEnumerable<WpRow> rows) {
     void Apply() {
@@ -2113,6 +2531,13 @@ public partial class WpRow : ObservableObject {
 
   [ObservableProperty]
   private double _alt;
+
+  public double AltDisplay {
+    get => FlightPlannerViewModel.ToDisplayAltitude(Alt);
+    set => Alt = FlightPlannerViewModel.FromDisplayAltitude(value);
+  }
+
+  partial void OnAltChanged(double value) => OnPropertyChanged(nameof(AltDisplay));
 
   [ObservableProperty]
   private string _grad = "";
