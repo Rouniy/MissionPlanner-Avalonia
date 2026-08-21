@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Threading;
-using BruTile.Predefined;
-using BruTile.Web;
 using Mapsui;
 using Mapsui.Extensions;
 using Mapsui.Layers;
@@ -12,6 +10,7 @@ using Mapsui.Projections;
 using Mapsui.Styles;
 using Mapsui.Tiling.Layers;
 using Mapsui.UI.Avalonia;
+using MissionPlannerAvalonia.Services;
 using NetTopologySuite.Geometries;
 
 namespace MissionPlannerAvalonia.Controls;
@@ -39,7 +38,9 @@ public class FlightPlannerMap : MapControl {
   private (double Lat, double Lng) _homeLatLng;
   private readonly List<(MPoint Pt, int AfterSeq)> _midSegs = new();
   private string _renderMode = "Mission";
-  private ILayer _baseLayer;
+  private TileLayer _baseLayer;
+  private string _mapType = "GoogleSatelliteMap";
+  private string? _customTileUrl;
   private bool _graticuleOn;
   private bool _centered;
   private int _dragIndex = -1;
@@ -98,11 +99,13 @@ public class FlightPlannerMap : MapControl {
 
   protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e) {
     base.OnAttachedToVisualTree(e);
+    MapTileSourceFactory.AccessModeChanged += OnTileAccessModeChanged;
     _timer.Start();
   }
 
   protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e) {
     _timer.Stop();
+    MapTileSourceFactory.AccessModeChanged -= OnTileAccessModeChanged;
     base.OnDetachedFromVisualTree(e);
   }
 
@@ -225,19 +228,20 @@ public class FlightPlannerMap : MapControl {
     RefreshGraphics();
   }
 
-  public void SetMapType(string type) => ReplaceBase(BuildTileLayer(type));
+  public void SetMapType(string type) {
+    _mapType = type;
+    _customTileUrl = null;
+    ReplaceBase(BuildTileLayer(type));
+  }
 
   public void SetCustomTileSource(string urlTemplate) {
     if (string.IsNullOrWhiteSpace(urlTemplate)) {
       return;
     }
 
-    var src = new HttpTileSource(
-        new GlobalSphericalMercator(),
-        urlTemplate,
-        name: "Custom",
-        attribution: new BruTile.Attribution("Custom"));
-    ReplaceBase(new TileLayer(src) { Name = "Custom" });
+    _mapType = "Custom";
+    _customTileUrl = urlTemplate;
+    ReplaceBase(MapTileSourceFactory.CreateLayer("Custom", urlTemplate));
   }
 
   private void ReplaceBase(TileLayer layer) {
@@ -246,6 +250,13 @@ public class FlightPlannerMap : MapControl {
     Map.Layers.Add(layer);
     Map.Layers.MoveToBottom(layer);
     RefreshGraphics();
+  }
+
+  private void OnTileAccessModeChanged() {
+    Dispatcher.UIThread.Post(() => ReplaceBase(
+        _customTileUrl == null
+            ? BuildTileLayer(_mapType)
+            : MapTileSourceFactory.CreateLayer("Custom", _customTileUrl)));
   }
 
   public void ShowKmlTrack(IReadOnlyList<(double Lat, double Lng)> track) {
@@ -527,12 +538,7 @@ public class FlightPlannerMap : MapControl {
       _ =>
           "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
     };
-    var src = new HttpTileSource(
-        new GlobalSphericalMercator(),
-        url,
-        name: type,
-        attribution: new BruTile.Attribution(type));
-    return new TileLayer(src) { Name = type };
+    return MapTileSourceFactory.CreateLayer(type, url);
   }
 
   private void OnMapPointerPressed(object? sender, MapEventArgs e) {

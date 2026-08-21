@@ -17,7 +17,7 @@
   MinWidth="1120"
   MinHeight="720"
   Icon="/Assets/appicon.ico"
-  Title="Mission Planner"
+  Title="{Binding WindowTitle}"
 >
   <Design.DataContext>
     <vm:MainWindowViewModel />
@@ -174,8 +174,16 @@
               ItemsSource="{Binding Ports}"
               SelectedItem="{Binding SelectedPort}"
               PlaceholderText="serial port"
+              IsEnabled="{Binding CanEditConnection}"
             />
-            <ComboBox Width="90" ItemsSource="{Binding Bauds}" SelectedItem="{Binding SelectedBaud}" />
+            <NumericUpDown Width="105" Minimum="1" Maximum="10000000" Increment="1"
+                           FormatString="0" Value="{Binding SelectedBaud}"
+                           IsEnabled="{Binding CanEditBaud}"
+                           ToolTip.Tip="Serial baud rate; saved separately for each port" />
+            <ComboBox Width="170" ItemsSource="{Binding VehicleChoices}"
+                      SelectedItem="{Binding SelectedVehicle}"
+                      IsVisible="{Binding VehicleSelectorVisible}"
+                      ToolTip.Tip="Active MAVLink system and component" />
             <CheckBox Content="Auto" IsChecked="{Binding AutoConnect}" VerticalAlignment="Center"
                       ToolTip.Tip="Connect to the saved endpoint when the application starts" />
             <Button Content="⟳" Command="{Binding RefreshPortsCommand}" ToolTip.Tip="Refresh ports" />

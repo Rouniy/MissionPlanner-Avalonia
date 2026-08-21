@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MissionPlanner;
 using MissionPlanner.Utilities;
+using MissionPlannerAvalonia.Services;
 
 namespace MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView;
 
@@ -68,7 +69,17 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
   private string _severity = "Warning";
 
   [ObservableProperty]
+  [NotifyPropertyChangedFor(nameof(MapCacheNote))]
   private string _mapCache = "ServerAndCache";
+
+  public string MapCacheNote => MapTileSourceFactory.ParseAccessMode(MapCache) switch {
+    MapTileAccessMode.ServerOnly =>
+        "Tiles are downloaded from the selected provider and are not written to disk.",
+    MapTileAccessMode.CacheOnly =>
+        "Offline mode: only tiles already stored in the local cache are shown; no tile network requests are made.",
+    _ =>
+        "Downloaded tiles are stored in the local cache and reused when the network is unavailable.",
+  };
 
   [ObservableProperty]
   private string _secondaryDisplayStyle = "Normal";
@@ -173,6 +184,9 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
   private bool _paramsBg;
 
   [ObservableProperty]
+  private bool _useCachedParams;
+
+  [ObservableProperty]
   private bool _slowMachine;
 
   [ObservableProperty]
@@ -226,7 +240,7 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
       Severity = SeverityOptions[sev];
     }
 
-    MapCache = s["mapCache"] ?? MapCache;
+    MapCache = MapTileSourceFactory.NormalizeAccessMode(s["mapCache"]);
     SecondaryDisplayStyle = s.GetString("GMapMarkerBase_InactiveDisplayStyle", SecondaryDisplayStyle);
     OsdColor = s["hudcolor"] ?? OsdColor;
     LogDir = s.LogDir;
@@ -264,6 +278,7 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
     AutoParamCommit = s.GetBoolean("autoParamCommit", AutoParamCommit);
     ShowNoFly = s.GetBoolean("ShowNoFly", ShowNoFly);
     ParamsBg = s.GetBoolean("Params_BG", ParamsBg);
+    UseCachedParams = s.GetBoolean("UseCachedParams", UseCachedParams);
     SlowMachine = s.GetBoolean("SlowMachine", SlowMachine);
     GdiPlus = s.GetBoolean("CHK_GDIPlus", GdiPlus);
     AnalyticsOptOut = s.GetBoolean("analyticsoptout", AnalyticsOptOut);
@@ -344,7 +359,7 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
 
   partial void OnMapCacheChanged(string value) {
     if (_loading) return;
-    Settings.Instance["mapCache"] = value;
+    MapTileSourceFactory.SetAccessMode(value);
   }
 
   partial void OnSecondaryDisplayStyleChanged(string value) {
@@ -618,6 +633,11 @@ public partial class ConfigPlannerViewModel : ViewModelBase {
   partial void OnParamsBgChanged(bool value) {
     if (_loading) return;
     Settings.Instance["Params_BG"] = value.ToString();
+  }
+
+  partial void OnUseCachedParamsChanged(bool value) {
+    if (_loading) return;
+    Settings.Instance["UseCachedParams"] = value.ToString();
   }
 
   partial void OnSlowMachineChanged(bool value) {

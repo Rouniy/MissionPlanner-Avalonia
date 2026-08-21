@@ -32,6 +32,7 @@ public static class AppPaths {
   public static string RawParamSnapshotPath => Path.Combine(CacheRoot, "last_params.param");
   public static string SitlCacheRoot => Path.Combine(CacheRoot, "sitl");
   public static string SrtmCacheRoot => Path.Combine(CacheRoot, "srtm");
+  public static string MapTileCacheRoot => Path.Combine(CacheRoot, "map-tiles");
   public static string UpdateCacheRoot => Path.Combine(CacheRoot, "update");
 
   public static bool IsPackageManaged {
@@ -137,6 +138,7 @@ public static class AppPaths {
         Path.GetDirectoryName(CrashLogPath)!,
         SitlCacheRoot,
         SrtmCacheRoot,
+        MapTileCacheRoot,
         UpdateCacheRoot,
     }) {
       Directory.CreateDirectory(path);

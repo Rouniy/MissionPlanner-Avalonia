@@ -1,3 +1,4 @@
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -20,14 +21,37 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
   [ObservableProperty]
   private string _activeTab = "DATA";
 
+  [ObservableProperty]
+  private string _windowTitle = Services.AppVersion.Title;
+
   public MainWindowViewModel() {
     Simulation = new SimulationViewModel(Connection);
     _currentScreen = FlightData;
 
     Connection.Connected += OnConnected;
+    AppState.ConnectionChanged += OnConnectionChanged;
 
     Simulation.RequestFlightData += () =>
         Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = Navigate("DATA"));
+  }
+
+  private void OnConnectionChanged() =>
+      Avalonia.Threading.Dispatcher.UIThread.Post(() => WindowTitle = BuildWindowTitle());
+
+  private static string BuildWindowTitle() => FormatWindowTitle(
+      Services.AppVersion.Title,
+      AppState.comPort.MAV.VersionString,
+      AppState.comPort.MAV.SerialString,
+      AppState.IsConnected);
+
+  internal static string FormatWindowTitle(
+      string appTitle, string? version, string? serial, bool connected) {
+    if (!connected) {
+      return appTitle;
+    }
+    string vehicle = string.Join(" on ", new[] { version, serial }
+        .Where(value => !string.IsNullOrWhiteSpace(value)));
+    return string.IsNullOrEmpty(vehicle) ? appTitle : $"{appTitle} {vehicle}";
   }
 
   private void OnConnected() {
@@ -145,6 +169,7 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
 
   public void Dispose() {
     Connection.Connected -= OnConnected;
+    AppState.ConnectionChanged -= OnConnectionChanged;
     Connection.Dispose();
     FlightData.Dispose();
     Setup.Dispose();

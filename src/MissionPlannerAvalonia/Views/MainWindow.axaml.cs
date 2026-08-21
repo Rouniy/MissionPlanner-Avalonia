@@ -9,7 +9,6 @@ public partial class MainWindow : Window {
   public MainWindow() {
     InitializeComponent();
 
-    Title = Services.AppVersion.Title;
     KeyDown += OnKeyDown;
     Closed += (_, _) => (DataContext as System.IDisposable)?.Dispose();
   }

@@ -15,6 +15,10 @@ using MissionPlannerAvalonia.Views;
 
 namespace MissionPlannerAvalonia.ViewModels;
 
+public sealed record MavSystemChoice(byte SysId, byte CompId, string Label) {
+  public override string ToString() => Label;
+}
+
 public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   private readonly MAVLinkInterface _comPort = AppState.comPort;
   private readonly CancellationTokenSource _lifetimeCts = new();
@@ -24,16 +28,36 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
   public ObservableCollection<string> Ports { get; } = new();
   public ObservableCollection<int> Bauds { get; } =
-      new() { 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600 };
+      new() {
+        1200, 2400, 4800, 9600, 19200, 38400, 57600, 111100, 115200, 230400,
+        460800, 500000, 625000, 921600, 1000000, 1500000,
+      };
+
+  public ObservableCollection<MavSystemChoice> VehicleChoices { get; } = new();
 
   [ObservableProperty]
+  [NotifyPropertyChangedFor(nameof(CanEditBaud))]
   private string? _selectedPort;
 
   [ObservableProperty]
   private int _selectedBaud = 115200;
 
   [ObservableProperty]
+  [NotifyPropertyChangedFor(nameof(CanEditConnection))]
+  [NotifyPropertyChangedFor(nameof(CanEditBaud))]
+  [NotifyPropertyChangedFor(nameof(VehicleSelectorVisible))]
   private bool _isConnected;
+
+  [ObservableProperty]
+  private MavSystemChoice? _selectedVehicle;
+
+  [ObservableProperty]
+  [NotifyPropertyChangedFor(nameof(VehicleSelectorVisible))]
+  private bool _hasVehicleChoices;
+
+  public bool CanEditConnection => !IsConnected;
+  public bool CanEditBaud => !IsConnected && IsSerialEndpoint(SelectedPort);
+  public bool VehicleSelectorVisible => IsConnected && HasVehicleChoices;
 
   [ObservableProperty]
   private string _connectText = "CONNECT";
@@ -55,17 +79,51 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   partial void OnAutoConnectChanged(bool value) =>
       Settings.Instance["autoconnect"] = value.ToString();
 
+  partial void OnSelectedPortChanged(string? value) {
+    if (_initializing) {
+      return;
+    }
+    SelectedBaud = SavedBaudForPort(value, SelectedBaud);
+  }
+
+  partial void OnSelectedBaudChanged(int value) {
+    if (_initializing || value <= 0 || !IsSerialEndpoint(SelectedPort)) {
+      return;
+    }
+    Settings.Instance[PortBaudKey(SelectedPort!)] = value.ToString();
+  }
+
+  partial void OnSelectedVehicleChanged(MavSystemChoice? value) {
+    if (_updatingVehicleChoices || value == null || !IsConnected) {
+      return;
+    }
+
+    _comPort.sysidcurrent = value.SysId;
+    _comPort.compidcurrent = value.CompId;
+    AppState.RaiseConnectionChanged();
+    LoadSelectedVehicleParameters(value);
+  }
+
   public ConnectionViewModel() {
+    _initializing = true;
     _comPort.Progress += OnProgress;
     ApplyPersistentLinkSettings();
-    SelectedPort = Settings.Instance.ComPort;
+    RefreshPorts();
+    string savedPort = Settings.Instance.ComPort;
+    if (!string.IsNullOrWhiteSpace(savedPort)) {
+      if (!Ports.Contains(savedPort)) {
+        Ports.Insert(1, savedPort);
+      }
+      SelectedPort = savedPort;
+    }
     if (int.TryParse(Settings.Instance.BaudRate, out var savedBaud) && savedBaud > 0) {
       SelectedBaud = savedBaud;
     } else {
       SelectedBaud = Settings.Instance.GetInt32("baudrate", SelectedBaud);
     }
+    SelectedBaud = SavedBaudForPort(SelectedPort, SelectedBaud);
     _autoConnect = Settings.Instance.GetBoolean("autoconnect", false);
-    RefreshPorts();
+    _initializing = false;
     // Capture before scheduling: Dispose may otherwise win the race and accessing Token on a
     // disposed source from the delayed task body would throw.
     var lifetimeToken = _lifetimeCts.Token;
@@ -82,6 +140,10 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   private DateTime _lastVersionPollUtc = DateTime.MinValue;
   private bool _lastArmed;
   private int _homeRefreshRunning;
+  private bool _initializing;
+  private bool _updatingVehicleChoices;
+  private string _vehicleChoiceSignature = "";
+  private int _selectedVehicleParamLoadRunning;
 
   private int StartReader() {
     StopReader();
@@ -263,6 +325,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
             }
           }
         }
+        RefreshVehicleChoices();
         await Task.Delay(TimeSpan.FromSeconds(1), ct).ConfigureAwait(false);
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
         return;
@@ -274,6 +337,90 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
         }
       }
     }
+  }
+
+  private void RefreshVehicleChoices() {
+    var choices = _comPort.BaseStream?.IsOpen == true
+        ? _comPort.MAVlist.ToArray()
+            .Where(mav => mav.sysid != 0 &&
+                mav.compid != (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_MISSIONPLANNER)
+            .Select(mav => new MavSystemChoice(
+                mav.sysid, mav.compid, VehicleChoiceLabel(mav)))
+            .OrderBy(choice => choice.SysId)
+            .ThenBy(choice => choice.CompId)
+            .ToArray()
+        : Array.Empty<MavSystemChoice>();
+    string signature = string.Join(";", choices.Select(choice =>
+        $"{choice.SysId}:{choice.CompId}:{choice.Label}"));
+    if (string.Equals(signature, _vehicleChoiceSignature, StringComparison.Ordinal)) {
+      return;
+    }
+    _vehicleChoiceSignature = signature;
+
+    Avalonia.Threading.Dispatcher.UIThread.Post(() => {
+      _updatingVehicleChoices = true;
+      try {
+        VehicleChoices.Clear();
+        foreach (var choice in choices) {
+          VehicleChoices.Add(choice);
+        }
+        HasVehicleChoices = choices.Length > 0;
+        SelectedVehicle = choices.FirstOrDefault(choice =>
+            choice.SysId == _comPort.sysidcurrent && choice.CompId == _comPort.compidcurrent)
+            ?? choices.FirstOrDefault();
+      } finally {
+        _updatingVehicleChoices = false;
+      }
+    });
+  }
+
+  private static string VehicleChoiceLabel(MAVState mav) {
+    string component;
+    if (mav.CANNode) {
+      component = string.IsNullOrWhiteSpace(mav.VersionString)
+          ? "CAN node"
+          : mav.VersionString;
+    } else if (mav.compid == (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_AUTOPILOT1) {
+      component = mav.aptype.ToString();
+    } else {
+      component = ((MAVLink.MAV_COMPONENT)mav.compid).ToString();
+      const string prefix = "MAV_COMP_ID_";
+      if (component.StartsWith(prefix, StringComparison.Ordinal)) {
+        component = component.Substring(prefix.Length);
+      }
+      component = component.Replace('_', ' ');
+    }
+    return $"{mav.sysid}:{mav.compid} {component}";
+  }
+
+  private void LoadSelectedVehicleParameters(MavSystemChoice choice) {
+    var mav = _comPort.MAVlist[choice.SysId, choice.CompId];
+    if (mav.param.TotalReceived >= mav.param.TotalReported ||
+        Interlocked.Exchange(ref _selectedVehicleParamLoadRunning, 1) != 0) {
+      return;
+    }
+
+    Status = $"Loading parameters for {choice.Label}…";
+    _ = Task.Run(() => {
+      Exception? error = null;
+      try {
+        _comPort.getParamListMavftp(choice.SysId, choice.CompId);
+      } catch (Exception ex) {
+        error = ex;
+      } finally {
+        Interlocked.Exchange(ref _selectedVehicleParamLoadRunning, 0);
+      }
+
+      Avalonia.Threading.Dispatcher.UIThread.Post(() => {
+        if (_comPort.BaseStream?.IsOpen != true ||
+            _comPort.sysidcurrent != choice.SysId || _comPort.compidcurrent != choice.CompId) {
+          return;
+        }
+        Status = error == null
+            ? $"Selected {choice.Label}. {mav.param.Count} params."
+            : $"Selected {choice.Label}; parameter load failed: {error.Message}";
+      });
+    });
   }
 
   private DateTime NewestPacketUtc() {
@@ -311,6 +458,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     Status = $"Connected to {endpoint}. {_comPort.MAV.param.Count} params.";
     _connectedAtUtc = DateTime.UtcNow;
     StartReader();
+    RefreshVehicleChoices();
     RawParamsViewModel.SaveSnapshot(_comPort);
     AppState.RaiseConnectionChanged();
     RaiseConnected();
@@ -350,6 +498,36 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
             : "Connected, but background parameter load failed: " + error.Message;
       });
     });
+  }
+
+  private bool TryLoadFreshParameterCache(out int count) {
+    count = 0;
+    if (!Settings.Instance.GetBoolean("UseCachedParams", false)) {
+      return false;
+    }
+
+    try {
+      string path = _comPort.MAV.ParamCachePath;
+      if (!ParameterCachePolicy.IsFresh(
+              path, DateTime.Now, TimeSpan.FromHours(1), File.GetLastWriteTime)) {
+        return false;
+      }
+
+      var cached = File.ReadAllText(path).FromJSON<MAVLink.MAVLinkParamList>();
+      if (cached == null || cached.Count == 0) {
+        return false;
+      }
+      foreach (var parameter in cached) {
+        _comPort.MAV.param.Add(parameter);
+      }
+      _comPort.MAV.param.TotalReported = _comPort.MAV.param.TotalReceived;
+      count = _comPort.MAV.param.Count;
+      return count > 0;
+    } catch {
+      // A corrupt, stale or concurrently-written cache is never fatal; fall back to the live
+      // MAVFTP/parameter protocol path below.
+      return false;
+    }
   }
 
   private void RefreshHomeOnArmTransition(CancellationToken ct) {
@@ -422,6 +600,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       IsConnected = false;
       ConnectText = "CONNECT";
       Status = "Connection lost.";
+      RefreshVehicleChoices();
       AppState.RaiseConnectionChanged();
     });
   }
@@ -467,6 +646,20 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     return all.Where(n => !cuDevices.Contains(n)).OrderBy(n => n);
   }
 
+  internal static bool IsSerialEndpoint(string? port) =>
+      !string.IsNullOrWhiteSpace(port) && port is not "AUTO" and not "TCP" and not "UDP"
+          and not "UDPCl" and not "WS";
+
+  internal static string PortBaudKey(string port) => port.Replace(" ", "_") + "_BAUD";
+
+  private static int SavedBaudForPort(string? port, int fallback) {
+    if (!IsSerialEndpoint(port)) {
+      return fallback;
+    }
+    int saved = Settings.Instance.GetInt32(PortBaudKey(port!), fallback);
+    return saved > 0 ? saved : fallback;
+  }
+
   private void OpenLogs() {
     try {
       Directory.CreateDirectory(Settings.Instance.LogDir);
@@ -503,6 +696,12 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   [RelayCommand]
   private async Task ToggleConnect() {
     if (_comPort.BaseStream?.IsOpen == true) {
+      double displayedSpeed = _comPort.MAV.cs.groundspeed * CurrentState.multiplierspeed;
+      if (_comPort.MAV.cs.groundspeed > 4 && !await Services.Dialogs.Confirm(
+              "Disconnect",
+              $"The vehicle is still moving at {displayedSpeed:0.0} {CurrentState.SpeedUnit}. Disconnect anyway?")) {
+        return;
+      }
       await DisconnectAsync("Disconnected.");
       return;
     }
@@ -564,6 +763,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     IsConnected = false;
     ConnectText = "CONNECT";
     Status = status;
+    RefreshVehicleChoices();
     AppState.RaiseConnectionChanged();
   }
 
@@ -635,14 +835,19 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
       Exception? openError = null;
       bool backgroundParamLoad = false;
+      bool cachedParamsLoaded = false;
+      int cachedParamCount = 0;
       try {
 
         await Task.Run(() => _comPort.Open(getparams: false, skipconnectedcheck: true, showui: true));
         if (_comPort.BaseStream.IsOpen && !dlg.CancelRequested &&
             _comPort.MAV.compid != (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_PERIPHERAL) {
-          backgroundParamLoad = Settings.Instance.GetBoolean("Params_BG", false);
-          if (!backgroundParamLoad) {
-            await Task.Run(() => _comPort.getParamList());
+          cachedParamsLoaded = TryLoadFreshParameterCache(out cachedParamCount);
+          if (!cachedParamsLoaded) {
+            backgroundParamLoad = Settings.Instance.GetBoolean("Params_BG", false);
+            if (!backgroundParamLoad) {
+              await Task.Run(() => _comPort.getParamList());
+            }
           }
         }
       } catch (Exception ex) {
@@ -686,11 +891,17 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       if (IsConnected) {
         Settings.Instance.ComPort = sel;
         Settings.Instance.BaudRate = SelectedBaud.ToString();
-        Status = backgroundParamLoad
-            ? "Connected. Loading parameters in background…"
-            : $"Connected. {_comPort.MAV.param.Count} params.";
+        if (IsSerialEndpoint(sel)) {
+          Settings.Instance[PortBaudKey(sel)] = SelectedBaud.ToString();
+        }
+        Status = cachedParamsLoaded
+            ? $"Connected. Reused {cachedParamCount} cached params."
+            : backgroundParamLoad
+                ? "Connected. Loading parameters in background…"
+                : $"Connected. {_comPort.MAV.param.Count} params.";
         _connectedAtUtc = DateTime.UtcNow;
         int generation = StartReader();
+        RefreshVehicleChoices();
 
         if (backgroundParamLoad) {
           StartBackgroundParameterLoad(generation);
@@ -850,5 +1061,21 @@ internal static class ConnectionHealth {
     // grace period, but is still closed if it never receives a first packet.
     DateTime baseline = newestPacketUtc > connectedAtUtc ? newestPacketUtc : connectedAtUtc;
     return nowUtc - baseline > timeout;
+  }
+}
+
+internal static class ParameterCachePolicy {
+  internal static bool IsFresh(
+      string? path,
+      DateTime now,
+      TimeSpan maximumAge,
+      Func<string, DateTime>? getLastWriteTime = null,
+      Func<string, bool>? fileExists = null) {
+    if (string.IsNullOrWhiteSpace(path) || maximumAge < TimeSpan.Zero) {
+      return false;
+    }
+    fileExists ??= File.Exists;
+    getLastWriteTime ??= File.GetLastWriteTime;
+    return fileExists(path) && getLastWriteTime(path) > now.Subtract(maximumAge);
   }
 }

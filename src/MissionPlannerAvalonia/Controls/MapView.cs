@@ -4,8 +4,6 @@ using System.Linq;
 using Avalonia;
 using Avalonia.Input;
 using Avalonia.Threading;
-using BruTile.Predefined;
-using BruTile.Web;
 using Mapsui;
 using Mapsui.Extensions;
 using Mapsui.Layers;
@@ -14,11 +12,17 @@ using Mapsui.Projections;
 using Mapsui.Styles;
 using Mapsui.Tiling.Layers;
 using Mapsui.UI.Avalonia;
+using MissionPlannerAvalonia.Services;
 using NetTopologySuite.Geometries;
 
 namespace MissionPlannerAvalonia.Controls;
 
 public class MapView : MapControl {
+  private const string _satelliteName = "Satellite";
+  private const string _satelliteUrl =
+      "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+
+  private TileLayer _baseLayer;
   private readonly WritableLayer _track = new() { Name = "Track" };
   private readonly WritableLayer _missionRoute = new() { Name = "Mission route" };
   private readonly WritableLayer _missionMarkers = new() { Name = "Mission waypoints" };
@@ -83,13 +87,8 @@ public class MapView : MapControl {
   public MapView() {
 
     var map = new Map { BackColor = new Color(0x26, 0x27, 0x28) };
-    var esri = new HttpTileSource(
-        new GlobalSphericalMercator(),
-        "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        name: "Esri World Imagery",
-        attribution: new BruTile.Attribution("© Esri")
-    );
-    map.Layers.Add(new TileLayer(esri) { Name = "Satellite" });
+    _baseLayer = MapTileSourceFactory.CreateLayer(_satelliteName, _satelliteUrl, "© Esri");
+    map.Layers.Add(_baseLayer);
 
     map.Layers.Add(_missionRoute);
     map.Layers.Add(_fence);
@@ -122,12 +121,24 @@ public class MapView : MapControl {
 
   protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e) {
     base.OnAttachedToVisualTree(e);
+    MapTileSourceFactory.AccessModeChanged += OnTileAccessModeChanged;
     _timer.Start();
   }
 
   protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e) {
     _timer.Stop();
+    MapTileSourceFactory.AccessModeChanged -= OnTileAccessModeChanged;
     base.OnDetachedFromVisualTree(e);
+  }
+
+  private void OnTileAccessModeChanged() {
+    Dispatcher.UIThread.Post(() => {
+      Map.Layers.Remove(_baseLayer);
+      _baseLayer = MapTileSourceFactory.CreateLayer(_satelliteName, _satelliteUrl, "© Esri");
+      Map.Layers.Add(_baseLayer);
+      Map.Layers.MoveToBottom(_baseLayer);
+      RefreshGraphics();
+    });
   }
 
   public bool LiveVehicle { get; set; } = true;

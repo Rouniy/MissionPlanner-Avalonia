@@ -135,12 +135,11 @@
           <ComboBox Classes="md" ItemsSource="{Binding SecondaryDisplayStyleOptions}" SelectedItem="{Binding SecondaryDisplayStyle}" />
         </c:FormField>
         <c:FormField Label="Map Cache" LabelWidth="70">
-          <ComboBox Classes="md" ItemsSource="{Binding MapCacheOptions}" SelectedItem="{Binding MapCache}"
-                    IsEnabled="False" ToolTip.Tip="Persistent tile cache is not implemented by the current Mapsui layer." />
+          <ComboBox Classes="md" ItemsSource="{Binding MapCacheOptions}" SelectedItem="{Binding MapCache}" />
         </c:FormField>
       </StackPanel>
-      <TextBlock Classes="lbl" Foreground="#E0A030"
-                 Text="Persistent map cache is not implemented in the Mapsui port; tiles currently require network access."
+      <TextBlock Classes="lbl"
+                 Text="{Binding MapCacheNote}"
                  TextWrapping="Wrap" />
       <WrapPanel Margin="0,6,0,0">
         <CheckBox Content="Show Airports" IsChecked="{Binding ShowAirports, Mode=TwoWay}" Margin="0,0,12,0" />
@@ -165,6 +164,9 @@
         <CheckBox Content="Password Protect" IsChecked="{Binding PasswordProtect, Mode=TwoWay}" Margin="0,0,12,0" />
         <CheckBox Content="Auto Param Commit" IsChecked="{Binding AutoParamCommit, Mode=TwoWay}" Margin="0,0,12,0" />
         <CheckBox Content="Params Background Load" IsChecked="{Binding ParamsBg, Mode=TwoWay}" Margin="0,0,12,0" />
+        <CheckBox Content="Reuse Recent Param Cache" IsChecked="{Binding UseCachedParams, Mode=TwoWay}"
+                  ToolTip.Tip="Skip the live parameter download when this vehicle has a cache newer than one hour"
+                  Margin="0,0,12,0" />
         <CheckBox Content="Slow Machine" IsChecked="{Binding SlowMachine, Mode=TwoWay}" Margin="0,0,12,0" />
         <CheckBox Content="Use GDI+ (WinForms only)" IsChecked="{Binding GdiPlus, Mode=TwoWay}"
                   IsEnabled="False" ToolTip.Tip="Avalonia uses Skia on every supported platform"
