@@ -1,0 +1,66 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  mc:Ignorable="d"
+  d:DesignWidth="720"
+  d:DesignHeight="480"
+  x:Class="MissionPlannerAvalonia.Views.DeviceOperationsView"
+  x:DataType="vm:DeviceOperationsViewModel"
+  Background="{DynamicResource MpControlBg}"
+>
+  <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" RowSpacing="10">
+    <TextBlock Grid.Row="0" Text="MAVLink Device Operations" FontSize="18" Foreground="#DDD" />
+    <TextBlock Grid.Row="1" Foreground="#AAA" TextWrapping="Wrap"
+               Text="Low-level ArduPilot DEVICE_OP access for SPI and I²C peripherals. Values use decimal input; results are shown in hexadecimal." />
+
+    <Grid Grid.Row="2" ColumnDefinitions="Auto,90,Auto,90,Auto,100" ColumnSpacing="8">
+      <TextBlock Grid.Column="0" Text="System" Foreground="#DDD" VerticalAlignment="Center" />
+      <NumericUpDown Grid.Column="1" Value="{Binding SystemId}" Minimum="1" Maximum="255"
+                     Increment="1" FormatString="0" />
+      <TextBlock Grid.Column="2" Text="Component" Foreground="#DDD" VerticalAlignment="Center" />
+      <NumericUpDown Grid.Column="3" Value="{Binding ComponentId}" Minimum="1" Maximum="255"
+                     Increment="1" FormatString="0" />
+      <TextBlock Grid.Column="4" Text="Bus type" Foreground="#DDD" VerticalAlignment="Center" />
+      <ComboBox Grid.Column="5" ItemsSource="{Binding BusTypes}" SelectedItem="{Binding BusType}" />
+    </Grid>
+
+    <Grid Grid.Row="3" ColumnDefinitions="Auto,150,Auto,78,Auto,78,Auto,78,Auto,78" ColumnSpacing="7">
+      <TextBlock Grid.Column="0" Text="SPI name" Foreground="#DDD" VerticalAlignment="Center"
+                 IsEnabled="{Binding IsSpi}" />
+      <TextBox Grid.Column="1" Text="{Binding BusName}" IsEnabled="{Binding IsSpi}" />
+      <TextBlock Grid.Column="2" Text="Bus" Foreground="#DDD" VerticalAlignment="Center"
+                 IsEnabled="{Binding !IsSpi}" />
+      <NumericUpDown Grid.Column="3" Value="{Binding BusNumber}" Minimum="0" Maximum="255"
+                     Increment="1" FormatString="0" IsEnabled="{Binding !IsSpi}" />
+      <TextBlock Grid.Column="4" Text="Address" Foreground="#DDD" VerticalAlignment="Center"
+                 IsEnabled="{Binding !IsSpi}" />
+      <NumericUpDown Grid.Column="5" Value="{Binding Address}" Minimum="0" Maximum="255"
+                     Increment="1" FormatString="0" IsEnabled="{Binding !IsSpi}" />
+      <TextBlock Grid.Column="6" Text="Register" Foreground="#DDD" VerticalAlignment="Center" />
+      <NumericUpDown Grid.Column="7" Value="{Binding RegisterStart}" Minimum="0" Maximum="255"
+                     Increment="1" FormatString="0" />
+      <TextBlock Grid.Column="8" Text="Count" Foreground="#DDD" VerticalAlignment="Center" />
+      <NumericUpDown Grid.Column="9" Value="{Binding Count}" Minimum="1" Maximum="128"
+                     Increment="1" FormatString="0" />
+    </Grid>
+
+    <Border Grid.Row="4" Background="Black" BorderBrush="{DynamicResource MpBg}" BorderThickness="1">
+      <ScrollViewer>
+        <TextBlock Text="{Binding Output}" Foreground="{DynamicResource MpAccentBrush}"
+                   FontFamily="Consolas,Menlo,monospace" FontSize="12" Padding="10"
+                   TextWrapping="Wrap" />
+      </ScrollViewer>
+    </Border>
+
+    <StackPanel Grid.Row="5" Orientation="Horizontal" Spacing="8">
+      <Button Content="Read Registers" Command="{Binding ReadCommand}" IsEnabled="{Binding !Busy}" />
+      <Button Content="ICM20948 Write/Read Test" Command="{Binding TestIcm20948Command}"
+              IsEnabled="{Binding !Busy}" />
+      <ProgressBar IsVisible="{Binding Busy}" IsIndeterminate="True" Width="120" Height="5"
+                   VerticalAlignment="Center" />
+    </StackPanel>
+  </Grid>
+</UserControl>

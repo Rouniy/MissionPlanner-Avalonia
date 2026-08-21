@@ -25,6 +25,8 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
 
     Action("Decode MAVLink Packet", () => _ = DecodePacketAsync());
     Action("Decode Hardware ID", () => _ = DecodeHardwareIdAsync());
+    Action("MAVLink Device Operations", () => Views.DeviceOperationsWindow.OpenWindow());
+    Action("Probe MAVLink Camera", () => _ = ProbeCameraAsync());
     Action("Embed Defaults in APJ", () => _ = EmbedDefaultsAsync());
     Action("Split DataFlash Log", () => _ = SplitDataFlashAsync());
     Action("Create DashWare CSV", () => _ = CreateDashWareAsync());
@@ -73,6 +75,34 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
       AppendLog(DeveloperToolParsers.DecodeHardwareId(id, name));
     } catch (Exception ex) {
       AppendLog("Hardware ID decode failed: " + ex.Message);
+    }
+  }
+
+  private async Task ProbeCameraAsync() {
+    if (!RequireConnection()) {
+      return;
+    }
+
+    var camera = _comPort.MAVlist.FirstOrDefault(item =>
+        item.compid == (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_CAMERA);
+    if (camera == null) {
+      AppendLog("Camera probe: no MAV_COMP_ID_CAMERA component is currently known on this link.");
+      return;
+    }
+    if (!await Dialogs.Confirm(
+            "Probe MAVLink Camera",
+            $"Request information, settings and storage status from camera {camera.sysid}:{camera.compid}, "
+            + "select its default camera mode and request video streaming?")) {
+      return;
+    }
+
+    AppendLog($"Camera probe: sending Camera Protocol requests to {camera.sysid}:{camera.compid} …");
+    try {
+      await Task.Run(() => new Camera().test(_comPort));
+      AppendLog("Camera probe sent. Responses are visible in MAVLink Inspector; a reported stream URI "
+                + "can be opened from Flight Data video controls.");
+    } catch (Exception ex) {
+      AppendLog("Camera probe failed: " + ex.Message);
     }
   }
 

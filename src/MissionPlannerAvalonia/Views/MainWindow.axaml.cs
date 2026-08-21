@@ -77,6 +77,9 @@ public partial class MainWindow : Window {
       case Key.X when ctrl:
         MapCacheWindow.OpenWindow();
         break;
+      case Key.J when ctrl:
+        DeviceOperationsWindow.OpenWindow();
+        break;
       case Key.Y when ctrl:
         vm.SaveToEepromCommand.Execute(null);
         break;
@@ -125,6 +128,9 @@ public partial class MainWindow : Window {
   private void OnMavlinkLogConvert(object? sender, RoutedEventArgs e) => MavlinkLogWindow.OpenWindow();
 
   private void OnMapCache(object? sender, RoutedEventArgs e) => MapCacheWindow.OpenWindow();
+
+  private void OnDeviceOperations(object? sender, RoutedEventArgs e) =>
+      DeviceOperationsWindow.OpenWindow();
 
   private void OnAdvancedTools(object? sender, RoutedEventArgs e) {
     if (Vm is { } vm) {
