@@ -17,7 +17,9 @@ MP_UPSTREAM_VERSION="${MISSIONPLANNER_UPSTREAM_VERSION:-$(
   sed -nE 's/.*AssemblyFileVersion\("([0-9]+\.[0-9]+\.[0-9]+)"\).*/\1/p' \
     "$_mp_upstream_info" | head -1
 )}"
-MP_BUILD_DATE="${MISSIONPLANNER_BUILD_DATE:-$(date -u +%Y%m%d)}"
+# The version shown to an operator is the calendar date on the build host. Using UTC here made
+# early-morning EEST builds look one day old even though the package had just been produced.
+MP_BUILD_DATE="${MISSIONPLANNER_BUILD_DATE:-$(date +%Y%m%d)}"
 MP_COMMIT="${MISSIONPLANNER_COMMIT:-$(git -C "$_mp_version_root" rev-parse --short=7 HEAD)}"
 
 if [[ -n "${MISSIONPLANNER_DIRTY_SUFFIX+x}" ]]; then
@@ -34,7 +36,7 @@ if [[ ! "$MP_UPSTREAM_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   return 2 2>/dev/null || exit 2
 fi
 if [[ ! "$MP_BUILD_DATE" =~ ^[0-9]{8}$ ]]; then
-  echo "Build date must use UTC yyyyMMdd: '$MP_BUILD_DATE'" >&2
+  echo "Build date must use yyyyMMdd: '$MP_BUILD_DATE'" >&2
   return 2 2>/dev/null || exit 2
 fi
 if [[ ! "$MP_COMMIT" =~ ^[0-9A-Fa-f]{7,40}$ ]]; then
