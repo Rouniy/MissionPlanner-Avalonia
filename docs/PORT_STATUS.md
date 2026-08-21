@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 647 tests verified; the previous camera-overlay/SHP/DXF/KML-GroundOverlay/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli `.deb` passed lintian, checksum and Xvfb smoke checks; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 647 tests verified; the camera-overlay/SHP/DXF/KML-GroundOverlay/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety `.deb` passed lintian, checksum and Xvfb smoke checks; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -327,7 +327,7 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Automated tests: 647 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
-- The `.deb` target was rebuilt from the current 634-test source on 2026-08-21 UTC. Package metadata,
+- The `.deb` target was rebuilt from the current 647-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 391 packaged-file checksums match after extraction, including the
   byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -341,19 +341,19 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260821.bc53d3c.dirty_amd64.deb`
-(52,990,494 bytes; SHA-256
-`01c0c5aa5f50ee1c56f9395d5563d27e4473a7d4f8bc6d2d9d7761f0a411ed0f`), built from the current
-634-test source including camera feedback/overlap/gimbal overlays, managed SHP/DXF planner import,
+`out/packages/missionplanner-avalonia_1.3.83-20260822.857b810_amd64.deb`
+(52,999,308 bytes; SHA-256
+`a12a5ae97a54c80d6c4980312f50457e709167473d3227cbb549095bd44d751f`), built from the current
+647-test source including camera feedback/overlap/gimbal overlays, managed SHP/DXF planner import,
 styled KML/KMZ vector/GroundOverlay layers, Flight Data overlay copying, corrected translucent-red
 airport disks, Rally Points actions, switchable Planner docking, the interactive verified-host-key
 SSH terminal, secure SFTP DataFlash download/delete workflow, the recursive flight Log Index with
-map thumbnails, offline sphere/ellipsoid MagFit, live Traditional Heli visualization and composite
-upstream/date/commit versioning.
+map thumbnails, offline sphere/ellipsoid MagFit, live Traditional Heli visualization, the movable
+Flight Data splitter, session-only/latest-wins vehicle parameter loading, single-prompt network
+connections and composite upstream/date/commit versioning.
 Its APT version is
-`1:1.3.83+20260821.r136.bc53d3c.dirty`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r136` orders same-day builds before comparing hashes. The `.dirty` suffix records
-that this verification artifact contains the current uncommitted porting block. The existing
+`1:1.3.83+20260822.r138.857b810`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r138` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
