@@ -1084,12 +1084,12 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
   internal static ICommsSerial CreateConfiguredNetworkStream(
       string kind, string primary, string secondary) => kind switch {
-    "TCP" => new PreconfiguredTcpSerial(primary, secondary),
-    "UDPCl" => new PreconfiguredUdpClient(primary, secondary),
-    "UDP" => new PreconfiguredUdpListener(primary),
-    "WS" => new PreconfiguredWebSocket(primary),
-    _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown network transport."),
-  };
+        "TCP" => new PreconfiguredTcpSerial(primary, secondary),
+        "UDPCl" => new PreconfiguredUdpClient(primary, secondary),
+        "UDP" => new PreconfiguredUdpListener(primary),
+        "WS" => new PreconfiguredWebSocket(primary),
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown network transport."),
+      };
 
   private async Task<ICommsSerial?> ScanForStreamAsync(bool interactive) {
     var dlg = new Services.ProgressReporter("Scanning serial ports");

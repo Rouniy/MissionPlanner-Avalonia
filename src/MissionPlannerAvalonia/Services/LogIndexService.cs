@@ -726,12 +726,16 @@ internal sealed class LogThumbnailRenderer : ILogThumbnailRenderer {
   private static void DrawRoute(SKCanvas canvas,
       IReadOnlyList<(double Lat, double Lng)> track, GeoBounds bounds) {
     using var halo = new SKPaint {
-      Color = new SKColor(255, 255, 255, 210), StrokeWidth = 5,
-      IsAntialias = true, Style = SKPaintStyle.Stroke,
+      Color = new SKColor(255, 255, 255, 210),
+      StrokeWidth = 5,
+      IsAntialias = true,
+      Style = SKPaintStyle.Stroke,
     };
     using var route = new SKPaint {
-      Color = new SKColor(230, 45, 45), StrokeWidth = 2.5f,
-      IsAntialias = true, Style = SKPaintStyle.Stroke,
+      Color = new SKColor(230, 45, 45),
+      StrokeWidth = 2.5f,
+      IsAntialias = true,
+      Style = SKPaintStyle.Stroke,
     };
     using var path = new SKPath();
     for (int index = 0; index < track.Count; index++) {
