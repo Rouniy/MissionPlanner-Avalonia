@@ -21,6 +21,8 @@ public partial class GridUIView : UserControl {
 
   private GridUIViewModel? Vm => DataContext as GridUIViewModel;
 
+  private void OnFitPreview(object? sender, RoutedEventArgs e) => PreviewMap.ZoomToPreview();
+
   private async void OnLoadSamplePhoto(object? sender, RoutedEventArgs e) {
     var top = TopLevel.GetTopLevel(this);
     if (top == null || Vm == null) {

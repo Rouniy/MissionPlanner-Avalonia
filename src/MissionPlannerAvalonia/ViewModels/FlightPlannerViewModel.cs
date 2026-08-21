@@ -328,6 +328,13 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
     Status = "Polygon cleared.";
   }
 
+  public void ReplaceDrawnPolygon(IReadOnlyList<PointLatLngAlt> points) {
+    DrawnPolygon.Clear();
+    DrawnPolygon.AddRange(points.Select(point =>
+        new PointLatLngAlt(point.Lat, point.Lng, point.Alt)));
+    DrawnPolygonChanged?.Invoke();
+  }
+
   public void BuildPolygonFromWaypoints() {
     DrawnPolygon.Clear();
     foreach (var w in Waypoints) {

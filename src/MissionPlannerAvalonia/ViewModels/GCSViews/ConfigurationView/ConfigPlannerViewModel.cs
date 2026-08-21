@@ -172,7 +172,7 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
   private bool _passwordProtect;
 
   [ObservableProperty]
-  private bool _showAirports;
+  private bool _showAirports = true;
 
   [ObservableProperty]
   [NotifyPropertyChangedFor(nameof(AdsbSettingsVisible))]

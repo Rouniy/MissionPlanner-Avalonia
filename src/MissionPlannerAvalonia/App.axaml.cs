@@ -14,6 +14,7 @@ public partial class App : Application {
 
   public override void OnFrameworkInitializationCompleted() {
     Services.AppPaths.Initialize();
+    _ = Services.AirportService.EnsureLoadedAsync();
     Services.DisplayViewService.Initialize();
     Services.FlightModeNames.Initialize();
     Services.ThemeService.ApplySaved();

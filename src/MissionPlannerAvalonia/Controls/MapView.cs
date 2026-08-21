@@ -34,6 +34,8 @@ public class MapView : MapControl {
   private readonly WritableLayer _vehicle = new() { Name = "Vehicle" };
   private readonly WritableLayer _traffic = new() { Name = "ADS-B / AIS traffic" };
   private readonly DispatcherTimer _timer;
+  private readonly AirportOverlayController _airports;
+  private readonly PropagationOverlayController _propagation;
   private bool _centered;
   private MPoint? _lastTrackPt;
   private readonly Queue<Coordinate> _trackPts = new();
@@ -105,15 +107,19 @@ public class MapView : MapControl {
 
     map.Navigator.Limiter = new Mapsui.Limiting.ViewportLimiterKeepWithinExtent();
     Map = map;
+    _airports = new AirportOverlayController(this, alwaysShow: false);
+    _propagation = new PropagationOverlayController(this);
 
     _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
     _timer.Tick += (_, _) => {
       UpdateVehicle();
+      UpdatePropagation();
       UpdateCameraFeedback();
       UpdateTraffic();
       UpdateGuidedTarget();
       if (DateTime.UtcNow >= _nextOperationalOverlayUpdateUtc) {
         UpdateOperationalOverlays();
+        _airports.Update();
         _nextOperationalOverlayUpdateUtc = DateTime.UtcNow.AddSeconds(2);
       }
     };
@@ -124,12 +130,16 @@ public class MapView : MapControl {
     RestoreLastViewport();
     MapTileSourceFactory.AccessModeChanged += OnTileAccessModeChanged;
     MapTileSourceFactory.MapTypeChanged += OnMapTypeChanged;
+    _airports.Resume();
+    _propagation.Resume();
     _timer.Start();
   }
 
   protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e) {
     SaveLastViewport();
     _timer.Stop();
+    _airports.Suspend();
+    _propagation.Suspend();
     MapTileSourceFactory.AccessModeChanged -= OnTileAccessModeChanged;
     MapTileSourceFactory.MapTypeChanged -= OnMapTypeChanged;
     base.OnDetachedFromVisualTree(e);
@@ -205,6 +215,23 @@ public class MapView : MapControl {
   }
 
   public bool LiveVehicle { get; set; } = true;
+
+  private void UpdatePropagation() {
+    var cs = AppState.comPort.MAV?.cs;
+    if (cs == null) {
+      _propagation.Update(new PropagationMapState(
+          default, default, 0, double.NaN));
+      return;
+    }
+    double multiplier = MissionPlanner.CurrentState.multiplieralt;
+    double altitudeAmsl = multiplier == 0 ? cs.altasl : cs.altasl / multiplier;
+    var home = cs.HomeLocation;
+    _propagation.Update(new PropagationMapState(
+        new PropagationPoint(home.Lat, home.Lng, home.Alt),
+        new PropagationPoint(cs.lat, cs.lng, altitudeAmsl),
+        altitudeAmsl,
+        cs.battery_kmleft));
+  }
 
   private void UpdateVehicle() {
     if (!LiveVehicle) {

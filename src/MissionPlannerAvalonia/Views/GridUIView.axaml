@@ -4,6 +4,7 @@
   xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
   xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  xmlns:controls="using:MissionPlannerAvalonia.Controls"
   mc:Ignorable="d"
   d:DesignWidth="760"
   d:DesignHeight="640"
@@ -11,10 +12,45 @@
   x:DataType="vm:GridUIViewModel"
   Background="{DynamicResource MpControlBg}"
 >
-  <Grid Margin="14" RowDefinitions="Auto,*,Auto,Auto">
+  <Grid Margin="14" RowDefinitions="Auto,320,*,Auto,Auto">
     <TextBlock Grid.Row="0" Classes="pagetitle" Text="Survey (Grid)" />
 
-    <Grid Grid.Row="1" ColumnDefinitions="*,12,300" Margin="0,8,0,0">
+    <Border Grid.Row="1" Margin="0,8,0,0" BorderBrush="{DynamicResource MpBorderBrush}"
+            BorderThickness="1" CornerRadius="4" ClipToBounds="True">
+      <Grid>
+        <controls:SurveyGridPreviewMap x:Name="PreviewMap" />
+
+        <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
+                Padding="8,5" CornerRadius="4" Background="#D0202224">
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <CheckBox Content="Boundary" IsChecked="{Binding ShowBoundary}" />
+            <CheckBox Content="Grid" IsChecked="{Binding ShowGrid}" />
+            <CheckBox Content="Markers" IsChecked="{Binding ShowMarkers}" />
+            <CheckBox Content="Internals" IsChecked="{Binding ShowInternals}" />
+            <CheckBox Content="Footprints" IsChecked="{Binding ShowFootprints}" />
+            <Button Content="Fit" Padding="8,2" Click="OnFitPreview" />
+          </StackPanel>
+        </Border>
+
+        <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8"
+                Padding="8,5" CornerRadius="4" Background="#D0202224"
+                IsVisible="{Binding ShowFootprints}">
+          <StackPanel Orientation="Horizontal" Spacing="7">
+            <TextBlock Text="Overlap" VerticalAlignment="Center" Margin="0,0,3,0" />
+            <Border Width="18" Height="18" CornerRadius="9" Background="#8C800080"><TextBlock Text="1" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="10" /></Border>
+            <Border Width="18" Height="18" CornerRadius="9" Background="#8C0000FF"><TextBlock Text="2" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="10" /></Border>
+            <Border Width="18" Height="18" CornerRadius="9" Background="#8C00FFFF"><TextBlock Text="3" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="10" Foreground="Black" /></Border>
+            <Border Width="18" Height="18" CornerRadius="9" Background="#8C008000"><TextBlock Text="4" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="10" /></Border>
+            <Border Width="18" Height="18" CornerRadius="9" Background="#8CFFFF00"><TextBlock Text="5" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="10" Foreground="Black" /></Border>
+            <Border Width="18" Height="18" CornerRadius="9" Background="#8CFFA500"><TextBlock Text="6" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="10" Foreground="Black" /></Border>
+            <Border Width="18" Height="18" CornerRadius="9" Background="#8CFF0000"><TextBlock Text="7" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="10" /></Border>
+            <Border Width="18" Height="18" CornerRadius="9" Background="#8C8B0000"><TextBlock Text="8+" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="9" /></Border>
+          </StackPanel>
+        </Border>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="2" ColumnDefinitions="*,12,300" Margin="0,8,0,0">
 
       <TabControl Grid.Column="0">
 
@@ -134,7 +170,7 @@
         <TabItem Header="Grid Options">
           <ScrollViewer>
             <StackPanel Margin="8" Spacing="8">
-              <Grid ColumnDefinitions="170,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8">
+              <Grid ColumnDefinitions="170,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8">
                 <TextBlock Grid.Row="0" Grid.Column="0" Classes="fieldlbl" Text="Distance between lines (m)" VerticalAlignment="Center" />
                 <NumericUpDown Grid.Row="0" Grid.Column="1" Minimum="0.1" Maximum="1000" Increment="1"
                                Value="{Binding Distance}" />
@@ -163,11 +199,19 @@
                 <ComboBox Grid.Row="5" Grid.Column="1" HorizontalAlignment="Stretch"
                           ItemsSource="{Binding StartPositions}" SelectedItem="{Binding StartFrom}" />
 
-                <TextBlock Grid.Row="6" Grid.Column="0" Classes="fieldlbl" Text="Min Lane Separation" VerticalAlignment="Center" />
-                <NumericUpDown Grid.Row="6" Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding MinLaneSeparation}" />
+                <TextBlock Grid.Row="6" Grid.Column="0" Classes="fieldlbl" Text="Start point vertex" VerticalAlignment="Center"
+                           IsVisible="{Binding IsPointStart}" />
+                <NumericUpDown Grid.Row="6" Grid.Column="1" Minimum="1" Maximum="{Binding BoundaryPointCount}"
+                               Value="{Binding StartPointNumber}" IsVisible="{Binding IsPointStart}" />
 
-                <TextBlock Grid.Row="7" Grid.Column="0" Classes="fieldlbl" Text="Corridor Width (m)" VerticalAlignment="Center" />
-                <NumericUpDown Grid.Row="7" Grid.Column="1" Minimum="0" Maximum="2000" Value="{Binding CorridorWidth}" />
+                <TextBlock Grid.Row="7" Grid.Column="0" Classes="fieldlbl" Text="Min Lane Separation" VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="7" Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding MinLaneSeparation}" />
+
+                <TextBlock Grid.Row="8" Grid.Column="0" Classes="fieldlbl" Text="Corridor Width (m)" VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="8" Grid.Column="1" Minimum="0" Maximum="2000" Value="{Binding CorridorWidth}" />
+
+                <CheckBox Grid.Row="9" Grid.Column="1" Content="Optimise for distance"
+                          IsChecked="{Binding OptimizeForDistance}" />
               </Grid>
 
               <StackPanel Orientation="Horizontal" Spacing="14">
@@ -256,9 +300,9 @@
       </Border>
     </Grid>
 
-    <TextBlock Grid.Row="2" Margin="0,8,0,0" Text="{Binding Status}" Foreground="{DynamicResource MpAccentBrush}" TextWrapping="Wrap" />
+    <TextBlock Grid.Row="3" Margin="0,8,0,0" Text="{Binding Status}" Foreground="{DynamicResource MpAccentBrush}" TextWrapping="Wrap" />
 
-    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,8,0,0">
+    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,8,0,0">
       <Button Content="Load .grid…" Click="OnLoadGrid" />
       <Button Content="Save .grid…" Click="OnSaveGrid" />
       <Button Content="Cancel" Command="{Binding CloseCommand}" />

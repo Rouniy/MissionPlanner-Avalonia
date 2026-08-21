@@ -30,6 +30,8 @@ public class FlightPlannerMap : MapControl {
   private readonly WritableLayer _vehicle = new() { Name = "Vehicle" };
   private readonly GridLayer _graticule = new("Graticule");
   private readonly DispatcherTimer _timer;
+  private readonly AirportOverlayController _airports;
+  private readonly PropagationOverlayController _propagation;
 
   private readonly
       List<(int Seq, double Lat, double Lng, ushort Cmd, double P1, double P2, double P3, double P4)>
@@ -37,6 +39,7 @@ public class FlightPlannerMap : MapControl {
   private double _wpRadius;
   private double _loiterRadius;
   private (double Lat, double Lng) _homeLatLng;
+  private double _homeAltitude;
   private readonly List<(MPoint Pt, int AfterSeq)> _midSegs = new();
   private string _renderMode = "Mission";
   private TileLayer _baseLayer;
@@ -90,23 +93,33 @@ public class FlightPlannerMap : MapControl {
 
     map.Navigator.Limiter = new Mapsui.Limiting.ViewportLimiterKeepWithinExtent();
     Map = map;
+    _airports = new AirportOverlayController(this, alwaysShow: true);
+    _propagation = new PropagationOverlayController(this);
 
     MapPointerPressed += OnMapPointerPressed;
     MapPointerMoved += OnMapPointerMoved;
     MapPointerReleased += OnMapPointerReleased;
 
     _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
-    _timer.Tick += (_, _) => UpdateVehicle();
+    _timer.Tick += (_, _) => {
+      UpdateVehicle();
+      UpdatePropagation();
+      _airports.Update();
+    };
   }
 
   protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e) {
     base.OnAttachedToVisualTree(e);
     MapTileSourceFactory.AccessModeChanged += OnTileAccessModeChanged;
+    _airports.Resume();
+    _propagation.Resume();
     _timer.Start();
   }
 
   protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e) {
     _timer.Stop();
+    _airports.Suspend();
+    _propagation.Suspend();
     MapTileSourceFactory.AccessModeChanged -= OnTileAccessModeChanged;
     base.OnDetachedFromVisualTree(e);
   }
@@ -136,8 +149,9 @@ public class FlightPlannerMap : MapControl {
     }
   }
 
-  public void SetHome(double lat, double lng) {
+  public void SetHome(double lat, double lng, double altitude = 0) {
     _homeLatLng = (lat, lng);
+    _homeAltitude = altitude;
     _home.Clear();
     if (lat != 0 || lng != 0) {
       var (x, y) = SphericalMercator.FromLonLat(lng, lat);
@@ -780,6 +794,22 @@ public class FlightPlannerMap : MapControl {
       Map.Navigator.CenterOnAndZoomTo(pt, res);
       _centered = true;
     }
+  }
+
+  private void UpdatePropagation() {
+    var cs = AppState.comPort.MAV?.cs;
+    double multiplier = CurrentState.multiplieralt;
+    double altitudeAmsl = cs == null
+        ? 0
+        : multiplier == 0 ? cs.altasl : cs.altasl / multiplier;
+    var drone = cs == null
+        ? default
+        : new PropagationPoint(cs.lat, cs.lng, altitudeAmsl);
+    _propagation.Update(new PropagationMapState(
+        new PropagationPoint(_homeLatLng.Lat, _homeLatLng.Lng, _homeAltitude),
+        drone,
+        altitudeAmsl,
+        cs?.battery_kmleft ?? double.NaN));
   }
 
   public void ZoomToHome() {

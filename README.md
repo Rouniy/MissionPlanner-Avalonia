@@ -10,6 +10,15 @@ while **reusing Mission Planner's flight / protocol / log / param / mission logi
 The upstream source is pinned as the `external/MissionPlanner` submodule. The current integration
 baseline is Mission Planner commit `67a3c4f22bd1b38ac499f9756902e04fa4ed8444`.
 
+The application version is copied automatically from that pinned MissionPlanner source and then
+extended with the UTC build date and the port commit. For example, official MissionPlanner
+`1.3.83` produces `1.3.83+20260821.8a07b1b`; a package made from uncommitted local changes adds
+`.dirty`. The composite version appears in the window title and Help page and is shared by release
+archives and update manifests. Filesystem/release names use the GitHub-safe equivalent
+`1.3.83-20260821.8a07b1b`, and release tags add a leading `v`. Debian control metadata adds the
+epoch `1:` plus a monotonically ordered port revision so
+APT correctly upgrades installations that used the port's older `2026.8.0` CalVer.
+
 See [port status](docs/PORT_STATUS.md) for the Windows/macOS/Linux support matrix, upstream
 synchronization details, and the explicit list of missing or intentionally disabled functionality.
 
@@ -104,7 +113,7 @@ target machine. APT installs the native GUI, ICU, OpenSSL and libVLC dependencie
 package; `speech-dispatcher` is recommended for spoken warnings.
 
 ```bash
-sudo apt install ./out/packages/missionplanner-avalonia_2026.8.0_amd64.deb
+sudo apt install ./out/packages/missionplanner-avalonia_*.deb
 missionplanner-avalonia
 ```
 

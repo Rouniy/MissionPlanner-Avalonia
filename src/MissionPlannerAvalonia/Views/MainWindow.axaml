@@ -143,6 +143,7 @@
             <MenuItem Header="DataFlash Spectrogram     Ctrl+L" Click="OnSpectrogram" />
             <MenuItem Header="Map Tile Cache     Ctrl+X" Click="OnMapCache" />
             <MenuItem Header="MAVLink Device Operations     Ctrl+J" Click="OnDeviceOperations" />
+            <MenuItem Header="RF Propagation Settings     Ctrl+W" Click="OnPropagationSettings" />
             <Separator />
             <MenuItem Header="Link Statistics" Click="OnLinkStats" />
             <MenuItem Header="Connection Options" Click="OnConnectionOptions" />

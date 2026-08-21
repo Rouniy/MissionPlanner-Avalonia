@@ -7,10 +7,31 @@
     <AssemblyName>MissionPlannerAvalonia</AssemblyName>
     <RootNamespace>MissionPlannerAvalonia</RootNamespace>
     <ApplicationIcon>Assets/appicon.ico</ApplicationIcon>
+    <!-- Keep the product version aligned with the exact official MissionPlanner source pinned
+         by the submodule. Release/package scripts pass the build date and short port commit;
+         ordinary developer builds get today's UTC date and the SDK-provided full Git revision. -->
+    <MissionPlannerVersionFile>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../external/MissionPlanner/Properties/AssemblyInfo.cs'))</MissionPlannerVersionFile>
+    <MissionPlannerVersionFileExists>$([System.IO.File]::Exists('$(MissionPlannerVersionFile)'))</MissionPlannerVersionFileExists>
+    <MissionPlannerUpstreamVersion Condition="'$(MissionPlannerUpstreamVersion)' == '' And '$(MissionPlannerVersionFileExists)' == 'True'">$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(MissionPlannerVersionFile)')), 'AssemblyFileVersion\(&quot;([0-9]+\.[0-9]+\.[0-9]+)&quot;\)').Groups[1].Value)</MissionPlannerUpstreamVersion>
+    <MissionPlannerUpstreamVersion Condition="'$(MissionPlannerUpstreamVersion)' == ''">0.0.0</MissionPlannerUpstreamVersion>
+    <MissionPlannerBuildDate Condition="'$(MissionPlannerBuildDate)' == ''">$([System.DateTime]::UtcNow.ToString('yyyyMMdd'))</MissionPlannerBuildDate>
+    <Version>$(MissionPlannerUpstreamVersion)</Version>
+    <AssemblyVersion>$(MissionPlannerUpstreamVersion).0</AssemblyVersion>
+    <FileVersion>$(MissionPlannerUpstreamVersion).0</FileVersion>
+    <InformationalVersion>$(MissionPlannerUpstreamVersion)+$(MissionPlannerBuildDate)</InformationalVersion>
+    <InformationalVersion Condition="'$(MissionPlannerCommit)' != ''">$(MissionPlannerUpstreamVersion)+$(MissionPlannerBuildDate).$(MissionPlannerCommit)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion Condition="'$(MissionPlannerCommit)' != ''">false</IncludeSourceRevisionInInformationalVersion>
     <!-- Keep PublishAot local to the executable project. Passing PublishAot on the
          command line propagates it to the netstandard2.0 upstream projects. -->
     <PublishAot Condition="'$(EnableNativeAot)' == 'true'">true</PublishAot>
   </PropertyGroup>
+
+  <Target Name="ValidateMissionPlannerVersion" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(MissionPlannerVersionFileExists)' != 'True'"
+           Text="Pinned MissionPlanner source is missing. Run: git submodule update --init external/MissionPlanner" />
+    <Error Condition="'$(MissionPlannerUpstreamVersion)' == '0.0.0'"
+           Text="Could not read AssemblyFileVersion x.y.z from $(MissionPlannerVersionFile)." />
+  </Target>
 
   <PropertyGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
     <!-- VideoLAN.LibVLC.Windows enables all three architectures for AnyCPU unless
@@ -90,6 +111,10 @@
     </Content>
     <Content Include="../../external/MissionPlanner/checklistDefault.xml" Link="checklistDefault.xml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../../external/MissionPlanner/airports.csv" Link="airports.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
     <Content Include="../../external/MissionPlanner/block_plane_0.dae" Link="block_plane_0.dae">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
