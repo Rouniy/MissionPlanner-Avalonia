@@ -37,6 +37,7 @@
         <TextBlock Grid.Row="2" Grid.Column="0" Classes="lbl" Text="Theme / Layout" />
         <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Spacing="8">
           <ComboBox Classes="md" ItemsSource="{Binding ThemeOptions}" SelectedItem="{Binding Theme}" />
+          <Button Name="ThemeEditorBtn" Content="Edit Custom…" />
           <ComboBox Classes="md" ItemsSource="{Binding LayoutOptions}" SelectedItem="{Binding Layout}" />
         </StackPanel>
 

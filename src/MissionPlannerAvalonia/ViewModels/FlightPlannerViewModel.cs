@@ -726,6 +726,11 @@ public partial class FlightPlannerViewModel : ViewModelBase {
           for (ushort i = 0; i < count; i++) {
             list.Add(WpRow.From(i, _comPort.getWP(sysid, compid, i, type)));
           }
+        } else if (type == MAVLink.MAV_MISSION_TYPE.FENCE && !SupportsMissionFence(
+                     _comPort.MAV.cs.capabilities)) {
+          list.AddRange(await DownloadLegacyFenceAsync());
+        } else if (type == MAVLink.MAV_MISSION_TYPE.RALLY && !_comPort.MAV.mavlinkv2) {
+          list.AddRange(await DownloadLegacyRallyAsync());
         } else {
           var locations = await mav_mission.download(_comPort, sysid, compid, type);
           for (int i = 0; i < locations.Count; i++) {
@@ -736,7 +741,53 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       });
 
   private bool ShouldDownloadFence() =>
-      ParamValue("FENCE_TOTAL") > 1 && _comPort.MAV.param.ContainsKey("FENCE_ACTION");
+      SupportsMissionFence(_comPort.MAV.cs.capabilities)
+      || (ParamValue("FENCE_TOTAL") > 1
+          && (_comPort.MAV.param.ContainsKey("FENCE_ACTION")
+              || _comPort.MAV.param.ContainsKey("FENCE_ENABLE")));
+
+  internal static bool SupportsMissionFence(uint capabilities) =>
+      (capabilities & (uint)MAVLink.MAV_PROTOCOL_CAPABILITY.MISSION_FENCE) != 0;
+
+  [Obsolete]
+  private async Task<List<WpRow>> DownloadLegacyFenceAsync() {
+    var result = new List<WpRow>();
+    var first = await _comPort.getFencePoint(0);
+    int total = first.total;
+    if (total <= 0) {
+      return result;
+    }
+    result.Add(NewFileRow(MAVLink.MAV_CMD.FENCE_RETURN_POINT,
+        first.plla.Lat, first.plla.Lng, 0, frame: (byte)MAVLink.MAV_FRAME.GLOBAL));
+
+    var vertices = new List<PointLatLngAlt>();
+    for (int index = 1; index < total; index++) {
+      var point = await _comPort.getFencePoint(index);
+      vertices.Add(point.plla);
+      total = point.total;
+    }
+    if (vertices.Count > 1 && vertices[0].GetDistance(vertices[^1]) < 0.1) {
+      vertices.RemoveAt(vertices.Count - 1);
+    }
+    foreach (var point in vertices) {
+      result.Add(NewFileRow(MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION,
+          point.Lat, point.Lng, 0, p1: vertices.Count));
+    }
+    return result;
+  }
+
+  [Obsolete]
+  private async Task<List<WpRow>> DownloadLegacyRallyAsync() {
+    int total = Math.Clamp((int)Math.Round(ParamValue("RALLY_TOTAL")), 0, byte.MaxValue);
+    var result = new List<WpRow>(total);
+    for (int index = 0; index < total; index++) {
+      var point = await _comPort.getRallyPoint(index);
+      result.Add(NewFileRow(MAVLink.MAV_CMD.RALLY_POINT,
+          point.plla.Lat, point.plla.Lng, point.plla.Alt));
+      total = Math.Clamp(point.total, 0, byte.MaxValue);
+    }
+    return result;
+  }
 
   private bool IsSameOpenVehicle(byte sysid, byte compid) =>
       IsConnected && _comPort.MAV.sysid == sysid && _comPort.MAV.compid == compid;
@@ -823,6 +874,11 @@ public partial class FlightPlannerViewModel : ViewModelBase {
                 (MAVLink.MAV_FRAME)rows[i].Frame, 0);
           }
           _comPort.setWPACK(type);
+        } else if (type == MAVLink.MAV_MISSION_TYPE.FENCE && !SupportsMissionFence(
+                     _comPort.MAV.cs.capabilities)) {
+          UploadLegacyFence(rows);
+        } else if (type == MAVLink.MAV_MISSION_TYPE.RALLY && !_comPort.MAV.mavlinkv2) {
+          UploadLegacyRally(rows);
         } else {
           await mav_mission.upload(_comPort, _comPort.MAV.sysid, _comPort.MAV.compid, type,
               [.. rows.Select(r => r.ToLocationwp())]);
@@ -831,6 +887,72 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       Status = $"Wrote {rows.Count} {MissionType.ToLowerInvariant()} point(s).";
     } catch (Exception ex) {
       Status = "Write failed: " + ex.Message;
+    }
+  }
+
+  internal static IReadOnlyList<PointLatLngAlt> BuildLegacyFenceTransfer(
+      IReadOnlyList<WpRow> rows) {
+    var returnPoints = rows.Where(row =>
+        row.Command == (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT).ToList();
+    var vertices = rows.Where(row =>
+        row.Command == (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION).ToList();
+    bool unsupported = rows.Any(row => row.Command is not
+        ((ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT) and not
+        ((ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION));
+    if (returnPoints.Count != 1) {
+      throw new InvalidOperationException("Legacy fence upload needs exactly one return location.");
+    }
+    if (vertices.Count < 3) {
+      throw new InvalidOperationException("Legacy fence upload needs an inclusion polygon with at least 3 vertices.");
+    }
+    if (unsupported) {
+      throw new InvalidOperationException(
+          "This controller's legacy fence protocol cannot upload exclusion polygons or circles.");
+    }
+    if (vertices.Count + 2 > byte.MaxValue) {
+      throw new InvalidOperationException("The legacy fence protocol supports at most 253 vertices.");
+    }
+
+    var transfer = new List<PointLatLngAlt>(vertices.Count + 2) {
+      new(returnPoints[0].Lat, returnPoints[0].Lng),
+    };
+    transfer.AddRange(vertices.Select(row => new PointLatLngAlt(row.Lat, row.Lng)));
+    transfer.Add(new PointLatLngAlt(vertices[0].Lat, vertices[0].Lng));
+    return transfer;
+  }
+
+  [Obsolete]
+  private void UploadLegacyFence(IReadOnlyList<WpRow> rows) {
+    var transfer = BuildLegacyFenceTransfer(rows);
+    byte count = checked((byte)transfer.Count);
+    for (byte index = 0; index < count; index++) {
+      if (!_comPort.setFencePoint(index, transfer[index], count)) {
+        throw new IOException($"The controller did not verify legacy fence point {index}.");
+      }
+    }
+  }
+
+  [Obsolete]
+  private void UploadLegacyRally(IReadOnlyList<WpRow> rows) {
+    if (rows.Count > byte.MaxValue) {
+      throw new InvalidOperationException("The legacy rally protocol supports at most 255 points.");
+    }
+    if (rows.Any(row => row.Command != (ushort)MAVLink.MAV_CMD.RALLY_POINT)) {
+      throw new InvalidOperationException("Legacy rally upload accepts only RALLY_POINT items.");
+    }
+    if (!_comPort.setParam("RALLY_TOTAL", rows.Count)) {
+      throw new IOException("The controller rejected RALLY_TOTAL.");
+    }
+    byte count = checked((byte)rows.Count);
+    for (byte index = 0; index < count; index++) {
+      var row = rows[index];
+      var point = new PointLatLngAlt(row.Lat, row.Lng, row.Alt);
+      short breakAltitude = (short)Math.Clamp(Math.Round(row.P1), short.MinValue, short.MaxValue);
+      ushort landingDirection = (ushort)Math.Clamp(Math.Round(row.P2), ushort.MinValue, ushort.MaxValue);
+      byte flags = (byte)Math.Clamp(Math.Round(row.P3), byte.MinValue, byte.MaxValue);
+      if (!_comPort.setRallyPoint(index, point, breakAltitude, landingDirection, flags, count)) {
+        throw new IOException($"The controller did not verify legacy rally point {index}.");
+      }
     }
   }
 
@@ -2238,12 +2360,9 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   public string GenerateSurveyGrid(double altitude, double spacing, double angle) {
-    var polygon = Waypoints.Where(w => Services.MissionRoute.IsNavigation(w.Command)
-                                      && !(w.Lat == 0 && w.Lng == 0))
-                      .Select(w => new PointLatLngAlt(w.Lat, w.Lng, altitude))
-                      .ToList();
+    var polygon = SurveyBoundary(altitude);
     if (polygon.Count < 3) {
-      return "Need at least 3 waypoints to outline the survey area.";
+      return "Draw at least 3 polygon points to outline the survey area.";
     }
 
     var home = (HomeLat == 0 && HomeLng == 0)
@@ -2277,10 +2396,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   }
 
   public (System.Collections.Generic.List<PointLatLngAlt> polygon, PointLatLngAlt home)? BuildSurveyArea() {
-    var polygon = Waypoints.Where(w => Services.MissionRoute.IsNavigation(w.Command)
-                                      && !(w.Lat == 0 && w.Lng == 0))
-                      .Select(w => new PointLatLngAlt(w.Lat, w.Lng, DefaultAlt))
-                      .ToList();
+    var polygon = SurveyBoundary(DefaultAlt);
     if (polygon.Count < 3) {
       return null;
     }
@@ -2289,6 +2405,21 @@ public partial class FlightPlannerViewModel : ViewModelBase {
                    ? polygon[0]
                    : new PointLatLngAlt(HomeLat, HomeLng, HomeAlt);
     return (polygon, home);
+  }
+
+  private List<PointLatLngAlt> SurveyBoundary(double altitude) {
+    if (DrawnPolygon.Count >= 3) {
+      return DrawnPolygon
+          .Select(point => new PointLatLngAlt(point.Lat, point.Lng, altitude))
+          .ToList();
+    }
+
+    // Preserve the port's earlier mission-outline workflow as a compatibility fallback,
+    // while matching upstream's drawn-polygon workflow whenever a polygon is available.
+    return Waypoints.Where(row => Services.MissionRoute.IsNavigation(row.Command)
+                                  && !(row.Lat == 0 && row.Lng == 0))
+        .Select(row => new PointLatLngAlt(row.Lat, row.Lng, altitude))
+        .ToList();
   }
 
   public string AppendSurveyGrid(System.Collections.Generic.List<PointLatLngAlt> grid) {

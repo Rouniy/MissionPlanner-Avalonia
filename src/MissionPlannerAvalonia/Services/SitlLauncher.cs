@@ -1,11 +1,14 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace MissionPlannerAvalonia.Services;
@@ -30,6 +33,13 @@ public class SitlLauncher {
   private const string _sitlBaseUrl =
       "https://firmware.ardupilot.org/Tools/MissionPlanner/sitl/";
   private const string _manifestUrl = "https://firmware.ardupilot.org/manifest.json.gz";
+  // ArduPilot publishes the generated vehicle database at this stable Mission Planner URL.
+  // There is no Tools/autotest/vehicleinfo.py in the source tree (it lives below pysim/),
+  // so pointing at raw.githubusercontent.com here makes every defaults lookup fail with 404.
+  private const string _vehicleInfoUrl =
+      "https://firmware.ardupilot.org/Tools/MissionPlanner/vehicleinfo.py";
+  private const string _autotestBaseUrl =
+      "https://raw.githubusercontent.com/ArduPilot/ardupilot/master/Tools/autotest/";
   private const string _defaultHome = "-35.363261,149.165230,584,353";
   private const string _host = "127.0.0.1";
   private const int _tcpPort = 5760;
@@ -113,6 +123,19 @@ public class SitlLauncher {
     var extra = opts.ExtraCmdline?.Trim() ?? "";
     if (opts.WipeEeprom) {
       extra = (extra + " --wipe").Trim();
+    }
+
+    if (!ContainsCommandLineOption(extra, "--defaults")) {
+      try {
+        string? defaults = await EnsureDefaultParametersAsync(model).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(defaults)) {
+          extra = ($"--defaults {QuoteArgument(defaults)} " + extra).Trim();
+          Emit($"Using frame defaults for {model}: {defaults}");
+        }
+      } catch (Exception ex) {
+        // Defaults improve frame fidelity but must not make an otherwise usable simulator fail.
+        Emit($"Could not load frame defaults for {model}: {ex.Message}");
+      }
     }
 
     var args =
@@ -252,6 +275,188 @@ public class SitlLauncher {
     }
     return string.IsNullOrEmpty(model) ? "sitl" : model;
   }
+
+  private async Task<string?> EnsureDefaultParametersAsync(string model) {
+    Directory.CreateDirectory(CacheDir);
+    string vehicleInfoPath = Path.Combine(CacheDir, "vehicleinfo.py");
+    await RefreshCachedFileAsync(_vehicleInfoUrl, vehicleInfoPath).ConfigureAwait(false);
+    if (!File.Exists(vehicleInfoPath)) {
+      return null;
+    }
+
+    var relativePaths = ParseDefaultParameterPaths(
+        await File.ReadAllTextAsync(vehicleInfoPath).ConfigureAwait(false), model);
+    if (relativePaths.Count == 0) {
+      return null;
+    }
+
+    var localPaths = new System.Collections.Generic.List<string>();
+    foreach (string relativePath in relativePaths) {
+      string normalized = relativePath.Replace('\\', '/').TrimStart('/');
+      if (normalized.Split('/').Any(segment => segment == "..")) {
+        throw new InvalidDataException($"Unsafe SITL defaults path: {relativePath}");
+      }
+
+      string root = Path.Combine(CacheDir, "autotest");
+      string destination = Path.GetFullPath(Path.Combine(root,
+          normalized.Replace('/', Path.DirectorySeparatorChar)));
+      string rootedPrefix = Path.GetFullPath(root) + Path.DirectorySeparatorChar;
+      if (!destination.StartsWith(rootedPrefix, StringComparison.Ordinal)) {
+        throw new InvalidDataException($"Unsafe SITL defaults path: {relativePath}");
+      }
+      Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+      var url = new Uri(new Uri(_autotestBaseUrl), normalized).ToString();
+      await RefreshCachedFileAsync(url, destination).ConfigureAwait(false);
+      if (!File.Exists(destination)) {
+        return null;
+      }
+      localPaths.Add(destination);
+    }
+    return string.Join(',', localPaths);
+  }
+
+  private async Task RefreshCachedFileAsync(string url, string destination) {
+    bool fresh = File.Exists(destination)
+                 && DateTime.UtcNow - File.GetLastWriteTimeUtc(destination) < TimeSpan.FromDays(1);
+    if (fresh) {
+      return;
+    }
+    try {
+      await DownloadAsync(url, destination).ConfigureAwait(false);
+    } catch when (File.Exists(destination)) {
+      Emit($"Using cached {Path.GetFileName(destination)} after refresh failed.");
+    }
+  }
+
+  internal static IReadOnlyList<string> ParseDefaultParameterPaths(string vehicleInfo, string model) {
+    if (string.IsNullOrWhiteSpace(vehicleInfo) || string.IsNullOrWhiteSpace(model)) {
+      return [];
+    }
+    try {
+      string json = StripPythonComments(ExtractFirstDictionary(vehicleInfo));
+      json = Regex.Replace(json, @"\bTrue\b", "true");
+      json = Regex.Replace(json, @"\bFalse\b", "false");
+      json = Regex.Replace(json, @"\bNone\b", "null");
+      using var doc = JsonDocument.Parse(json,
+          new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
+      foreach (var vehicle in doc.RootElement.EnumerateObject()) {
+        if (!TryGetPropertyIgnoreCase(vehicle.Value, "frames", out JsonElement frames)) {
+          continue;
+        }
+        JsonElement frame = default;
+        bool found = false;
+        foreach (var candidate in frames.EnumerateObject()) {
+          if (string.Equals(candidate.Name, model, StringComparison.OrdinalIgnoreCase)) {
+            frame = candidate.Value;
+            found = true;
+            break;
+          }
+        }
+        if (!found || !TryGetPropertyIgnoreCase(
+                frame, "default_params_filename", out JsonElement defaults)) {
+          continue;
+        }
+        if (defaults.ValueKind == JsonValueKind.String
+            && defaults.GetString() is { Length: > 0 } single) {
+          return [single];
+        }
+        if (defaults.ValueKind == JsonValueKind.Array) {
+          return defaults.EnumerateArray()
+              .Where(value => value.ValueKind == JsonValueKind.String)
+              .Select(value => value.GetString())
+              .Where(value => !string.IsNullOrWhiteSpace(value))
+              .Select(value => value!)
+              .ToList();
+        }
+      }
+    } catch {
+
+    }
+    return [];
+  }
+
+  private static bool TryGetPropertyIgnoreCase(
+      JsonElement element, string name, out JsonElement value) {
+    if (element.ValueKind == JsonValueKind.Object) {
+      foreach (var property in element.EnumerateObject()) {
+        if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)) {
+          value = property.Value;
+          return true;
+        }
+      }
+    }
+    value = default;
+    return false;
+  }
+
+  private static string ExtractFirstDictionary(string text) {
+    int start = text.IndexOf('{');
+    if (start < 0) {
+      throw new FormatException("vehicleinfo.py contains no dictionary");
+    }
+    int depth = 0;
+    char quote = '\0';
+    bool escape = false;
+    for (int index = start; index < text.Length; index++) {
+      char current = text[index];
+      if (quote != '\0') {
+        if (escape) {
+          escape = false;
+        } else if (current == '\\') {
+          escape = true;
+        } else if (current == quote) {
+          quote = '\0';
+        }
+        continue;
+      }
+      if (current is '\'' or '"') {
+        quote = current;
+      } else if (current == '{') {
+        depth++;
+      } else if (current == '}' && --depth == 0) {
+        return text.Substring(start, index - start + 1);
+      }
+    }
+    throw new FormatException("vehicleinfo.py contains an incomplete dictionary");
+  }
+
+  private static string StripPythonComments(string text) {
+    var result = new System.Text.StringBuilder(text.Length);
+    char quote = '\0';
+    bool escape = false;
+    for (int index = 0; index < text.Length; index++) {
+      char current = text[index];
+      if (quote != '\0') {
+        result.Append(current);
+        if (escape) {
+          escape = false;
+        } else if (current == '\\') {
+          escape = true;
+        } else if (current == quote) {
+          quote = '\0';
+        }
+        continue;
+      }
+      if (current is '\'' or '"') {
+        quote = current;
+        result.Append(current);
+      } else if (current == '#') {
+        while (index + 1 < text.Length && text[index + 1] is not '\r' and not '\n') {
+          index++;
+        }
+      } else {
+        result.Append(current);
+      }
+    }
+    return result.ToString();
+  }
+
+  private static bool ContainsCommandLineOption(string arguments, string option) =>
+      Regex.IsMatch(arguments ?? "", $@"(^|\s){Regex.Escape(option)}(?:\s|=|$)",
+          RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+  private static string QuoteArgument(string value) =>
+      '"' + value.Replace("\"", "\\\"") + '"';
 
   private async Task<string?> EnsureBinaryAsync(string exeName, SitlChannel channel) {
     Directory.CreateDirectory(CacheDir);

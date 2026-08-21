@@ -213,6 +213,8 @@ public partial class FlightPlannerView : UserControl {
     AddMissionOnly(Item("Jump", (vm, _, _) => _ = vm.AddJump()));
     AddMissionOnly(Item("Jump to Start", (vm, _, _) => _ = vm.AddJumpStart()));
     var autowp = new MenuItem { Header = "Auto WP" };
+    autowp.Items.Add(Item("Survey (Grid)", (vm, _, _) => OpenSurveyGrid(vm)));
+    autowp.Items.Add(Item("Area", (vm, _, _) => vm.PolygonArea()));
     autowp.Items.Add(Item("Circle", (vm, lat, lng) => _ = vm.CreateWpCircle(lat, lng)));
     autowp.Items.Add(Item("Spline Circle", (vm, lat, lng) => _ = vm.CreateSplineCircle(lat, lng)));
     autowp.Items.Add(Item("Circle Survey", (vm, lat, lng) => _ = vm.CreateCircleSurvey(lat, lng)));
@@ -711,13 +713,17 @@ public partial class FlightPlannerView : UserControl {
       return;
     }
 
-    if (Vm.BuildSurveyArea() is not { } area) {
-      Vm.Status = "Need at least 3 waypoints to outline the survey area.";
+    OpenSurveyGrid(Vm);
+  }
+
+  private static void OpenSurveyGrid(FlightPlannerViewModel vm) {
+    if (vm.BuildSurveyArea() is not { } area) {
+      vm.Status = "Draw at least 3 polygon points to outline the survey area.";
       return;
     }
 
     GridUIWindow.OpenForPolygon(area.polygon, area.home,
-        plan => Vm.Status = Vm.AppendSurveyPlan(plan));
+        plan => vm.Status = vm.AppendSurveyPlan(plan));
   }
 
   private Window? OwnerWindow => TopLevel.GetTopLevel(this) as Window;

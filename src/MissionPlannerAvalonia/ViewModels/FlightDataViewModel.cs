@@ -876,6 +876,56 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     Log($"Servo {ch} -> {pwm}");
   }
 
+  [RelayCommand]
+  private async Task RenameServoChannel(ServoChannel? channel) {
+    if (channel == null) {
+      return;
+    }
+    string? label = await Services.Dialogs.InputBox(
+        "Servo labels", $"Servo {channel.Number} description", channel.Label);
+    if (label == null) {
+      return;
+    }
+    string? low = await Services.Dialogs.InputBox(
+        "Servo labels", "Low button label", channel.LowLabel);
+    if (low == null) {
+      return;
+    }
+    string? high = await Services.Dialogs.InputBox(
+        "Servo labels", "High button label", channel.HighLabel);
+    if (high == null) {
+      return;
+    }
+    channel.Label = string.IsNullOrWhiteSpace(label) ? $"Servo {channel.Number}" : label.Trim();
+    channel.LowLabel = string.IsNullOrWhiteSpace(low) ? "Low" : low.Trim();
+    channel.HighLabel = string.IsNullOrWhiteSpace(high) ? "High" : high.Trim();
+  }
+
+  [RelayCommand]
+  private async Task RenameRelayChannel(RelayChannel? channel) {
+    if (channel == null) {
+      return;
+    }
+    string? label = await Services.Dialogs.InputBox(
+        "Relay labels", $"Relay {channel.Index + 1} description", channel.Label);
+    if (label == null) {
+      return;
+    }
+    string? low = await Services.Dialogs.InputBox(
+        "Relay labels", "Low button label", channel.LowLabel);
+    if (low == null) {
+      return;
+    }
+    string? high = await Services.Dialogs.InputBox(
+        "Relay labels", "High button label", channel.HighLabel);
+    if (high == null) {
+      return;
+    }
+    channel.Label = string.IsNullOrWhiteSpace(label) ? $"Relay {channel.Index + 1}" : label.Trim();
+    channel.LowLabel = string.IsNullOrWhiteSpace(low) ? "Low" : low.Trim();
+    channel.HighLabel = string.IsNullOrWhiteSpace(high) ? "High" : high.Trim();
+  }
+
   [ObservableProperty]
   private string _scriptStatus = "No Script Running";
 
@@ -3067,9 +3117,31 @@ public sealed record MavlinkMessageOption(uint Id, string Name) {
 internal readonly record struct MissionProgressInfo(
     int ItemCount, double TotalDistance, double TravelledDistance);
 
-public class RelayChannel(int index) {
-  public int Index { get; } = index;
-  public string Label => $"Relay {Index + 1}";
+public partial class RelayChannel : ObservableObject {
+  public RelayChannel(int index) {
+    Index = index;
+    _label = SavedText($"Relay{index}_desc", $"Relay {index + 1}");
+    _lowLabel = SavedText($"Relay{index}_lowdesc", "Low");
+    _highLabel = SavedText($"Relay{index}_highdesc", "High");
+  }
+
+  public int Index { get; }
+
+  [ObservableProperty]
+  private string _label;
+
+  [ObservableProperty]
+  private string _lowLabel;
+
+  [ObservableProperty]
+  private string _highLabel;
+
+  partial void OnLabelChanged(string value) => Settings.Instance[$"Relay{Index}_desc"] = value;
+  partial void OnLowLabelChanged(string value) => Settings.Instance[$"Relay{Index}_lowdesc"] = value;
+  partial void OnHighLabelChanged(string value) => Settings.Instance[$"Relay{Index}_highdesc"] = value;
+
+  private static string SavedText(string key, string fallback) =>
+      string.IsNullOrWhiteSpace(Settings.Instance[key]) ? fallback : Settings.Instance[key]!;
 }
 
 public partial class ServoOut(int number) : ObservableObject {
@@ -3126,8 +3198,26 @@ public sealed record WaypointOption(int Index, string Label) {
   public override string ToString() => Label;
 }
 
-public partial class ServoChannel(int number) : ObservableObject {
-  public int Number { get; } = number;
+public partial class ServoChannel : ObservableObject {
+  public ServoChannel(int number) {
+    Number = number;
+    _label = SavedText($"Servo{number}_desc", $"Servo {number}");
+    _lowLabel = SavedText($"Servo{number}_lowdesc", "Low");
+    _highLabel = SavedText($"Servo{number}_highdesc", "High");
+    _min = SavedInt($"Servo{number}_low", 1100);
+    _max = SavedInt($"Servo{number}_high", 1900);
+  }
+
+  public int Number { get; }
+
+  [ObservableProperty]
+  private string _label;
+
+  [ObservableProperty]
+  private string _lowLabel;
+
+  [ObservableProperty]
+  private string _highLabel;
 
   [ObservableProperty]
   private int _min = 1100;
@@ -3136,4 +3226,19 @@ public partial class ServoChannel(int number) : ObservableObject {
   private int _max = 1900;
 
   public bool Toggled { get; set; }
+
+  partial void OnLabelChanged(string value) => Settings.Instance[$"Servo{Number}_desc"] = value;
+  partial void OnLowLabelChanged(string value) => Settings.Instance[$"Servo{Number}_lowdesc"] = value;
+  partial void OnHighLabelChanged(string value) => Settings.Instance[$"Servo{Number}_highdesc"] = value;
+  partial void OnMinChanged(int value) => Settings.Instance[$"Servo{Number}_low"] =
+      value.ToString(CultureInfo.InvariantCulture);
+  partial void OnMaxChanged(int value) => Settings.Instance[$"Servo{Number}_high"] =
+      value.ToString(CultureInfo.InvariantCulture);
+
+  private static string SavedText(string key, string fallback) =>
+      string.IsNullOrWhiteSpace(Settings.Instance[key]) ? fallback : Settings.Instance[key]!;
+
+  private static int SavedInt(string key, int fallback) =>
+      int.TryParse(Settings.Instance[key], NumberStyles.Integer, CultureInfo.InvariantCulture,
+          out int value) ? value : fallback;
 }

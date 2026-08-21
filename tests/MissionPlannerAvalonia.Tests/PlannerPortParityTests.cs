@@ -165,4 +165,92 @@ public class PlannerPortParityTests {
     Assert.Equal(areaTiles.Count, areaTiles.Select(tile => tile.Index).Distinct().Count());
     Assert.Equal(pathTiles.Count, pathTiles.Select(tile => tile.Index).Distinct().Count());
   }
+
+  [Fact]
+  public void Survey_uses_the_drawn_polygon_before_mission_waypoints() {
+    var vm = new FlightPlannerViewModel { DefaultAlt = 75 };
+    vm.Waypoints.Add(new WpRow {
+      Command = (ushort)MAVLink.MAV_CMD.WAYPOINT,
+      Lat = 10,
+      Lng = 20,
+    });
+    vm.Waypoints.Add(new WpRow {
+      Command = (ushort)MAVLink.MAV_CMD.WAYPOINT,
+      Lat = 11,
+      Lng = 21,
+    });
+    vm.Waypoints.Add(new WpRow {
+      Command = (ushort)MAVLink.MAV_CMD.WAYPOINT,
+      Lat = 12,
+      Lng = 22,
+    });
+    vm.AddPolygonPoint(-35.36, 149.16);
+    vm.AddPolygonPoint(-35.36, 149.17);
+    vm.AddPolygonPoint(-35.35, 149.17);
+
+    var area = Assert.IsType<ValueTuple<List<PointLatLngAlt>, PointLatLngAlt>>(
+        vm.BuildSurveyArea());
+
+    Assert.Equal(3, area.Item1.Count);
+    Assert.Equal(-35.36, area.Item1[0].Lat, 6);
+    Assert.Equal(149.16, area.Item1[0].Lng, 6);
+    Assert.All(area.Item1, point => Assert.Equal(75, point.Alt));
+  }
+
+  [Fact]
+  public void Survey_keeps_mission_outline_as_a_compatibility_fallback() {
+    var vm = new FlightPlannerViewModel { DefaultAlt = 60 };
+    vm.Waypoints.Add(new WpRow {
+      Command = (ushort)MAVLink.MAV_CMD.WAYPOINT,
+      Lat = 1,
+      Lng = 2,
+    });
+    vm.Waypoints.Add(new WpRow {
+      Command = (ushort)MAVLink.MAV_CMD.WAYPOINT,
+      Lat = 3,
+      Lng = 4,
+    });
+    vm.Waypoints.Add(new WpRow {
+      Command = (ushort)MAVLink.MAV_CMD.WAYPOINT,
+      Lat = 5,
+      Lng = 6,
+    });
+
+    var area = Assert.IsType<ValueTuple<List<PointLatLngAlt>, PointLatLngAlt>>(
+        vm.BuildSurveyArea());
+
+    Assert.Equal(new[] { 1d, 3d, 5d }, area.Item1.Select(point => point.Lat));
+    Assert.All(area.Item1, point => Assert.Equal(60, point.Alt));
+  }
+
+  [Fact]
+  public void Legacy_fence_transfer_keeps_return_point_and_closes_polygon() {
+    var rows = new[] {
+      new WpRow { Command = (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT, Lat = 1, Lng = 2 },
+      new WpRow { Command = (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION, Lat = 3, Lng = 4 },
+      new WpRow { Command = (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION, Lat = 5, Lng = 6 },
+      new WpRow { Command = (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION, Lat = 7, Lng = 8 },
+    };
+
+    var transfer = FlightPlannerViewModel.BuildLegacyFenceTransfer(rows);
+
+    Assert.Equal(5, transfer.Count);
+    Assert.Equal((1d, 2d), (transfer[0].Lat, transfer[0].Lng));
+    Assert.Equal((3d, 4d), (transfer[1].Lat, transfer[1].Lng));
+    Assert.Equal((3d, 4d), (transfer[^1].Lat, transfer[^1].Lng));
+  }
+
+  [Fact]
+  public void Legacy_fence_rejects_geometry_it_cannot_represent() {
+    var rows = new[] {
+      new WpRow { Command = (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT },
+      new WpRow { Command = (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION },
+      new WpRow { Command = (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION },
+      new WpRow { Command = (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION },
+      new WpRow { Command = (ushort)MAVLink.MAV_CMD.FENCE_CIRCLE_EXCLUSION },
+    };
+
+    Assert.Throws<InvalidOperationException>(() =>
+        FlightPlannerViewModel.BuildLegacyFenceTransfer(rows));
+  }
 }

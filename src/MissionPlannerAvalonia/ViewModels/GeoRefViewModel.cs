@@ -49,6 +49,9 @@ public partial class GeoRefViewModel : ViewModelBase {
   [ObservableProperty] private bool _useTrigMessages;
 
   [ObservableProperty] private bool _useGps2;
+  [ObservableProperty] private int _shutterLagMilliseconds;
+  [ObservableProperty] private bool _useAmslAltitude;
+  [ObservableProperty] private bool _useGpsAltitude;
   [ObservableProperty] private bool _busy;
   [ObservableProperty] private string _status = "Pick a log and a photo folder, then Geo Tag.";
   [ObservableProperty] private string _outputLog = "";
@@ -90,6 +93,9 @@ public partial class GeoRefViewModel : ViewModelBase {
             : UseTrigMessages
                 ? DoWorkTrig()
                 : DoWorkGpsOffset();
+        if ((UseCamMessages || UseTrigMessages) && pics.Count > 0) {
+          ApplyCameraCorrections(pics);
+        }
         if (pics.Count == 0) {
           Append("No valid matches. Aborting.");
           return;
@@ -162,6 +168,63 @@ public partial class GeoRefViewModel : ViewModelBase {
     } finally {
       Busy = false;
     }
+  }
+
+  public async Task EstimateOffsetAsync() {
+    if (!File.Exists(LogPath)) {
+      Status = "Log file not found.";
+      return;
+    }
+    if (!Directory.Exists(PhotoDir)) {
+      Status = "Photo directory not found.";
+      return;
+    }
+
+    Busy = true;
+    OutputLog = "";
+    Status = "Estimating camera/log time offset…";
+    try {
+      double? estimate = await Task.Run(() => {
+        var photos = ListPhotos().Select(GetPhotoTime)
+            .Where(time => time != DateTime.MinValue)
+            .Select(time => time.ToUniversalTime()).OrderBy(time => time).ToList();
+        var locations = UseCamMessages
+            ? ReadCamMsgInLog(LogPath)
+            : ReadGpsMsgInLog(LogPath, GpsMsg);
+        var logTimes = locations.Values.Select(location => location.Time.ToUniversalTime())
+            .Where(time => time != DateTime.MinValue).OrderBy(time => time).ToList();
+        return EstimateOffset(photos, logTimes);
+      });
+      if (!estimate.HasValue) {
+        Status = "Could not estimate an offset: valid photo or log timestamps are missing.";
+        return;
+      }
+      TimeOffsetSeconds = Math.Round(estimate.Value, 3);
+      Append($"Estimated camera minus log offset: {TimeOffsetSeconds:0.000} s");
+      Status = $"Estimated offset: {TimeOffsetSeconds:0.000} s. Review it, then Geo Tag.";
+    } catch (Exception ex) {
+      Status = "Offset estimation failed: " + ex.Message;
+    } finally {
+      Busy = false;
+    }
+  }
+
+  internal static double? EstimateOffset(
+      IReadOnlyList<DateTime> photoTimes, IReadOnlyList<DateTime> logTimes) {
+    int count = Math.Min(photoTimes.Count, logTimes.Count);
+    if (count == 0) {
+      return null;
+    }
+    var indices = Enumerable.Range(0, Math.Min(4, count))
+        .Concat(Enumerable.Range(Math.Max(0, count - 3), Math.Min(3, count)))
+        .Distinct().OrderBy(index => index);
+    var offsets = indices.Select(index =>
+        (photoTimes[index].ToUniversalTime() - logTimes[index].ToUniversalTime()).TotalSeconds)
+        .OrderBy(value => value).ToArray();
+    int middle = offsets.Length / 2;
+    return offsets.Length % 2 == 1
+        ? offsets[middle]
+        : (offsets[middle - 1] + offsets[middle]) / 2.0;
   }
 
   private sealed class PictureInfo {
@@ -313,6 +376,37 @@ public partial class GeoRefViewModel : ViewModelBase {
       Append($"Photo {Path.GetFileNameWithoutExtension(file)} matched {(loc.Time - corrected).TotalMilliseconds:0} ms away.");
     }
     return outp;
+  }
+
+  private void ApplyCameraCorrections(List<PictureInfo> pictures) {
+    if (ShutterLagMilliseconds == 0 && !UseAmslAltitude && !UseGpsAltitude) {
+      return;
+    }
+    Append($"Applying shutter lag {ShutterLagMilliseconds} ms; "
+           + $"AMSL={UseAmslAltitude}; GPS altitude={UseGpsAltitude}.");
+    var gps = ReadGpsMsgInLog(LogPath, GpsMsg);
+    int window = Math.Max(5000, Math.Abs(ShutterLagMilliseconds) + 2000);
+    foreach (var picture in pictures) {
+      DateTime target = picture.Time.AddMilliseconds(ShutterLagMilliseconds);
+      var location = LookForLocation(target, gps, window);
+      if (location == null) {
+        Append($"{Path.GetFileName(picture.Path)}: no {GpsMsg} correction near {target:O}.");
+        continue;
+      }
+      if (ShutterLagMilliseconds != 0) {
+        picture.Time = location.Time;
+        picture.Lat = location.Lat;
+        picture.Lon = location.Lon;
+        picture.Roll = location.Roll;
+        picture.Pitch = location.Pitch;
+        picture.Yaw = location.Yaw;
+      }
+      if (UseGpsAltitude && location.GPSAlt != 0) {
+        picture.AltAMSL = location.GPSAlt;
+      } else if (UseAmslAltitude) {
+        picture.AltAMSL = location.AltAMSL;
+      }
+    }
   }
 
   private static VehicleLoc? LookForLocation(DateTime t, Dictionary<long, VehicleLoc> locs,

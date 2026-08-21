@@ -9,7 +9,8 @@ public partial class MainWindow : Window {
   public MainWindow() {
     InitializeComponent();
 
-    KeyDown += OnKeyDown;
+    AddHandler(InputElement.KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel,
+        handledEventsToo: true);
     Closed += (_, _) => (DataContext as System.IDisposable)?.Dispose();
   }
 

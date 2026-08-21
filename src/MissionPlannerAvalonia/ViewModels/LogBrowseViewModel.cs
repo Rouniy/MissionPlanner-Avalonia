@@ -234,6 +234,12 @@ public partial class LogBrowseViewModel : ViewModelBase {
     return series.Select(s => (s.time, $"{type} {s.value:0}")).ToList();
   }
 
+  public IReadOnlyList<DataFlashParameter> ReadParameters() =>
+      CurrentPath == null ? [] : DataFlashLog.ReadParameters(CurrentPath);
+
+  public IReadOnlyList<DataFlashMessage> ReadMessages() =>
+      CurrentPath == null ? [] : DataFlashLog.ReadMessages(CurrentPath);
+
   public (IReadOnlyList<string> columns, IReadOnlyList<IReadOnlyList<string>> rows) ReadRows(
       string type, int maxRows = 5000) {
     if (CurrentPath == null || !_formats.TryGetValue(type, out var fields) || fields.Length == 0) {

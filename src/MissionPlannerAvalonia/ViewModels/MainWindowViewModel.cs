@@ -45,6 +45,7 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
 
     Simulation.RequestFlightData += () =>
         Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = Navigate("DATA"));
+    _ = Services.KIndexService.RefreshAsync();
   }
 
   private void OnConnectionChanged() =>

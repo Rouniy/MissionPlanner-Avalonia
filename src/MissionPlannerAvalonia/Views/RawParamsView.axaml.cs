@@ -15,6 +15,7 @@ public partial class RawParamsView : UserControl {
     this.FindControl<Button>("LoadBtn")!.Click += OnLoad;
     this.FindControl<Button>("SaveBtn")!.Click += OnSave;
     this.FindControl<Button>("CompareBtn")!.Click += OnCompare;
+    this.FindControl<Button>("LoadFrameDefaultsBtn")!.Click += OnLoadFrameDefaults;
     this.FindControl<DataGrid>("ParamsGrid")!.CellEditEnded += (_, _) => Vm?.PersistFavs();
   }
 
@@ -29,8 +30,26 @@ public partial class RawParamsView : UserControl {
 
   private async void OnCompare(object? sender, RoutedEventArgs e) {
     var path = await PickOpen("Compare parameters");
-    if (path != null) {
-      Vm?.CompareParamFile(path);
+    if (path == null || Vm is not { } vm
+        || TopLevel.GetTopLevel(this) is not Window owner) {
+      return;
+    }
+
+    var comparison = vm.CompareParamFile(path);
+    if (comparison.Count > 0
+        && await ParamCompareWindow.ShowAsync(owner, comparison)) {
+      vm.ApplyParamComparison(comparison);
+    }
+  }
+
+  private async void OnLoadFrameDefaults(object? sender, RoutedEventArgs e) {
+    if (Vm is not { } vm || TopLevel.GetTopLevel(this) is not Window owner) {
+      return;
+    }
+    var comparison = await vm.DownloadFrameDefaultComparisonAsync();
+    if (comparison.Count > 0
+        && await ParamCompareWindow.ShowAsync(owner, comparison)) {
+      vm.ApplyParamComparison(comparison);
     }
   }
 

@@ -445,47 +445,55 @@
               <ItemsControl.DataTemplates>
                 <DataTemplate DataType="vm:ServoChannel">
                   <Grid ColumnSpacing="6" HorizontalAlignment="Left"
-                        ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+                        ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
                     <Border Grid.Column="0" Background="#5A5A5A" CornerRadius="3"
                             MinWidth="64" Padding="8,0">
-                      <TextBlock Text="{Binding Number, StringFormat='Servo {0}'}" Foreground="White"
+                      <TextBlock Text="{Binding Label}" Foreground="White"
                                  FontSize="11" HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
-                    <Button Grid.Column="1" Content="Low" MinWidth="52" FontSize="11" Padding="8,3"
+                    <Button Grid.Column="1" Content="{Binding LowLabel}" MinWidth="52" FontSize="11" Padding="8,3"
                             Command="{Binding $parent[ItemsControl].((vm:FlightDataViewModel)DataContext).SetServoChannelCommand}"
                             CommandParameter="{Binding Number, StringFormat='{}{0}:low'}" />
                     <Button Grid.Column="2" Content="Mid" MinWidth="52" FontSize="11" Padding="8,3"
                             Command="{Binding $parent[ItemsControl].((vm:FlightDataViewModel)DataContext).SetServoChannelCommand}"
                             CommandParameter="{Binding Number, StringFormat='{}{0}:mid'}" />
-                    <Button Grid.Column="3" Content="High" MinWidth="52" FontSize="11" Padding="8,3"
+                    <Button Grid.Column="3" Content="{Binding HighLabel}" MinWidth="52" FontSize="11" Padding="8,3"
                             Command="{Binding $parent[ItemsControl].((vm:FlightDataViewModel)DataContext).SetServoChannelCommand}"
                             CommandParameter="{Binding Number, StringFormat='{}{0}:high'}" />
                     <Button Grid.Column="4" Content="Toggle" MinWidth="64" FontSize="11" Padding="8,3"
                             Command="{Binding $parent[ItemsControl].((vm:FlightDataViewModel)DataContext).SetServoChannelCommand}"
                             CommandParameter="{Binding Number, StringFormat='{}{0}:toggle'}" />
                     <TextBox Grid.Column="5" Width="76" FontSize="11" Padding="4,2" Watermark="Min PWM"
-                             ToolTip.Tip="Minimum PWM (µs)" Text="{Binding Min}" />
+                             ToolTip.Tip="Minimum PWM (µs)" Text="{Binding Min, Mode=TwoWay}" />
                     <TextBox Grid.Column="6" Width="76" FontSize="11" Padding="4,2" Watermark="Max PWM"
-                             ToolTip.Tip="Maximum PWM (µs)" Text="{Binding Max}" />
+                             ToolTip.Tip="Maximum PWM (µs)" Text="{Binding Max, Mode=TwoWay}" />
+                    <Button Grid.Column="7" Content="Names…" MinWidth="64" FontSize="11" Padding="8,3"
+                            ToolTip.Tip="Rename this servo and its Low/High buttons"
+                            Command="{Binding $parent[ItemsControl].((vm:FlightDataViewModel)DataContext).RenameServoChannelCommand}"
+                            CommandParameter="{Binding}" />
                   </Grid>
                 </DataTemplate>
                 <DataTemplate DataType="vm:RelayChannel">
                   <Grid ColumnSpacing="6" HorizontalAlignment="Left"
-                        ColumnDefinitions="Auto,Auto,Auto,Auto">
+                        ColumnDefinitions="Auto,Auto,Auto,Auto,Auto">
                     <Border Grid.Column="0" Background="#5A5A5A" CornerRadius="3"
                             MinWidth="64" Padding="8,0">
                       <TextBlock Text="{Binding Label}" Foreground="White" FontSize="11"
                                  HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
-                    <Button Grid.Column="1" Content="Low" MinWidth="52" FontSize="11" Padding="8,3"
+                    <Button Grid.Column="1" Content="{Binding LowLabel}" MinWidth="52" FontSize="11" Padding="8,3"
                             Command="{Binding $parent[ItemsControl].((vm:FlightDataViewModel)DataContext).SetRelayCommand}"
                             CommandParameter="{Binding Index, StringFormat='{}{0}:low'}" />
-                    <Button Grid.Column="2" Content="High" MinWidth="52" FontSize="11" Padding="8,3"
+                    <Button Grid.Column="2" Content="{Binding HighLabel}" MinWidth="52" FontSize="11" Padding="8,3"
                             Command="{Binding $parent[ItemsControl].((vm:FlightDataViewModel)DataContext).SetRelayCommand}"
                             CommandParameter="{Binding Index, StringFormat='{}{0}:high'}" />
                     <Button Grid.Column="3" Content="Toggle" MinWidth="64" FontSize="11" Padding="8,3"
                             Command="{Binding $parent[ItemsControl].((vm:FlightDataViewModel)DataContext).SetRelayCommand}"
                             CommandParameter="{Binding Index, StringFormat='{}{0}:toggle'}" />
+                    <Button Grid.Column="4" Content="Names…" MinWidth="64" FontSize="11" Padding="8,3"
+                            ToolTip.Tip="Rename this relay and its Low/High buttons"
+                            Command="{Binding $parent[ItemsControl].((vm:FlightDataViewModel)DataContext).RenameRelayChannelCommand}"
+                            CommandParameter="{Binding}" />
                   </Grid>
                 </DataTemplate>
               </ItemsControl.DataTemplates>

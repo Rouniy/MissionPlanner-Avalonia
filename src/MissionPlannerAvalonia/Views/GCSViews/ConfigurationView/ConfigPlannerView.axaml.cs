@@ -11,6 +11,15 @@ public partial class ConfigPlannerView : UserControl {
   public ConfigPlannerView() {
     AvaloniaXamlLoader.Load(this);
     this.FindControl<Button>("LogDirBrowse")!.Click += BrowseLogDirectory;
+    this.FindControl<Button>("ThemeEditorBtn")!.Click += OpenThemeEditor;
+  }
+
+  private async void OpenThemeEditor(object? sender, RoutedEventArgs e) {
+    if (TopLevel.GetTopLevel(this) is Window owner
+        && await ThemeEditorWindow.ShowAsync(owner)
+        && DataContext is ConfigPlannerViewModel vm) {
+      vm.Theme = "Custom";
+    }
   }
 
   private async void BrowseLogDirectory(object? sender, RoutedEventArgs e) {

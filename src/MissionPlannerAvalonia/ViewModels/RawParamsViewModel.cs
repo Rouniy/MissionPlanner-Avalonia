@@ -14,6 +14,21 @@ using MissionPlanner.Utilities;
 namespace MissionPlannerAvalonia.ViewModels;
 
 public partial class RawParamsViewModel : ViewModelBase {
+  private static readonly HashSet<string> ProtectedFileParameters = new(
+      StringComparer.OrdinalIgnoreCase) {
+    "SYSID_SW_MREV",
+    "WP_TOTAL",
+    "CMD_TOTAL",
+    "FENCE_TOTAL",
+    "SYS_NUM_RESETS",
+    "ARSPD_OFFSET",
+    "GND_ABS_PRESS",
+    "GND_TEMP",
+    "CMD_INDEX",
+    "LOG_LASTFILE",
+    "FORMAT_VERSION",
+  };
+
   private readonly MAVLinkInterface _comPort = AppState.comPort;
 
   private readonly List<ParamRow> _all = new();
@@ -21,6 +36,14 @@ public partial class RawParamsViewModel : ViewModelBase {
   public ObservableCollection<ParamRow> Params { get; } = new();
 
   public ObservableCollection<string> Categories { get; } = new() { "All" };
+
+  public ObservableCollection<FrameDefaultFile> FrameDefaults { get; } = new();
+
+  [ObservableProperty]
+  private FrameDefaultFile? _selectedFrameDefault;
+
+  [ObservableProperty]
+  private bool _loadingFrameDefaults;
 
   [ObservableProperty]
   private string _selectedCategory = "All";
@@ -203,9 +226,105 @@ public partial class RawParamsViewModel : ViewModelBase {
     Status = $"Loaded {_all.Count} demo parameters (edit a value → Write).";
   }
 
-  public void LoadParamFile(string path) => MergeFromFile(path, compareOnly: false);
+  public void LoadParamFile(string path) {
+    if (!TryLoadParamFile(path, out var fileParams)) {
+      return;
+    }
 
-  public void CompareParamFile(string path) => MergeFromFile(path, compareOnly: true);
+    var result = StageImportedValues(_all, fileParams);
+    ApplyFilter();
+    _ = Services.Dialogs.Alert("Load parameters",
+        $"{System.IO.Path.GetFileName(path)}: staged {result.Differing} change(s) "
+        + $"of {result.Matched} matched param(s)."
+        + (result.Protected == 0
+            ? " Write to apply."
+            : $" Skipped {result.Protected} protected runtime/calibration param(s). Write to apply."));
+  }
+
+  public IReadOnlyList<ParamComparisonRow> CompareParamFile(string path) {
+    if (!TryLoadParamFile(path, out var fileParams)) {
+      return [];
+    }
+
+    var rows = BuildComparison(_all, fileParams);
+    if (rows.Count == 0) {
+      _ = Services.Dialogs.Alert("Compare parameters",
+          $"{System.IO.Path.GetFileName(path)}: no differing matched parameters.");
+    }
+    return rows;
+  }
+
+  [RelayCommand]
+  private async Task RefreshFrameDefaults() {
+    if (LoadingFrameDefaults) {
+      return;
+    }
+    LoadingFrameDefaults = true;
+    try {
+      var files = await Task.Run(() => {
+        var result = GitHubContent.GetDirContent(
+            "ArduPilot", "ardupilot", "/Tools/Frame_params/", ".param");
+        try {
+          result.AddRange(GitHubContent.GetDirContent(
+              "ArduPilot", "ardupilot", "/Tools/Frame_params/QuadPlanes/", ".param"));
+        } catch {
+          // Keep the root list usable if GitHub briefly rejects the second request.
+        }
+        return result.Where(file => file.type == GitHubContent.FileInfo.TypeEnum.File)
+            .GroupBy(file => file.path, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .OrderBy(file => file.path, StringComparer.OrdinalIgnoreCase)
+            .Select(file => new FrameDefaultFile(file.name, file.path))
+            .ToList();
+      });
+      FrameDefaults.Clear();
+      foreach (var file in files) {
+        FrameDefaults.Add(file);
+      }
+      SelectedFrameDefault = FrameDefaults.FirstOrDefault();
+      Status = files.Count == 0
+          ? "No ArduPilot frame-default files were found."
+          : $"Loaded {files.Count} ArduPilot frame-default file choices.";
+    } catch (Exception ex) {
+      Status = "Frame-default list failed: " + ex.Message;
+    } finally {
+      LoadingFrameDefaults = false;
+    }
+  }
+
+  public async Task<IReadOnlyList<ParamComparisonRow>> DownloadFrameDefaultComparisonAsync() {
+    var selected = SelectedFrameDefault;
+    if (selected == null) {
+      Status = "Select a frame-default file first.";
+      return [];
+    }
+    LoadingFrameDefaults = true;
+    try {
+      byte[] bytes = await Task.Run(() => GitHubContent.GetFileContent(
+          "ArduPilot", "ardupilot", selected.Path));
+      string directory = System.IO.Path.Combine(Services.AppPaths.CacheRoot, "frame-defaults");
+      System.IO.Directory.CreateDirectory(directory);
+      string path = System.IO.Path.Combine(directory, System.IO.Path.GetFileName(selected.Path));
+      await System.IO.File.WriteAllBytesAsync(path, bytes);
+      var comparison = CompareParamFile(path);
+      Status = comparison.Count == 0
+          ? $"{selected.Name}: no differing matched parameters."
+          : $"{selected.Name}: choose which of {comparison.Count} differences to stage.";
+      return comparison;
+    } catch (Exception ex) {
+      Status = "Frame-default download failed: " + ex.Message;
+      return [];
+    } finally {
+      LoadingFrameDefaults = false;
+    }
+  }
+
+  public void ApplyParamComparison(IEnumerable<ParamComparisonRow> comparison) {
+    int staged = StageSelectedComparison(_all, comparison);
+    ShowModifiedOnly = true;
+    ApplyFilter();
+    Status = $"Staged {staged} selected parameter change(s). Review them, then use Write Params.";
+  }
 
   public void SaveParamFile(string path) {
     var table = new Hashtable();
@@ -263,37 +382,67 @@ public partial class RawParamsViewModel : ViewModelBase {
     Status = $"Offline: {_all.Count} parameters from the last connected session. Connect to edit/write.";
   }
 
-  private void MergeFromFile(string path, bool compareOnly) {
-    Dictionary<string, double> fileParams;
+  private static bool TryLoadParamFile(string path, out Dictionary<string, double> fileParams) {
     try {
       fileParams = ParamFile.loadParamFile(path);
+      return true;
     } catch (Exception ex) {
       _ = Services.Dialogs.Alert("Load failed", ex.Message);
-      return;
+      fileParams = [];
+      return false;
     }
+  }
 
+  internal static ParamFileStageResult StageImportedValues(
+      IEnumerable<ParamRow> current, IReadOnlyDictionary<string, double> imported) {
     int matched = 0,
-        differing = 0;
-    foreach (var r in _all) {
-      if (!fileParams.TryGetValue(r.Name, out var fv)) {
+        differing = 0,
+        protectedCount = 0;
+    foreach (var row in current) {
+      if (!imported.TryGetValue(row.Name, out double importedValue)) {
         continue;
       }
       matched++;
-      if (fv != r.CurrentValue) {
+      if (IsProtectedFileParameter(row.Name)) {
+        protectedCount++;
+        continue;
+      }
+      if (importedValue != row.CurrentValue) {
         differing++;
-        r.ValueText = fv.ToString(CultureInfo.InvariantCulture);
+        row.ValueText = importedValue.ToString(CultureInfo.InvariantCulture);
       }
     }
-
-    if (compareOnly) {
-      ShowModifiedOnly = true;
-    }
-    ApplyFilter();
-    _ = Services.Dialogs.Alert(compareOnly ? "Compare parameters" : "Load parameters",
-        compareOnly
-            ? $"{System.IO.Path.GetFileName(path)}: {differing} differing of {matched} matched (showing modified). Write to apply."
-            : $"{System.IO.Path.GetFileName(path)}: staged {differing} change(s) of {matched} matched param(s). Write to apply.");
+    return new ParamFileStageResult(matched, differing, protectedCount);
   }
+
+  internal static IReadOnlyList<ParamComparisonRow> BuildComparison(
+      IEnumerable<ParamRow> current, IReadOnlyDictionary<string, double> imported) {
+    var rows = new List<ParamComparisonRow>();
+    foreach (var row in current) {
+      if (imported.TryGetValue(row.Name, out double importedValue)
+          && importedValue != row.CurrentValue) {
+        rows.Add(new ParamComparisonRow(row.Name, row.CurrentValue, importedValue));
+      }
+    }
+    return rows.OrderBy(row => row.Name, StringComparer.OrdinalIgnoreCase).ToList();
+  }
+
+  internal static int StageSelectedComparison(
+      IEnumerable<ParamRow> current, IEnumerable<ParamComparisonRow> comparison) {
+    var selected = comparison.Where(row => row.Use)
+        .ToDictionary(row => row.Name, row => row.FileValue, StringComparer.OrdinalIgnoreCase);
+    int staged = 0;
+    foreach (var row in current) {
+      if (selected.TryGetValue(row.Name, out double importedValue)) {
+        row.ValueText = importedValue.ToString(CultureInfo.InvariantCulture);
+        staged++;
+      }
+    }
+    return staged;
+  }
+
+  internal static bool IsProtectedFileParameter(string name) =>
+      ProtectedFileParameters.Contains(name);
 
   public void PersistFavs() {
     var favs = _all.Where(r => r.Fav).Select(r => r.Name).ToList();
@@ -416,6 +565,31 @@ public partial class RawParamsViewModel : ViewModelBase {
       return false;
     }
   }
+}
+
+internal readonly record struct ParamFileStageResult(int Matched, int Differing, int Protected);
+
+public sealed record FrameDefaultFile(string Name, string Path) {
+  public override string ToString() => Path.Contains("QuadPlanes/", StringComparison.OrdinalIgnoreCase)
+      ? "QuadPlane / " + Name
+      : Name;
+}
+
+public partial class ParamComparisonRow : ObservableObject {
+  public ParamComparisonRow(string name, double currentValue, double fileValue) {
+    Name = name;
+    CurrentValue = currentValue;
+    FileValue = fileValue;
+  }
+
+  public string Name { get; }
+  public double CurrentValue { get; }
+  public double FileValue { get; }
+  public string CurrentText => CurrentValue.ToString(CultureInfo.InvariantCulture);
+  public string FileText => FileValue.ToString(CultureInfo.InvariantCulture);
+
+  [ObservableProperty]
+  private bool _use = true;
 }
 
 public partial class ParamRow : ObservableObject {

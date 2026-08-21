@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Xml;
 using Core.Geometry;
 using KMLib;
@@ -9,6 +10,12 @@ using MissionPlanner.Log;
 using MissionPlanner.Utilities;
 
 namespace MissionPlannerAvalonia.Services;
+
+public sealed record DataFlashParameter(string Name, string Value, string DefaultValue);
+
+public sealed record DataFlashMessage(double TimeSeconds, string Message) {
+  public string TimeText => TimeSeconds.ToString("0.000", CultureInfo.InvariantCulture);
+}
 
 public class DataFlashLog {
   public static IReadOnlyList<(double lat, double lng, double alt, DateTime time)> ReadTrack(string binPath) {
@@ -81,6 +88,44 @@ public class DataFlashLog {
 
   public static void ConvertBinToLog(string binPath, string outTextLogPath) {
     BinaryLog.ConvertBin(binPath, outTextLogPath);
+  }
+
+  public static IReadOnlyList<DataFlashParameter> ReadParameters(string path) {
+    var parameters = new Dictionary<string, DataFlashParameter>(StringComparer.OrdinalIgnoreCase);
+    using var log = new DFLogBuffer(path);
+    foreach (var item in log.GetEnumeratorType("PARM")) {
+      string name = item["Name"]?.Trim() ?? "";
+      string value = item["Value"]?.Trim() ?? "";
+      if (name.Length == 0 || value.Length == 0) {
+        continue;
+      }
+      parameters[name] = new DataFlashParameter(
+          name, value, item["Default"]?.Trim() ?? "");
+    }
+    return parameters.Values.OrderBy(value => value.Name, StringComparer.OrdinalIgnoreCase).ToList();
+  }
+
+  public static IReadOnlyList<DataFlashMessage> ReadMessages(string path) {
+    var messages = new List<DataFlashMessage>();
+    using var log = new DFLogBuffer(path);
+    foreach (var item in log.GetEnumeratorType("MSG")) {
+      string text = item["Message"] ?? item["Msg"] ?? item["Text"] ?? "";
+      text = text.Trim();
+      if (text.Length > 0) {
+        messages.Add(new DataFlashMessage(item.timems / 1000.0, text));
+      }
+    }
+    return messages;
+  }
+
+  public static void ExportParameters(
+      IEnumerable<DataFlashParameter> parameters, string outputPath) {
+    using var writer = new System.IO.StreamWriter(outputPath);
+    writer.WriteLine("# Parameters extracted from a DataFlash log");
+    foreach (var parameter in parameters.OrderBy(
+               value => value.Name, StringComparer.OrdinalIgnoreCase)) {
+      writer.WriteLine($"{parameter.Name},{parameter.Value}");
+    }
   }
 
   internal static void WriteKmlTrack(IReadOnlyList<(double lat, double lng, double alt, DateTime time)> track,

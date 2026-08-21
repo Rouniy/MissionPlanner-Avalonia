@@ -46,6 +46,8 @@
       <Button x:Name="ModeBtn" Content="Mode" />
       <Button x:Name="ErrBtn" Content="Errors" />
       <Button x:Name="EvBtn" Content="Events" />
+      <Button x:Name="MsgBtn" Content="Messages" />
+      <Button x:Name="ParamsBtn" Content="Parameters" />
       <ToggleButton x:Name="GridToggle" Content="Data Table" />
       <ToggleButton x:Name="MapToggle" Content="Map" />
       <Border Width="1" Background="#666" Margin="4,0" />

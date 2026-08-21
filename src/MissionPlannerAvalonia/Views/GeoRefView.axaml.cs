@@ -12,6 +12,7 @@ public partial class GeoRefView : UserControl {
     BrowseLogBtn.Click += OnBrowseLog;
     BrowseDirBtn.Click += OnBrowseDir;
     GeoTagBtn.Click += OnGeoTag;
+    EstimateOffsetBtn.Click += OnEstimateOffset;
   }
 
   private GeoRefViewModel? Vm => DataContext as GeoRefViewModel;
@@ -56,6 +57,12 @@ public partial class GeoRefView : UserControl {
   private async void OnGeoTag(object? sender, RoutedEventArgs e) {
     if (Vm is { } vm) {
       await vm.GeoTagAsync();
+    }
+  }
+
+  private async void OnEstimateOffset(object? sender, RoutedEventArgs e) {
+    if (Vm is { } vm) {
+      await vm.EstimateOffsetAsync();
     }
   }
 }

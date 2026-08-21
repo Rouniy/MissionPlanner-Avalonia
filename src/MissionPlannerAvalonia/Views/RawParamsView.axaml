@@ -10,8 +10,8 @@
   x:Class="MissionPlannerAvalonia.Views.RawParamsView"
   x:DataType="vm:RawParamsViewModel"
 >
-  <Grid RowDefinitions="Auto,*" Margin="8">
-    <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+  <Grid RowDefinitions="Auto,Auto,*" Margin="8">
+    <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,4">
       <Button Content="Load from file" Name="LoadBtn" Margin="0,0,6,4" />
       <Button Content="Save to file" Name="SaveBtn" Margin="0,0,6,4" />
       <Button Content="Compare" Name="CompareBtn" Margin="0,0,6,4" />
@@ -27,7 +27,21 @@
                 IsVisible="{Binding HasDefaults}" Margin="0,0,6,4" />
     </WrapPanel>
 
-    <Grid Grid.Row="1" ColumnDefinitions="180,4,*">
+    <Grid Grid.Row="1" ColumnDefinitions="Auto,360,Auto,Auto,*" ColumnSpacing="6" Margin="0,0,0,8">
+      <TextBlock Grid.Column="0" Text="ArduPilot frame defaults" Classes="fieldlbl"
+                 VerticalAlignment="Center" />
+      <ComboBox Grid.Column="1" ItemsSource="{Binding FrameDefaults}"
+                SelectedItem="{Binding SelectedFrameDefault, Mode=TwoWay}"
+                IsEnabled="{Binding !LoadingFrameDefaults}" />
+      <Button Grid.Column="2" Name="LoadFrameDefaultsBtn" Content="Compare / Stage…"
+              IsEnabled="{Binding !LoadingFrameDefaults}" />
+      <Button Grid.Column="3" Content="Load / refresh list" Command="{Binding RefreshFrameDefaultsCommand}"
+              IsEnabled="{Binding !LoadingFrameDefaults}" />
+      <TextBlock Grid.Column="4" Text="{Binding Status}" Classes="fieldlbl"
+                 TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+    </Grid>
+
+    <Grid Grid.Row="2" ColumnDefinitions="180,4,*">
       <ListBox
         Grid.Column="0"
         ItemsSource="{Binding Categories}"

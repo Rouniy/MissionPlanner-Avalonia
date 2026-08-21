@@ -25,6 +25,8 @@ public partial class LogBrowseView : UserControl {
     ModeBtn.Click += (s, e) => OnOverlay("MODE", "Mode", ScottPlot.Colors.Yellow);
     ErrBtn.Click += (s, e) => OnOverlay("ERR", "Subsys", ScottPlot.Colors.Red);
     EvBtn.Click += (s, e) => OnOverlay("EV", "Id", ScottPlot.Colors.Cyan);
+    MsgBtn.Click += OnMessages;
+    ParamsBtn.Click += OnParameters;
     GridToggle.IsCheckedChanged += OnGridToggle;
     Plot.PointClicked += OnPlotPointClicked;
     RowsGrid.SelectionChanged += OnRowSelected;
@@ -228,6 +230,49 @@ public partial class LogBrowseView : UserControl {
       Plot.AddVerticalLine(x, color, label);
     }
     vm.Status = $"{type}: {marks.Count} markers.";
+  }
+
+  private async void OnMessages(object? sender, RoutedEventArgs e) {
+    if (Vm is not { CurrentPath: not null } vm
+        || TopLevel.GetTopLevel(this) is not Window owner) {
+      return;
+    }
+    vm.Busy = true;
+    vm.Status = "Reading log messages…";
+    try {
+      var messages = await Task.Run(vm.ReadMessages);
+      const int overlayLimit = 1000;
+      foreach (var message in messages.Take(overlayLimit)) {
+        Plot.AddVerticalLine(message.TimeSeconds, ScottPlot.Colors.Magenta, message.Message);
+      }
+      LogMetadataWindow.ShowMessages(owner, messages);
+      vm.Status = messages.Count <= overlayLimit
+          ? $"MSG: {messages.Count} message marker(s)."
+          : $"MSG: {messages.Count} shown in the table; first {overlayLimit} added to the graph.";
+    } catch (Exception ex) {
+      vm.Status = "Message read failed: " + ex.Message;
+    } finally {
+      vm.Busy = false;
+    }
+  }
+
+  private async void OnParameters(object? sender, RoutedEventArgs e) {
+    if (Vm is not { CurrentPath: { } path } vm
+        || TopLevel.GetTopLevel(this) is not Window owner) {
+      return;
+    }
+    vm.Busy = true;
+    vm.Status = "Reading log parameters…";
+    try {
+      var parameters = await Task.Run(vm.ReadParameters);
+      LogMetadataWindow.ShowParameters(owner, parameters,
+          Path.GetFileNameWithoutExtension(path) + ".param");
+      vm.Status = $"PARM: {parameters.Count} final parameter value(s).";
+    } catch (Exception ex) {
+      vm.Status = "Parameter read failed: " + ex.Message;
+    } finally {
+      vm.Busy = false;
+    }
   }
 
   private void OnGridToggle(object? sender, RoutedEventArgs e) {

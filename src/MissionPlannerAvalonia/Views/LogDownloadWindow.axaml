@@ -21,6 +21,12 @@
               IsEnabled="{Binding !IsBusy}" />
       <Button Content="Download Selected" Command="{Binding DownloadCommand}"
               IsEnabled="{Binding !IsBusy}" />
+      <Button Content="Download All…" Command="{Binding DownloadAllCommand}"
+              IsEnabled="{Binding !IsBusy}" />
+      <CheckBox Content="Create KML" IsChecked="{Binding CreateKmlAfterDownload}"
+                VerticalAlignment="Center" />
+      <Button Content="Erase All…" Command="{Binding EraseAllCommand}"
+              IsEnabled="{Binding !IsBusy}" Foreground="#FF7777" />
     </StackPanel>
 
     <Border Grid.Row="1" BorderBrush="#666" BorderThickness="1">
