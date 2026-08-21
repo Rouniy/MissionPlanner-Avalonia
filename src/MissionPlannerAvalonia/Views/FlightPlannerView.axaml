@@ -188,6 +188,8 @@
             ItemsSource="{Binding MissionTypes}"
             SelectedItem="{Binding MissionType}"
           />
+          <CheckBox Content="Use MAVFTP" IsChecked="{Binding UseMissionMavFtp, Mode=TwoWay}"
+                    ToolTip.Tip="Use ArduPilot @MISSION files when available; automatically falls back to the normal mission protocol" />
           <Button Content="Read" HorizontalAlignment="Stretch" Command="{Binding ReadWaypointsCommand}" />
           <Button Content="Write" HorizontalAlignment="Stretch" Command="{Binding WriteWaypointsCommand}" />
           <Button

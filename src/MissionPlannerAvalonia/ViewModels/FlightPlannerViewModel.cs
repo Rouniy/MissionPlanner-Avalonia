@@ -5,12 +5,14 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MissionPlanner;
 using MissionPlanner.ArduPilot;
+using MissionPlanner.ArduPilot.Mavlink;
 using MissionPlanner.Utilities;
 
 namespace MissionPlannerAvalonia.ViewModels;
@@ -43,6 +45,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
         _altWarn = aw;
       }
       _verifyHeight = s.GetBoolean("fpverifyheight", false);
+      _useMissionMavFtp = s.GetBoolean("UseMissionMAVFTP", false);
       LoadPlannerSettings(s);
     } catch {
 
@@ -96,6 +99,7 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       settings["CMB_altmode"] = DefaultFrame;
       settings["MapType"] = MapType;
       settings["FP_showgrid"] = ShowGrid.ToString();
+      settings["UseMissionMAVFTP"] = UseMissionMavFtp.ToString();
       settings.Save();
     } catch {
       // Planner state is a convenience; a read-only or damaged settings file must not close it.
@@ -614,6 +618,9 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   private bool _showGrid;
 
   [ObservableProperty]
+  private bool _useMissionMavFtp;
+
+  [ObservableProperty]
   private string _totalDist = "0";
 
   [ObservableProperty]
@@ -721,6 +728,15 @@ public partial class FlightPlannerViewModel : ViewModelBase {
   private Task<List<WpRow>> DownloadRowsAsync(
       MAVLink.MAV_MISSION_TYPE type, byte sysid, byte compid) => Task.Run(async () => {
         var list = new List<WpRow>();
+        if (UseMissionMavFtp) {
+          try {
+            list.AddRange(DownloadRowsMavFtp(type, sysid, compid));
+            return list;
+          } catch {
+            // Match upstream: MAVFTP mission storage is optional and not supported by every
+            // controller/filesystem. Transparently fall back to the normal mission protocol.
+          }
+        }
         if (type == MAVLink.MAV_MISSION_TYPE.MISSION) {
           ushort count = _comPort.getWPCount(sysid, compid, type);
           for (ushort i = 0; i < count; i++) {
@@ -739,6 +755,23 @@ public partial class FlightPlannerViewModel : ViewModelBase {
         }
         return list;
       });
+
+  private List<WpRow> DownloadRowsMavFtp(
+      MAVLink.MAV_MISSION_TYPE type, byte sysid, byte compid) {
+    using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    var ftp = new MAVFtp(_comPort, sysid, compid);
+    using MemoryStream stream = ftp.GetFile(MissionFtpPath(type), cancel, true, 110)
+        ?? throw new IOException("MAVFTP returned no mission data.");
+    var unpacked = missionpck.unpack(stream.ToArray());
+    if (unpacked.type != type || unpacked.start != 0) {
+      throw new InvalidDataException(
+          $"Unexpected MAVFTP mission header ({unpacked.type}, start {unpacked.start}).");
+    }
+    return unpacked.wps
+        .OrderBy(item => item.seq)
+        .Select(item => WpRow.From(item.seq, (Locationwp)item))
+        .ToList();
+  }
 
   private bool ShouldDownloadFence() =>
       SupportsMissionFence(_comPort.MAV.cs.capabilities)
@@ -858,6 +891,15 @@ public partial class FlightPlannerViewModel : ViewModelBase {
     Status = $"Writing {rows.Count} {MissionType.ToLowerInvariant()} point(s)…";
     try {
       await Task.Run(async () => {
+        if (UseMissionMavFtp) {
+          try {
+            UploadRowsMavFtp(type, rows);
+            return;
+          } catch {
+            // The @MISSION filesystem is an ArduPilot extension. Preserve upstream's automatic
+            // fallback for older firmware and transports that reject MAVFTP mission files.
+          }
+        }
         if (type == MAVLink.MAV_MISSION_TYPE.MISSION) {
           WriteRadiusParams();
           _comPort.setWPTotal((ushort)(rows.Count + 1), type);
@@ -889,6 +931,59 @@ public partial class FlightPlannerViewModel : ViewModelBase {
       Status = "Write failed: " + ex.Message;
     }
   }
+
+  private void UploadRowsMavFtp(MAVLink.MAV_MISSION_TYPE type, IReadOnlyList<WpRow> rows) {
+    byte[] payload = BuildMissionFtpPayload(type, rows, HomeLat, HomeLng, HomeAlt,
+        _comPort.MAV.sysid, _comPort.MAV.compid);
+    using var source = new MemoryStream(payload, writable: false);
+    using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    var ftp = new MAVFtp(_comPort, _comPort.MAV.sysid, _comPort.MAV.compid);
+    ftp.UploadFile(MissionFtpPath(type), source, cancel);
+  }
+
+  internal static byte[] BuildMissionFtpPayload(
+      MAVLink.MAV_MISSION_TYPE type,
+      IReadOnlyList<WpRow> rows,
+      double homeLat,
+      double homeLng,
+      double homeAlt,
+      byte targetSystem,
+      byte targetComponent) {
+    var locations = new List<Locationwp>(rows.Count + 1);
+    if (type == MAVLink.MAV_MISSION_TYPE.MISSION) {
+      locations.Add(new WpRow {
+        Command = (ushort)MAVLink.MAV_CMD.WAYPOINT,
+        Frame = (byte)MAVLink.MAV_FRAME.GLOBAL,
+        Lat = homeLat,
+        Lng = homeLng,
+        Alt = homeAlt,
+      }.ToLocationwp());
+    }
+    foreach (var row in rows) {
+      var location = row.ToLocationwp();
+      if (type == MAVLink.MAV_MISSION_TYPE.FENCE) {
+        location.frame = (byte)MAVLink.MAV_FRAME.GLOBAL;
+      }
+      locations.Add(location);
+    }
+
+    var packets = locations.Select((location, index) => {
+      MAVLink.mavlink_mission_item_int_t item = location;
+      item.seq = checked((ushort)index);
+      item.target_system = targetSystem;
+      item.target_component = targetComponent;
+      item.mission_type = (byte)type;
+      return item;
+    }).ToList();
+    return missionpck.pack(packets, type, 0);
+  }
+
+  internal static string MissionFtpPath(MAVLink.MAV_MISSION_TYPE type) => type switch {
+    MAVLink.MAV_MISSION_TYPE.MISSION => "@MISSION/mission.dat",
+    MAVLink.MAV_MISSION_TYPE.FENCE => "@MISSION/fence.dat",
+    MAVLink.MAV_MISSION_TYPE.RALLY => "@MISSION/rally.dat",
+    _ => throw new NotSupportedException($"MAVFTP mission storage does not support {type}."),
+  };
 
   internal static IReadOnlyList<PointLatLngAlt> BuildLegacyFenceTransfer(
       IReadOnlyList<WpRow> rows) {

@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text;
+using MissionPlanner.ArduPilot;
 using MissionPlanner.Utilities;
 using MissionPlannerAvalonia.Controls;
 using MissionPlannerAvalonia.Services;
@@ -8,6 +9,60 @@ using MissionPlannerAvalonia.ViewModels;
 namespace MissionPlannerAvalonia.Tests;
 
 public class PlannerPortParityTests {
+  [Theory]
+  [InlineData(MAVLink.MAV_MISSION_TYPE.MISSION, "@MISSION/mission.dat")]
+  [InlineData(MAVLink.MAV_MISSION_TYPE.FENCE, "@MISSION/fence.dat")]
+  [InlineData(MAVLink.MAV_MISSION_TYPE.RALLY, "@MISSION/rally.dat")]
+  public void Mission_ftp_paths_match_ArduPilot_filesystem(
+      MAVLink.MAV_MISSION_TYPE type, string expected) {
+    Assert.Equal(expected, FlightPlannerViewModel.MissionFtpPath(type));
+  }
+
+  [Fact]
+  public void Mission_ftp_payload_round_trips_home_rows_and_targets() {
+    var rows = new[] {
+      new WpRow {
+        Command = (ushort)MAVLink.MAV_CMD.WAYPOINT,
+        Frame = (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT,
+        Lat = -35.2,
+        Lng = 149.1,
+        Alt = 75,
+      },
+    };
+
+    byte[] payload = FlightPlannerViewModel.BuildMissionFtpPayload(
+        MAVLink.MAV_MISSION_TYPE.MISSION, rows, -35.3, 149.2, 600, 42, 7);
+    var unpacked = missionpck.unpack(payload);
+
+    Assert.Equal(MAVLink.MAV_MISSION_TYPE.MISSION, unpacked.type);
+    Assert.Equal((ushort)0, unpacked.start);
+    Assert.Equal(2, unpacked.wps.Count);
+    Assert.Equal((ushort)0, unpacked.wps[0].seq);
+    Assert.Equal((ushort)1, unpacked.wps[1].seq);
+    Assert.Equal((byte)42, unpacked.wps[1].target_system);
+    Assert.Equal((byte)7, unpacked.wps[1].target_component);
+    Assert.Equal((int)(-35.2 * 1e7), unpacked.wps[1].x);
+  }
+
+  [Fact]
+  public void Mission_ftp_fence_payload_forces_global_frame() {
+    var rows = new[] {
+      new WpRow {
+        Command = (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT,
+        Frame = (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT,
+        Lat = 1,
+        Lng = 2,
+      },
+    };
+
+    var unpacked = missionpck.unpack(FlightPlannerViewModel.BuildMissionFtpPayload(
+        MAVLink.MAV_MISSION_TYPE.FENCE, rows, 0, 0, 0, 1, 1));
+
+    Assert.Single(unpacked.wps);
+    Assert.Equal((byte)MAVLink.MAV_FRAME.GLOBAL, unpacked.wps[0].frame);
+    Assert.Equal((byte)MAVLink.MAV_MISSION_TYPE.FENCE, unpacked.wps[0].mission_type);
+  }
+
   [Theory]
   [InlineData("50S", -50)]
   [InlineData("11N", 11)]
