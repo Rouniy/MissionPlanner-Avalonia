@@ -17,4 +17,19 @@ public class GeoRefOffsetTests {
   public void Offset_estimate_needs_both_photo_and_log_timestamps() {
     Assert.Null(GeoRefViewModel.EstimateOffset([], [DateTime.UtcNow]));
   }
+
+  [Theory]
+  [InlineData(120.5, 35.25, 155.75)]
+  [InlineData(120.5, -20.25, 100.25)]
+  [InlineData(-5, 0, -5)]
+  public void Base_altitude_adjustment_is_applied_in_metres(
+      double altitude, double adjustment, double expected) {
+    Assert.Equal(expected, GeoRefViewModel.AdjustAltitude(altitude, adjustment), 8);
+  }
+
+  [Fact]
+  public void Invalid_altitude_adjustment_does_not_poison_report_altitude() {
+    Assert.Equal(42, GeoRefViewModel.AdjustAltitude(42, double.NaN));
+    Assert.Equal(42, GeoRefViewModel.AdjustAltitude(42, double.PositiveInfinity));
+  }
 }

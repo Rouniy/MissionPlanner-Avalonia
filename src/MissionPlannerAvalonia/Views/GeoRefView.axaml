@@ -48,6 +48,13 @@
                 Foreground="#DDD" />
       <CheckBox Content="Prefer GPS altitude" IsChecked="{Binding UseGpsAltitude}"
                 Foreground="#DDD" />
+      <StackPanel Orientation="Horizontal" Spacing="4">
+        <TextBlock Text="Base altitude adjustment (m):" Foreground="#DDD"
+                   VerticalAlignment="Center" />
+        <NumericUpDown Width="110" Minimum="-10000" Maximum="10000" Increment="1"
+                       FormatString="0.###"
+                       Value="{Binding BaseAltitudeAdjustmentMeters, Mode=TwoWay}" />
+      </StackPanel>
     </WrapPanel>
 
     <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">

@@ -52,6 +52,7 @@ public partial class GeoRefViewModel : ViewModelBase {
   [ObservableProperty] private int _shutterLagMilliseconds;
   [ObservableProperty] private bool _useAmslAltitude;
   [ObservableProperty] private bool _useGpsAltitude;
+  [ObservableProperty] private double _baseAltitudeAdjustmentMeters;
   [ObservableProperty] private bool _busy;
   [ObservableProperty] private string _status = "Pick a log and a photo folder, then Geo Tag.";
   [ObservableProperty] private string _outputLog = "";
@@ -78,6 +79,10 @@ public partial class GeoRefViewModel : ViewModelBase {
       Status = "Photo directory not found.";
       return;
     }
+    if (!double.IsFinite(BaseAltitudeAdjustmentMeters)) {
+      Status = "Altitude adjustment must be a finite number of metres.";
+      return;
+    }
 
     Busy = true;
     OutputLog = "";
@@ -85,6 +90,7 @@ public partial class GeoRefViewModel : ViewModelBase {
     var results = new List<GeoTagResult>();
     int tagged = 0;
     int failed = 0;
+    double altitudeAdjustment = BaseAltitudeAdjustmentMeters;
 
     try {
       await Task.Run(() => {
@@ -100,6 +106,7 @@ public partial class GeoRefViewModel : ViewModelBase {
           Append("No valid matches. Aborting.");
           return;
         }
+        ApplyBaseAltitudeAdjustment(pics, altitudeAdjustment);
 
         WriteReports(pics);
 
@@ -422,6 +429,22 @@ public partial class GeoRefViewModel : ViewModelBase {
     }
     return null;
   }
+
+  private void ApplyBaseAltitudeAdjustment(
+      IEnumerable<PictureInfo> pictures, double adjustmentMeters) {
+    if (adjustmentMeters == 0) {
+      return;
+    }
+    foreach (var picture in pictures) {
+      picture.AltAMSL = AdjustAltitude(picture.AltAMSL, adjustmentMeters);
+    }
+    Append($"Applied base-altitude adjustment {adjustmentMeters:+0.###;-0.###;0} m.");
+  }
+
+  internal static double AdjustAltitude(double altitudeMeters, double adjustmentMeters) =>
+      double.IsFinite(altitudeMeters) && double.IsFinite(adjustmentMeters)
+          ? altitudeMeters + adjustmentMeters
+          : altitudeMeters;
 
   private static Dictionary<long, VehicleLoc> ReadGpsMsgInLog(string fn, string gpsToUse) {
     var list = new Dictionary<long, VehicleLoc>();
