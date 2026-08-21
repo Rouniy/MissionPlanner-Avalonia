@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 262 tests verified; the existing Linux packages predate the latest planner, Flight Data and map rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 391 tests verified; the existing Linux packages predate the latest planner, Flight Data and map rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -165,12 +165,21 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 - The complete 19-item upstream flight-action selector and Simple Actions tab are present. Command
   implementations match upstream for calibration, safety, engine, scripting, high-latency, ADS-B
   IDENT and system time; flight termination and SD-card formatting add explicit destructive-action
-  warnings. Ground-station action output and connection status/progress are now visible.
+  warnings. Ground-station action output and connection status/progress are now visible, and
+  rejected commands are no longer reported as successfully sent.
+- Flight Data home and EKF-origin actions use terrain-backed AMSL altitudes with the upstream
+  ocean/terrain safety policy. Legacy mount control uses upstream centidegree conversion, preserves
+  the final slider position under throttling and resets into MAVLink targeting mode.
+- Mount configuration supports both legacy `MNT_*` and current `MNT1_*` parameter schemas, including
+  their different angle units, and refreshes from a thread-safe parameter snapshot after loading.
+  Stabilization and camera-shutter controls are shown only when the vehicle exposes them.
 - Aux Function is a port of the seven upstream `DO_AUX_FUNCTION` presets with Low/Middle/High
   switch levels. It no longer misinterprets that tab as an editor for `RC7_OPTION`…`RC13_OPTION`.
 - Fence inclusion/exclusion polygons and circles can be created from the Avalonia planner.
 - libVLC startup now resolves versioned Linux `libvlc.so.5`, reports live playback errors, retains
   media for its full native lifetime, and accepts direct MRLs plus common RTP/GStreamer input.
+  Announced MAVLink camera streams can be selected and remembered, while the payload page exposes
+  MAVLink photo, recording and zoom commands and a video snapshot action.
 - Speech event announcements are functional: mode and waypoint changes speak through the upstream
   `CurrentState` hooks, and a cross-platform announcer covers arm/disarm, battery, custom, low
   altitude and low speed alerts with upstream-compatible templates and thresholds.
@@ -197,7 +206,7 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 262 passed, 0 failed.
+- Automated tests: 391 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 156 MB.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The `.deb` target was rebuilt from the then-current 158-test source on 2026-08-21; package structure,

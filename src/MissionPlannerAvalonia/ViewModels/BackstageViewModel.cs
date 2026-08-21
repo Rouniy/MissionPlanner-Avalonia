@@ -81,8 +81,15 @@ public partial class BackstageViewModel : ViewModelBase, IDeactivationAware, IDi
     _paramLoadTimer = new Avalonia.Threading.DispatcherTimer {
       Interval = TimeSpan.FromMilliseconds(300),
     };
-    _paramLoadTimer.Tick += (_, _) =>
-        ShowParamLoading = AppState.IsConnected && !ParamLoading.GotAllParams;
+    _paramLoadTimer.Tick += (_, _) => {
+      bool wasLoading = ShowParamLoading;
+      bool connected = AppState.IsConnected;
+      ShowParamLoading = connected && !ParamLoading.ParametersReady;
+      if (connected && wasLoading && !ShowParamLoading
+          && CurrentContent is IActivationAware activation) {
+        activation.Activate();
+      }
+    };
     _paramLoadTimer.Start();
   }
 
@@ -117,6 +124,9 @@ public partial class BackstageViewModel : ViewModelBase, IDeactivationAware, IDi
     if (newValue != null) {
       newValue.IsSelected = true;
       CurrentContent = newValue.Content;
+      if (CurrentContent is IActivationAware activation) {
+        activation.Activate();
+      }
       if (_persistKey != null && !newValue.IsSub) {
         MissionPlanner.Utilities.Settings.Instance[_persistKey] = newValue.Header;
       }

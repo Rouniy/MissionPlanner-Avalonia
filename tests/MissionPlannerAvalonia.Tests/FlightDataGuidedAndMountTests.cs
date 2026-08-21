@@ -75,6 +75,37 @@ public class FlightDataGuidedAndMountTests {
     Assert.Equal("MAVLink Targeting", modes[2].Text);
   }
 
+  [Fact]
+  public void Legacy_mount_angles_are_sent_as_upstream_centidegrees_in_pitch_roll_yaw_order() {
+    var angles = FlightDataViewModel.MountControlCentidegrees(12.5, -3.25, 87);
+
+    Assert.Equal(1250, angles.Pitch);
+    Assert.Equal(-325, angles.Roll);
+    Assert.Equal(8700, angles.Yaw);
+  }
+
+  [Theory]
+  [InlineData(1_000, 800, 0)]
+  [InlineData(1_000, 950, 50)]
+  [InlineData(1_000, 1_000, 100)]
+  public void Mount_throttle_schedules_the_final_position_instead_of_dropping_it(
+      long now, long lastSend, int expectedDelay) {
+    Assert.Equal(expectedDelay, FlightDataViewModel.MountTrailingDelay(now, lastSend));
+  }
+
+  [Theory]
+  [InlineData(MissionPlanner.Utilities.srtm.tiletype.valid, 123.4, false, true)]
+  [InlineData(MissionPlanner.Utilities.srtm.tiletype.ocean, 0, true, true)]
+  [InlineData(MissionPlanner.Utilities.srtm.tiletype.ocean, 0, false, false)]
+  [InlineData(MissionPlanner.Utilities.srtm.tiletype.invalid, 123.4, true, false)]
+  [InlineData(MissionPlanner.Utilities.srtm.tiletype.valid, double.NaN, true, false)]
+  public void Home_accepts_ocean_but_ekf_requires_valid_finite_srtm(
+      MissionPlanner.Utilities.srtm.tiletype type, double altitude,
+      bool allowOcean, bool expected) {
+    Assert.Equal(expected,
+        FlightDataViewModel.IsTerrainAltitudeUsable(type, altitude, allowOcean));
+  }
+
   [Theory]
   [InlineData(false, 1600, 1000, 1333.333333, 1000, 133.333333, 0)]
   [InlineData(true, 1600, 1000, 1600, 900, 0, 50)]

@@ -84,6 +84,10 @@
               <MenuItem Header="Video">
                 <MenuItem Header="Record Video Stream" Command="{Binding RecordVideoCommand}" />
                 <MenuItem Header="Stop Record" Command="{Binding StopVideoCommand}" />
+                <MenuItem Header="Snapshot…" Command="{Binding SnapshotVideoCommand}" />
+                <Separator />
+                <MenuItem Header="MAVLink Camera Stream…"
+                          Command="{Binding SelectMavlinkVideoStreamCommand}" />
                 <MenuItem Header="Set MJPEG source" Command="{Binding SetVideoSourceCommand}"
                           CommandParameter="mjpeg" />
                 <MenuItem Header="Start Camera" Command="{Binding SetVideoSourceCommand}"
@@ -101,10 +105,6 @@
               <MenuItem Header="Ground Color" ToggleType="CheckBox" IsChecked="{Binding HudGroundBrown, Mode=TwoWay}" />
               <MenuItem Header="Battery Cell Voltage" Command="{Binding SetBatteryCellsCommand}" />
               <MenuItem Header="Show icons" ToggleType="CheckBox" IsChecked="{Binding HudShowIcons, Mode=TwoWay}" />
-              <MenuItem Header="Herelink Video">
-                <MenuItem Header="HereLink Video" Command="{Binding SetVideoSourceCommand}"
-                          CommandParameter="herelink" />
-              </MenuItem>
               <MenuItem Header="HUD Items">
                 <MenuItem Header="Heading" ToggleType="CheckBox" IsChecked="{Binding HudHeading, Mode=TwoWay}" />
                 <MenuItem Header="Speed" ToggleType="CheckBox" IsChecked="{Binding HudSpeed, Mode=TwoWay}" />
@@ -577,6 +577,28 @@
                 <TextBlock Text="Roll" />
                 <Slider Minimum="-90" Maximum="90" Value="{Binding Roll2, Mode=TwoWay}" />
               </StackPanel>
+              <Border BorderBrush="{DynamicResource MpBorderBrush}" BorderThickness="1"
+                      CornerRadius="4" Padding="8">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="{Binding CameraTarget, StringFormat=MAVLink camera: {0}}"
+                             TextWrapping="Wrap" />
+                  <WrapPanel>
+                    <Button Content="Take Photo" Margin="0,0,6,0"
+                            Command="{Binding TakeMavlinkPhotoCommand}" />
+                    <Button Content="Start Recording" Margin="0,0,6,0"
+                            Command="{Binding StartMavlinkCameraRecordingCommand}" />
+                    <Button Content="Stop Recording"
+                            Command="{Binding StopMavlinkCameraRecordingCommand}" />
+                  </WrapPanel>
+                  <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                    <TextBlock Grid.Column="0" Text="Zoom" VerticalAlignment="Center" />
+                    <Slider Grid.Column="1" Minimum="0" Maximum="100"
+                            Value="{Binding CameraZoom, Mode=TwoWay}" />
+                    <Button Grid.Column="2" Content="Set"
+                            Command="{Binding SetMavlinkCameraZoomCommand}" />
+                  </Grid>
+                </StackPanel>
+              </Border>
             </StackPanel>
           </Grid>
         </TabItem>

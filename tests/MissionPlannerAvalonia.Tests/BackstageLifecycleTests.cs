@@ -8,11 +8,13 @@ public class BackstageLifecycleTests {
   public void Switching_pages_and_leaving_screen_deactivates_active_content() {
     using var backstage = new TestBackstage();
     var first = Assert.IsType<LifecycleViewModel>(backstage.CurrentContent);
+    Assert.Equal(1, first.ActivationCount);
 
     backstage.SelectedPage = backstage.Second;
     Assert.Equal(1, first.DeactivationCount);
 
     var second = Assert.IsType<LifecycleViewModel>(backstage.CurrentContent);
+    Assert.Equal(1, second.ActivationCount);
     backstage.Deactivate();
     Assert.Equal(1, second.DeactivationCount);
   }
@@ -41,9 +43,11 @@ public class BackstageLifecycleTests {
     public BackstagePage AdvancedTool { get; }
   }
 
-  private sealed class LifecycleViewModel : ViewModelBase, IDeactivationAware {
+  private sealed class LifecycleViewModel : ViewModelBase, IActivationAware, IDeactivationAware {
+    public int ActivationCount { get; private set; }
     public int DeactivationCount { get; private set; }
 
+    public void Activate() => ActivationCount++;
     public void Deactivate() => DeactivationCount++;
   }
 }

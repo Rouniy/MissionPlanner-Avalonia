@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform.Storage;
@@ -1333,6 +1334,8 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   private double _roll2;
 
   private long _lastMountSend;
+  private int _mountNudgeVersion;
+  private bool _suppressMountUpdates;
 
   [Obsolete]
   partial void OnTiltChanged(double value) => NudgeMount();
@@ -1345,15 +1348,32 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 
   [Obsolete]
   private void NudgeMount() {
-    if (!Connected) {
+    if (!Connected || _suppressMountUpdates) {
       return;
     }
+    int version = Interlocked.Increment(ref _mountNudgeVersion);
     long now = Environment.TickCount64;
-    if (now - _lastMountSend < 100) {
+    int delay = MountTrailingDelay(now, Interlocked.Read(ref _lastMountSend));
+    if (delay > 0) {
+      _ = SendTrailingMount(delay, version);
       return;
     }
-    _lastMountSend = now;
+    Interlocked.Exchange(ref _lastMountSend, now);
     _ = PointMount();
+  }
+
+  internal static int MountTrailingDelay(long now, long lastSend) =>
+      (int)Math.Clamp(100 - (now - lastSend), 0, 100);
+
+  [Obsolete]
+  private async Task SendTrailingMount(int delayMilliseconds, int version) {
+    await Task.Delay(delayMilliseconds);
+    if (version != Volatile.Read(ref _mountNudgeVersion)
+        || !Connected || _suppressMountUpdates) {
+      return;
+    }
+    Interlocked.Exchange(ref _lastMountSend, Environment.TickCount64);
+    await PointMount();
   }
 
   [RelayCommand]
@@ -1363,26 +1383,47 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       return;
     }
     double t = Tilt, p = Pan, r = Roll2;
-    await Task.Run(() =>
-        _comPort.doCommand(_comPort.MAV.sysid, _comPort.MAV.compid, MAVLink.MAV_CMD.DO_MOUNT_CONTROL,
-            (float)t, (float)r, (float)p, 0, 0, 0, 2));
-    Log($"Mount tilt {t} pan {p} roll {r}");
+    var angles = MountControlCentidegrees(t, r, p);
+    try {
+      await Task.Run(() => _comPort.setMountControl(
+          Sysid, Compid, angles.Pitch, angles.Roll, angles.Yaw, false));
+      Log($"Mount tilt {t} pan {p} roll {r}");
+    } catch (Exception ex) {
+      Log("Mount command failed: " + ex.Message);
+    }
   }
+
+  internal static (double Pitch, double Roll, double Yaw) MountControlCentidegrees(
+      double tilt, double roll, double pan) => (tilt * 100, roll * 100, pan * 100);
 
   [RelayCommand]
   [Obsolete]
   private async Task ResetPosition() {
-    Tilt = 0;
-    Pan = 0;
-    Roll2 = 0;
     if (!Connected) {
       return;
     }
 
-    await Task.Run(() =>
-        _comPort.doCommand(_comPort.MAV.sysid, _comPort.MAV.compid, MAVLink.MAV_CMD.DO_MOUNT_CONTROL,
-            0, 0, 0, 0, 0, 0, 2));
-    Log("Mount reset to neutral");
+    _suppressMountUpdates = true;
+    try {
+      Tilt = 0;
+      Pan = 0;
+      Roll2 = 0;
+      Interlocked.Increment(ref _mountNudgeVersion);
+      Interlocked.Exchange(ref _lastMountSend, Environment.TickCount64);
+    } finally {
+      _suppressMountUpdates = false;
+    }
+
+    try {
+      await Task.Run(() => {
+        _comPort.setMountConfigure(
+            MAVLink.MAV_MOUNT_MODE.MAVLINK_TARGETING, false, false, false);
+        _comPort.setMountControl(Sysid, Compid, 0, 0, 0, false);
+      });
+      Log("Mount reset to MAVLink targeting at neutral");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Reset Mount", "Command failed: " + ex.Message);
+    }
   }
 
   [ObservableProperty]
@@ -1762,10 +1803,18 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       return;
     }
     double v = ChangeSpeedValue;
-    await Task.Run(() =>
-        _comPort.doCommand(_comPort.MAV.sysid, _comPort.MAV.compid, MAVLink.MAV_CMD.DO_CHANGE_SPEED,
-            0, (float)v, 0, 0, 0, 0, 0));
-    Log($"Change speed {v}");
+    try {
+      bool accepted = await Task.Run(() =>
+          _comPort.doCommand(Sysid, Compid, MAVLink.MAV_CMD.DO_CHANGE_SPEED,
+              0, (float)v, 0, 0, 0, 0, 0));
+      if (!accepted) {
+        await Services.Dialogs.Alert("Change Speed", "The vehicle rejected the command.");
+        return;
+      }
+      Log($"Change speed {v}");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Change Speed", "Command failed: " + ex.Message);
+    }
   }
 
   [RelayCommand]
@@ -1776,11 +1825,15 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       return;
     }
     int newalt = (int)ChangeAltValue;
-    await Task.Run(() =>
-        _comPort.setNewWPAlt(new MissionPlanner.Utilities.Locationwp {
-          alt = newalt / MissionPlanner.CurrentState.multiplieralt,
-        }));
-    Log($"Change alt {newalt}");
+    try {
+      await Task.Run(() =>
+          _comPort.setNewWPAlt(new MissionPlanner.Utilities.Locationwp {
+            alt = newalt / MissionPlanner.CurrentState.multiplieralt,
+          }));
+      Log($"Change alt {newalt}");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Change Altitude", "Command failed: " + ex.Message);
+    }
   }
 
   [RelayCommand]
@@ -1790,11 +1843,25 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       Messages += "Not connected.\n";
       return;
     }
+    if (!_comPort.MAV.param.ContainsKey("LOITER_RAD")
+        && !_comPort.MAV.param.ContainsKey("WP_LOITER_RAD")) {
+      await Services.Dialogs.Alert(
+          "Set Loiter Radius", "This vehicle does not expose a loiter-radius parameter.");
+      return;
+    }
     int newrad = (int)LoiterRadValue;
-    await Task.Run(() =>
-        _comPort.setParam(["LOITER_RAD", "WP_LOITER_RAD"],
-            newrad / MissionPlanner.CurrentState.multiplierdist));
-    Log($"Set loiter rad {newrad}");
+    try {
+      bool accepted = await Task.Run(() =>
+          _comPort.setParam(["LOITER_RAD", "WP_LOITER_RAD"],
+              newrad / MissionPlanner.CurrentState.multiplierdist));
+      if (!accepted) {
+        await Services.Dialogs.Alert("Set Loiter Radius", "The vehicle rejected the value.");
+        return;
+      }
+      Log($"Set loiter rad {newrad}");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Set Loiter Radius", "Command failed: " + ex.Message);
+    }
   }
 
   public ObservableCollection<ParamOption> MountModes { get; } = [];
@@ -2442,59 +2509,125 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   [Obsolete]
   public async Task TriggerCameraNow() {
     if (!Connected) {
+      await Services.Dialogs.Alert("Trigger Camera", "Not connected.");
       return;
     }
-    await Task.Run(() => _comPort.setDigicamControl(true));
-    Log("Camera triggered");
+    await SendCameraTrigger("Trigger Camera");
   }
 
   public async Task SetHomeHere(double lat, double lng) {
     if (!Connected) {
+      await Services.Dialogs.Alert("Set Home", "Not connected.");
       return;
     }
-    if (!await Services.Dialogs.Confirm("Set Home", "Set home to the clicked location?")) {
+    if (!ValidCoordinates(lat, lng)) {
+      await Services.Dialogs.Alert("Set Home", "Bad coordinates.");
       return;
     }
 
-    await Task.Run(() => _comPort.doCommandInt(Sysid, Compid, MAVLink.MAV_CMD.DO_SET_HOME,
-        0, 0, 0, 0, (int)(lat * 1e7), (int)(lng * 1e7), 0,
-        frame: MAVLink.MAV_FRAME.GLOBAL));
-    Log($"Home set -> {lat:0.000000},{lng:0.000000}");
+    var terrain = MissionPlanner.Utilities.srtm.getAltitude(lat, lng);
+    if (!IsTerrainAltitudeUsable(terrain.currenttype, terrain.alt, allowOcean: true)) {
+      await Services.Dialogs.Alert("Set Home", "No SRTM data is available for this area.");
+      return;
+    }
+    if (!await Services.Dialogs.Confirm(
+        "Set Home",
+        "This will reset the onboard home position and affects RTL. Continue?")) {
+      return;
+    }
+
+    try {
+      bool accepted = await Task.Run(() =>
+          _comPort.doCommandInt(Sysid, Compid, MAVLink.MAV_CMD.DO_SET_HOME,
+              0, 0, 0, 0, (int)(lat * 1e7), (int)(lng * 1e7), (float)terrain.alt,
+              frame: MAVLink.MAV_FRAME.GLOBAL));
+      if (!accepted) {
+        await Services.Dialogs.Alert("Set Home", "The vehicle rejected the new home position.");
+        return;
+      }
+      Log($"Home set -> {lat:0.000000},{lng:0.000000} @ {terrain.alt:0.0} m AMSL");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Set Home", "Command failed: " + ex.Message);
+      return;
+    }
+
+    try {
+      await _comPort.getHomePositionAsync(Sysid, Compid);
+    } catch (Exception ex) {
+      Log("Home command was accepted, but readback failed: " + ex.Message);
+    }
   }
+
+  internal static bool IsTerrainAltitudeUsable(
+      MissionPlanner.Utilities.srtm.tiletype type, double altitude, bool allowOcean) =>
+      double.IsFinite(altitude)
+      && (type == MissionPlanner.Utilities.srtm.tiletype.valid
+          || allowOcean && type == MissionPlanner.Utilities.srtm.tiletype.ocean);
 
   [Obsolete]
   public async Task SetEkfOriginHere(double lat, double lng) {
     if (!Connected) {
+      await Services.Dialogs.Alert("Set EKF Origin", "Not connected.");
       return;
     }
-    var s = MissionPlanner.Utilities.srtm.getAltitude(lat, lng);
-    float alt = s.currenttype == MissionPlanner.Utilities.srtm.tiletype.valid
-        ? (float)s.alt
-        : _comPort.MAV.cs.altasl / MissionPlanner.CurrentState.multiplieralt;
+    if (!ValidCoordinates(lat, lng)) {
+      await Services.Dialogs.Alert("Set EKF Origin", "Bad coordinates.");
+      return;
+    }
+    var terrain = MissionPlanner.Utilities.srtm.getAltitude(lat, lng);
+    if (!IsTerrainAltitudeUsable(terrain.currenttype, terrain.alt, allowOcean: false)) {
+      await Services.Dialogs.Alert(
+          "Set EKF Origin", "No SRTM data is available for this area.");
+      return;
+    }
     var go = new MAVLink.mavlink_set_gps_global_origin_t {
       latitude = (int)(lat * 1e7),
       longitude = (int)(lng * 1e7),
-      altitude = (int)(alt * 1000),
+      altitude = (int)(terrain.alt * 1000),
       target_system = Sysid,
     };
-    await Task.Run(() => _comPort.sendPacket(go, Sysid, Compid));
-    Log($"EKF origin set -> {lat:0.000000},{lng:0.000000}");
+    try {
+      await Task.Run(() => _comPort.sendPacket(go, Sysid, Compid));
+      Log($"EKF origin set -> {lat:0.000000},{lng:0.000000} @ {terrain.alt:0.0} m AMSL");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Set EKF Origin", "Command failed: " + ex.Message);
+    }
   }
 
   [Obsolete]
   public async Task TakeOffHere() {
     if (!Connected) {
+      await Services.Dialogs.Alert("Takeoff", "Not connected.");
       return;
     }
-    var s = await Services.Dialogs.InputBox("Takeoff", "Enter Takeoff Alt (m)", "5");
-    if (!float.TryParse(s, out var alt)) {
+    string savedAltitude = Settings.Instance["takeoff_alt"] ?? "5";
+    var text = await Services.Dialogs.InputBox(
+        "Takeoff", "Enter Takeoff Alt (m)", savedAltitude);
+    if (!TryParseAltitude(text, out double parsedAltitude)
+        || !double.IsFinite(parsedAltitude) || parsedAltitude <= 0
+        || parsedAltitude > float.MaxValue) {
+      if (text != null) {
+        await Services.Dialogs.Alert("Takeoff", "Bad altitude value.");
+      }
       return;
     }
-    await Task.Run(() => {
-      _comPort.setMode("GUIDED");
-      _comPort.doCommand(Sysid, Compid, MAVLink.MAV_CMD.TAKEOFF, 0, 0, 0, 0, 0, 0, alt);
-    });
-    Log($"Takeoff to {alt} m");
+    float altitude = (float)parsedAltitude;
+    Settings.Instance["takeoff_alt"] = altitude.ToString(CultureInfo.InvariantCulture);
+    try {
+      await Task.Run(Settings.Instance.Save);
+      bool accepted = await Task.Run(() => {
+        _comPort.setMode("GUIDED");
+        return _comPort.doCommand(
+            Sysid, Compid, MAVLink.MAV_CMD.TAKEOFF, 0, 0, 0, 0, 0, 0, altitude);
+      });
+      if (!accepted) {
+        await Services.Dialogs.Alert("Takeoff", "The vehicle rejected the command.");
+        return;
+      }
+      Log($"Takeoff to {altitude} m");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Takeoff", "Command failed: " + ex.Message);
+    }
   }
 
   public async Task JumpToTag() {
@@ -2534,7 +2667,13 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       return;
     }
     try {
-      await Task.Run(() => RunAction(a));
+      bool accepted = await Task.Run(() => RunAction(a));
+      if (!accepted) {
+        Log($"Action {a} rejected by the vehicle");
+        await Services.Dialogs.Alert(
+            "Vehicle Action", $"The vehicle rejected the {a} command.");
+        return;
+      }
       Log($"Action {a} sent");
     } catch (Exception ex) {
       Log($"Action {a} failed: {ex.Message}");
@@ -2561,57 +2700,51 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       MAVLink.PARACHUTE_ACTION.PARACHUTE_DISABLE;
 
   [Obsolete]
-  private void RunAction(string a) {
+  private bool RunAction(string a) {
     byte s = _comPort.MAV.sysid;
     byte c = _comPort.MAV.compid;
     switch (a) {
       case "Loiter_Unlim":
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.LOITER_UNLIM, 0, 0, 0, 0, 0, 0, 0);
-        break;
+        return _comPort.doCommand(
+            s, c, MAVLink.MAV_CMD.LOITER_UNLIM, 0, 0, 0, 0, 0, 0, 0);
       case "Return_To_Launch":
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.RETURN_TO_LAUNCH, 0, 0, 0, 0, 0, 0, 0);
-        break;
+        return _comPort.doCommand(
+            s, c, MAVLink.MAV_CMD.RETURN_TO_LAUNCH, 0, 0, 0, 0, 0, 0, 0);
       case "Preflight_Calibration":
         float gyro = _comPort.MAV.cs.firmware
                      == MissionPlanner.ArduPilot.Firmwares.ArduCopter2 ? 1 : 0;
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.PREFLIGHT_CALIBRATION,
+        return _comPort.doCommand(s, c, MAVLink.MAV_CMD.PREFLIGHT_CALIBRATION,
             gyro, 0, 1, 0, 0, 0, 0);
-        break;
       case "Mission_Start":
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.MISSION_START, 0, 0, 0, 0, 0, 0, 0);
-        break;
+        return _comPort.doCommand(
+            s, c, MAVLink.MAV_CMD.MISSION_START, 0, 0, 0, 0, 0, 0, 0);
       case "Preflight_Reboot_Shutdown":
-        _comPort.doReboot();
-        break;
+        return _comPort.doReboot();
       case "Trigger_Camera":
         _comPort.setDigicamControl(true);
-        break;
+        return true;
       case "System_Time":
         _comPort.sendPacket(new MAVLink.mavlink_system_time_t {
           time_unix_usec = (ulong)(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1000),
           time_boot_ms = 0,
         }, s, c);
-        break;
+        return true;
       case "Battery_Reset":
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.BATTERY_RESET, 255, 100, 0, 0, 0, 0, 0);
-        break;
+        return _comPort.doCommand(
+            s, c, MAVLink.MAV_CMD.BATTERY_RESET, 255, 100, 0, 0, 0, 0, 0);
       case "ADSB_Out_Ident":
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.DO_ADSB_OUT_IDENT, 0, 0, 0, 0, 0, 0, 0);
-        break;
+        return _comPort.doCommand(
+            s, c, MAVLink.MAV_CMD.DO_ADSB_OUT_IDENT, 0, 0, 0, 0, 0, 0, 0);
       case "Scripting_cmd_stop_and_restart":
-        _comPort.doCommandInt(s, c, MAVLink.MAV_CMD.SCRIPTING,
+        return _comPort.doCommandInt(s, c, MAVLink.MAV_CMD.SCRIPTING,
             (int)MAVLink.SCRIPTING_CMD.STOP_AND_RESTART, 0, 0, 0, 0, 0, 0);
-        break;
       case "Scripting_cmd_stop":
-        _comPort.doCommandInt(s, c, MAVLink.MAV_CMD.SCRIPTING,
+        return _comPort.doCommandInt(s, c, MAVLink.MAV_CMD.SCRIPTING,
             (int)MAVLink.SCRIPTING_CMD.STOP, 0, 0, 0, 0, 0, 0);
-        break;
       case "HighLatency_Enable":
-        _comPort.doHighLatency(true);
-        break;
+        return _comPort.doHighLatency(true);
       case "HighLatency_Disable":
-        _comPort.doHighLatency(false);
-        break;
+        return _comPort.doHighLatency(false);
       case "Toggle_Safety_Switch":
         if (s == 0) {
           throw new InvalidOperationException("Cannot toggle safety for system id 0.");
@@ -2622,23 +2755,20 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
           custom_mode = customMode,
           target_system = s,
         }, MAVLink.MAV_MODE_FLAG.SAFETY_ARMED);
-        break;
+        return true;
       case "Do_Parachute":
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.DO_PARACHUTE,
+        return _comPort.doCommand(s, c, MAVLink.MAV_CMD.DO_PARACHUTE,
             (float)ParachuteCommandAction, 0, 0, 0, 0, 0, 0);
-        break;
       case "Engine_Start":
-        _comPort.doEngineControl(s, c, true);
-        break;
+        return _comPort.doEngineControl(s, c, true);
       case "Engine_Stop":
-        _comPort.doEngineControl(s, c, false);
-        break;
+        return _comPort.doEngineControl(s, c, false);
       case "Terminate_Flight":
-        _comPort.doCommand(s, c, MAVLink.MAV_CMD.DO_FLIGHTTERMINATION, 1, 0, 0, 0, 0, 0, 0);
-        break;
+        return _comPort.doCommand(
+            s, c, MAVLink.MAV_CMD.DO_FLIGHTTERMINATION, 1, 0, 0, 0, 0, 0, 0);
       case "Format_SD_Card":
-        _comPort.doCommandInt(s, c, MAVLink.MAV_CMD.STORAGE_FORMAT, 1, 1, 0, 0, 0, 0, 0);
-        break;
+        return _comPort.doCommandInt(
+            s, c, MAVLink.MAV_CMD.STORAGE_FORMAT, 1, 1, 0, 0, 0, 0, 0);
       default:
         throw new InvalidOperationException($"Unknown action {a}.");
     }
@@ -2752,10 +2882,17 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
       Messages += "Not connected.\n";
       return;
     }
-    await Task.Run(() =>
-        _comPort.doCommand(_comPort.MAV.sysid, _comPort.MAV.compid, MAVLink.MAV_CMD.DO_DIGICAM_CONTROL,
-            0, 0, 0, 0, 1, 0, 0));
-    Log("Camera trigger sent");
+    await SendCameraTrigger("Trigger Camera");
+  }
+
+  [Obsolete]
+  private async Task SendCameraTrigger(string title) {
+    try {
+      await Task.Run(() => _comPort.setDigicamControl(true));
+      Log("Camera trigger sent");
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert(title, "Command failed: " + ex.Message);
+    }
   }
 
   private void Log(string m) => Messages += m + "\n";
@@ -2924,6 +3061,15 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 
   private MissionPlannerAvalonia.Controls.VideoControl? _video;
   private Views.VideoPopupWindow? _videoWindow;
+  private byte? _selectedCameraSystemId;
+  private byte? _selectedCameraComponentId;
+  private byte _selectedCameraStreamId;
+
+  [ObservableProperty]
+  private string _cameraTarget = "Auto-detect";
+
+  [ObservableProperty]
+  private double _cameraZoom;
 
   private Views.VideoPopupWindow EnsureVideoWindow() {
     var top = (Avalonia.Application.Current?.ApplicationLifetime
@@ -2978,28 +3124,281 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     return await dlg.ShowDialog<string?>(top);
   }
 
-  [RelayCommand]
-  private async Task SetVideoSource(string preset) {
+  private static async Task<(MavlinkVideoStreamOption Option, string Source)?>
+      PromptVideoStreamAsync(
+      IReadOnlyList<MavlinkVideoStreamOption> options) {
+    var top = (Avalonia.Application.Current?.ApplicationLifetime
+               as IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+    if (top == null || options.Count == 0) {
+      return null;
+    }
+
+    var source = new Avalonia.Controls.TextBox { MinWidth = 520 };
+    var details = new Avalonia.Controls.TextBlock {
+      TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+    };
+    var combo = new Avalonia.Controls.ComboBox {
+      ItemsSource = options,
+      SelectedIndex = 0,
+      HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+    };
+    void Select(MavlinkVideoStreamOption? option) {
+      if (option == null) {
+        return;
+      }
+      source.Text = option.Source;
+      details.Text = option.Details;
+    }
+    combo.SelectionChanged += (_, _) => Select(combo.SelectedItem as MavlinkVideoStreamOption);
+    Select(options[0]);
+
+    var ok = new Avalonia.Controls.Button {
+      Content = "Play",
+      MinWidth = 80,
+      IsDefault = true,
+    };
+    var cancel = new Avalonia.Controls.Button {
+      Content = "Cancel",
+      MinWidth = 80,
+      IsCancel = true,
+    };
+    var buttons = new Avalonia.Controls.StackPanel {
+      Orientation = Avalonia.Layout.Orientation.Horizontal,
+      HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+      Spacing = 8,
+      Children = { ok, cancel },
+    };
+    var dlg = new Avalonia.Controls.Window {
+      Title = "MAVLink Camera Streams",
+      Width = 600,
+      SizeToContent = Avalonia.Controls.SizeToContent.Height,
+      CanResize = false,
+      WindowStartupLocation = Avalonia.Controls.WindowStartupLocation.CenterOwner,
+      Content = new Avalonia.Controls.StackPanel {
+        Margin = new Avalonia.Thickness(14),
+        Spacing = 8,
+        Children = {
+          new Avalonia.Controls.TextBlock { Text = "Announced stream" },
+          combo,
+          details,
+          new Avalonia.Controls.TextBlock { Text = "libVLC source (editable)" },
+          source,
+          buttons,
+        },
+      },
+    };
+    ok.Click += (_, _) => dlg.Close(source.Text);
+    cancel.Click += (_, _) => dlg.Close((string?)null);
+    string? result = await dlg.ShowDialog<string?>(top);
+    if (string.IsNullOrWhiteSpace(result)) {
+      return null;
+    }
+    return (combo.SelectedItem as MavlinkVideoStreamOption ?? options[0], result);
+  }
+
+  internal static string DefaultVideoSource(string preset) => preset switch {
+    "mjpeg" => "http://192.168.0.1:8080/?action=stream",
+    "gstreamer" => "rtsp://192.168.144.25:8554/main.264",
+    "herelink" => "rtsp://192.168.43.1:8554/fpv_stream",
+    "camera" when OperatingSystem.IsLinux() => "v4l2:///dev/video0",
+    "camera" when OperatingSystem.IsMacOS() => "avcapture://0",
+    "camera" when OperatingSystem.IsWindows() => "dshow://",
+    _ => "",
+  };
+
+  private static string LoadVideoSource(string preset) {
+    string? saved = preset switch {
+      "mjpeg" => Settings.Instance["mjpeg_url"],
+      "gstreamer" => Settings.Instance["gstreamer_url"],
+      "herelink" => Settings.Instance["herelink_url"],
+      "camera" => Settings.Instance["video_device_mrl"],
+      "mavlink" => Settings.Instance["video_mavlink_url"],
+      _ => Settings.Instance["video_custom_url"],
+    };
+    if (!string.IsNullOrWhiteSpace(saved)) {
+      return saved;
+    }
+    if (preset == "herelink"
+        && Settings.Instance["herelinkip"] is { Length: > 0 } herelinkIp) {
+      return Uri.TryCreate(herelinkIp, UriKind.Absolute, out _)
+          ? herelinkIp
+          : $"rtsp://{herelinkIp}:8554/fpv_stream";
+    }
+    return DefaultVideoSource(preset);
+  }
+
+  private static void SaveVideoSource(string preset, string source) {
+    switch (preset) {
+      case "mjpeg":
+        Settings.Instance["mjpeg_url"] = source;
+        break;
+      case "gstreamer":
+        Settings.Instance["gstreamer_url"] = source;
+        break;
+      case "herelink":
+        Settings.Instance["herelink_url"] = source;
+        if (Uri.TryCreate(source, UriKind.Absolute, out var uri)
+            && !string.IsNullOrWhiteSpace(uri.Host)) {
+          Settings.Instance["herelinkip"] = uri.Host;
+        }
+        break;
+      case "camera":
+        Settings.Instance["video_device_mrl"] = source;
+        break;
+      case "mavlink":
+        Settings.Instance["video_mavlink_url"] = source;
+        break;
+      default:
+        Settings.Instance["video_custom_url"] = source;
+        break;
+    }
+    Settings.Instance.Save();
+  }
+
+  private void PlayVideoSource(string source) {
     var win = EnsureVideoWindow();
     if (!win.Video.IsAvailable) {
       Log(win.Video.Status);
       win.UpdateStatus();
       return;
     }
-    string initial = preset switch {
-      "mjpeg" => "http://192.168.0.1:8080/?action=stream",
-      "gstreamer" => "rtsp://192.168.144.25:8554/main.264",
-      "herelink" => "rtsp://192.168.43.1:8554/fpv_stream",
-      "camera" => "v4l2:///dev/video0",
-      _ => "",
-    };
+    win.Video.Play(source);
+    win.UpdateStatus();
+    Log(win.Video.Status);
+  }
+
+  [RelayCommand]
+  private async Task SetVideoSource(string preset) {
+    string initial = LoadVideoSource(preset);
     var mrl = await PromptTextAsync("Video source", "Stream URL / MRL:", initial);
     if (string.IsNullOrWhiteSpace(mrl)) {
       return;
     }
-    win.Video.Play(mrl);
-    win.UpdateStatus();
-    Log(win.Video.Status);
+    SaveVideoSource(preset, mrl);
+    PlayVideoSource(mrl);
+  }
+
+  [RelayCommand]
+  private async Task SelectMavlinkVideoStream() {
+    var announced = MissionPlanner.ArduPilot.Mavlink.CameraProtocol.VideoStreams
+        .Where(pair => !Connected || pair.Key.Item1 == Sysid);
+    var options = MavlinkVideoStreams.Snapshot(announced);
+    if (options.Count == 0) {
+      string remembered = LoadVideoSource("mavlink");
+      if (!string.IsNullOrWhiteSpace(remembered)
+          && await Services.Dialogs.Confirm(
+              "MAVLink Camera Streams",
+              "No current stream announcements were received. Play the last saved "
+              + "MAVLink camera source instead?")) {
+        PlayVideoSource(remembered);
+        return;
+      }
+      await Services.Dialogs.Alert(
+          "MAVLink Camera Streams",
+          "No supported VIDEO_STREAM_INFORMATION announcements have been received. "
+          + "Connect the camera and use Developer Tools → Probe MAVLink Camera, then try again.");
+      return;
+    }
+    var selected = await PromptVideoStreamAsync(options);
+    if (selected == null) {
+      return;
+    }
+    _selectedCameraSystemId = selected.Value.Option.SystemId;
+    _selectedCameraComponentId = selected.Value.Option.ComponentId;
+    _selectedCameraStreamId = selected.Value.Option.StreamId;
+    CameraTarget = $"{selected.Value.Option.Name} "
+        + $"({_selectedCameraSystemId}:{_selectedCameraComponentId})";
+    SaveVideoSource("mavlink", selected.Value.Source);
+    PlayVideoSource(selected.Value.Source);
+  }
+
+  private MissionPlanner.ArduPilot.Mavlink.CameraProtocol? ResolveCameraProtocol(
+      out byte streamId) {
+    streamId = 0;
+    var cameras = _comPort.MAVlist
+        .Where(state => state.sysid == Sysid && state.Camera != null)
+        .ToArray();
+    if (_selectedCameraSystemId.HasValue && _selectedCameraComponentId.HasValue) {
+      var selected = cameras.FirstOrDefault(state =>
+          state.sysid == _selectedCameraSystemId.Value
+          && state.compid == _selectedCameraComponentId.Value);
+      if (selected?.Camera != null) {
+        streamId = _selectedCameraStreamId;
+        return selected.Camera;
+      }
+    }
+
+    var fallback = cameras
+        .OrderBy(state => state.compid is >= (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_CAMERA
+                                      and <= (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_CAMERA6
+            ? 0 : 1)
+        .ThenBy(state => state.compid)
+        .FirstOrDefault();
+    if (fallback?.Camera != null) {
+      CameraTarget = $"MAVLink camera {fallback.sysid}:{fallback.compid}";
+    }
+    return fallback?.Camera;
+  }
+
+  private async Task RunMavlinkCameraCommand(
+      string title,
+      Func<MissionPlanner.ArduPilot.Mavlink.CameraProtocol, byte, Task> operation) {
+    if (!Connected) {
+      await Services.Dialogs.Alert(title, "Not connected.");
+      return;
+    }
+    var camera = ResolveCameraProtocol(out byte streamId);
+    if (camera == null) {
+      await Services.Dialogs.Alert(
+          title,
+          "No MAVLink camera component has been detected. Use Developer Tools → "
+          + "Probe MAVLink Camera and wait for CAMERA_INFORMATION.");
+      return;
+    }
+    try {
+      await operation(camera, streamId);
+      Log(title + " command sent to " + CameraTarget);
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert(title, "Command failed: " + ex.Message);
+    }
+  }
+
+  [RelayCommand]
+  private Task TakeMavlinkPhoto() => RunMavlinkCameraCommand(
+      "Take Camera Photo", (camera, _) => camera.TakeSinglePictureAsync());
+
+  [RelayCommand]
+  private Task StartMavlinkCameraRecording() => RunMavlinkCameraCommand(
+      "Start Camera Recording",
+      (camera, streamId) => camera.StartRecordingAsync(streamId));
+
+  [RelayCommand]
+  private Task StopMavlinkCameraRecording() => RunMavlinkCameraCommand(
+      "Stop Camera Recording",
+      (camera, streamId) => camera.StopRecordingAsync(streamId));
+
+  [RelayCommand]
+  private Task SetMavlinkCameraZoom() {
+    float zoom = (float)Math.Clamp(CameraZoom, 0, 100);
+    return RunMavlinkCameraCommand(
+        "Set Camera Zoom",
+        (camera, _) => camera.SetZoomAsync(
+            zoom, MAVLink.CAMERA_ZOOM_TYPE.ZOOM_TYPE_RANGE));
+  }
+
+  [RelayCommand]
+  private async Task SnapshotVideo() {
+    if (_videoWindow == null) {
+      await Services.Dialogs.Alert("Video Snapshot", "Start a video stream first.");
+      return;
+    }
+    var outPath = await PickSaveAsync("Save video snapshot", "png");
+    if (outPath == null) {
+      return;
+    }
+    _videoWindow.Video.Snapshot(outPath);
+    _videoWindow.UpdateStatus();
+    Log(_videoWindow.Video.Status);
   }
 
   [RelayCommand]
