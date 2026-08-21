@@ -51,7 +51,7 @@
               <CheckBox Content="Add DO_CHANGE_SPEED at survey start"
                         IsChecked="{Binding UseSpeed}" />
 
-              <Grid ColumnDefinitions="170,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+              <Grid ColumnDefinitions="170,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
                     RowSpacing="8">
                 <TextBlock Grid.Row="0" Grid.Column="0" Classes="fieldlbl" Text="Camera trigger"
                            VerticalAlignment="Center" />
@@ -90,6 +90,11 @@
                            VerticalAlignment="Center" />
                 <NumericUpDown Grid.Row="7" Grid.Column="1" Minimum="0" Maximum="3600"
                                Increment="0.1" Value="{Binding WaypointDelay}" />
+
+                <TextBlock Grid.Row="8" Grid.Column="0" Classes="fieldlbl" Text="Split into flights"
+                           VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="8" Grid.Column="1" Minimum="1" Maximum="100"
+                               Increment="1" Value="{Binding SplitCount}" />
               </Grid>
 
               <Border Background="{DynamicResource MpInputBg}" CornerRadius="4" Padding="10">
@@ -121,7 +126,7 @@
               </Border>
 
               <TextBlock Classes="hint" TextWrapping="Wrap"
-                         Text="Distance uses the photo spacing from the Camera/Grid calculation. Digicam and Repeat servo create a command at every photo point unless strip start/stop is selected. Set servo switches PWM at strip boundaries. A waypoint delay uses normal waypoints instead of spline commands." />
+                         Text="Distance uses the photo spacing from the Camera/Grid calculation. Digicam and Repeat servo create a command at every photo point unless strip start/stop is selected. Set servo switches PWM at strip boundaries. Split flights require Takeoff and an RTL/Land finish; DO_JUMP entries select each complete strip-bounded segment." />
             </StackPanel>
           </ScrollViewer>
         </TabItem>
@@ -213,6 +218,10 @@
                 <TextBlock Grid.Row="4" Grid.Column="1" VerticalAlignment="Center"
                            Text="{Binding CmPixel}" />
               </Grid>
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Load sample JPEG…" Click="OnLoadSamplePhoto" />
+                <Button Content="Save camera profile…" Click="OnSaveCameraProfile" />
+              </StackPanel>
             </StackPanel>
           </ScrollViewer>
         </TabItem>
@@ -221,7 +230,7 @@
       <Border Grid.Column="2" Background="{DynamicResource MpInputBg}" CornerRadius="4" Padding="12">
         <StackPanel Spacing="6">
           <TextBlock Classes="fieldlbl" FontSize="15" Text="Stats" />
-          <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="4">
+          <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="4">
             <TextBlock Grid.Row="0" Grid.Column="0" Classes="fieldlbl" Text="Area" />
             <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding AreaText}" />
             <TextBlock Grid.Row="1" Grid.Column="0" Classes="fieldlbl" Text="Total Distance" />
@@ -240,15 +249,9 @@
             <TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding MinShutterText}" />
             <TextBlock Grid.Row="8" Grid.Column="0" Classes="fieldlbl" Text="Turn Radius" />
             <TextBlock Grid.Row="8" Grid.Column="1" Text="{Binding TurnRadText}" />
+            <TextBlock Grid.Row="9" Grid.Column="0" Classes="fieldlbl" Text="Ground Elevation" />
+            <TextBlock Grid.Row="9" Grid.Column="1" Text="{Binding GroundElevationText}" />
           </Grid>
-
-          <Separator Margin="0,6" />
-          <TextBlock Classes="fieldlbl" FontSize="15" Text="Display" />
-          <CheckBox Content="Markers" IsChecked="{Binding ShowMarkers}" />
-          <CheckBox Content="Footprints" IsChecked="{Binding ShowFootprints}" />
-          <CheckBox Content="Numbers / Trigger Points" IsChecked="{Binding ShowInternals}" />
-          <CheckBox Content="Grid Lines" IsChecked="{Binding ShowGrid}" />
-          <CheckBox Content="Boundary" IsChecked="{Binding ShowBoundary}" />
         </StackPanel>
       </Border>
     </Grid>
@@ -256,6 +259,8 @@
     <TextBlock Grid.Row="2" Margin="0,8,0,0" Text="{Binding Status}" Foreground="{DynamicResource MpAccentBrush}" TextWrapping="Wrap" />
 
     <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,8,0,0">
+      <Button Content="Load .grid…" Click="OnLoadGrid" />
+      <Button Content="Save .grid…" Click="OnSaveGrid" />
       <Button Content="Cancel" Command="{Binding CloseCommand}" />
       <Button Content="Accept" Command="{Binding AcceptCommand}" />
     </StackPanel>

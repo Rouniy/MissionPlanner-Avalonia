@@ -84,6 +84,7 @@ public partial class LogBrowseViewModel : ViewModelBase {
   }
 
   public LogBrowseViewModel() {
+    FlightModeNames.Initialize();
     foreach (var p in LoadPresets()) {
       Presets.Add(p);
     }
@@ -144,53 +145,28 @@ public partial class LogBrowseViewModel : ViewModelBase {
     return (series.Select(s => s.time).ToList(), series.Select(s => s.value).ToList());
   }
 
-  private static readonly System.Text.RegularExpressions.Regex _fieldRef =
-      new(@"[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*",
-          System.Text.RegularExpressions.RegexOptions.Compiled);
-
   public static bool IsExpression(string s) => s.IndexOfAny(new[] { '(', ')', '+', '-', '*', '/' }) >= 0;
 
   public (IReadOnlyList<double> xs, IReadOnlyList<double> ys)? ReadExpressionCurve(string expr) {
     if (CurrentPath == null) {
       return null;
     }
-    var refs = _fieldRef.Matches(expr).Select(m => m.Value).Distinct().ToList();
-    if (refs.Count == 0) {
-      throw new InvalidOperationException($"No TYPE.FIELD references found in '{expr}'.");
-    }
-    var types = refs.Select(r => r.Split('.', 2)[0]).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-    if (types.Count != 1) {
-      throw new InvalidOperationException(
-          "Expressions may reference only one message type (got " + string.Join(", ", types) + ").");
-    }
-    var series = new Dictionary<string, IReadOnlyList<(double time, double value)>>();
-    foreach (var r in refs) {
-      var parts = r.Split('.', 2);
-      var s = DataFlashLog.ReadField(CurrentPath, parts[0], parts[1]);
-      if (s.Count == 0) {
-        throw new InvalidOperationException($"No data for {r} in this log.");
-      }
-      series[r] = s;
-    }
-    int n = series.Values.Min(s => s.Count);
-    var xs = new List<double>(n);
-    var ys = new List<double>(n);
-    var time = series[refs[0]];
-    var sample = new Dictionary<string, double>(refs.Count);
-    for (int i = 0; i < n; i++) {
-      foreach (var r in refs) {
-        sample[r] = series[r][i].value;
-      }
-      if (EvalExpression(expr, refs, sample) is { } v) {
-        xs.Add(time[i].time);
-        ys.Add(v);
-      }
+    var points = DataFlashExpressionEvaluator.Evaluate(CurrentPath, expr);
+    return (points.Select(point => point.TimeSeconds).ToArray(),
+        points.Select(point => point.Value).ToArray());
+  }
 
-    }
-    if (xs.Count == 0) {
-      throw new InvalidOperationException($"'{expr}' produced no finite values.");
-    }
-    return (xs, ys);
+  public IReadOnlyList<GraphCurve> ResolvePresetCurves(GraphPreset preset) {
+    return ResolvePresetAlternatives(preset).FirstOrDefault() ?? Array.Empty<GraphCurve>();
+  }
+
+  public IReadOnlyList<IReadOnlyList<GraphCurve>> ResolvePresetAlternatives(GraphPreset preset) {
+    return preset.Alternatives
+        .Select(alternative => (IReadOnlyList<GraphCurve>)alternative.Curves
+            .Where(curve => DataFlashExpressionEvaluator.CanEvaluate(curve.Expression, _formats))
+            .ToArray())
+        .Where(curves => curves.Count > 0)
+        .ToArray();
   }
 
   public static double? EvalExpression(string expr, IReadOnlyList<string> refs,
@@ -230,8 +206,19 @@ public partial class LogBrowseViewModel : ViewModelBase {
     if (CurrentPath == null || !_formats.ContainsKey(type)) {
       return Array.Empty<(double, string)>();
     }
-    var series = DataFlashLog.ReadField(CurrentPath, type, labelField);
-    return series.Select(s => (s.time, $"{type} {s.value:0}")).ToList();
+    var answer = new List<(double, string)>();
+    using var log = new DFLogBuffer(CurrentPath);
+    foreach (var item in log.GetEnumeratorType(type)) {
+      string? value = item[labelField];
+      if (string.IsNullOrWhiteSpace(value)
+          && string.Equals(type, "MODE", StringComparison.OrdinalIgnoreCase)) {
+        value = item["ModeNum"];
+      }
+      if (!string.IsNullOrWhiteSpace(value)) {
+        answer.Add((item.timems / 1000.0, $"{type} {value.Trim()}"));
+      }
+    }
+    return answer;
   }
 
   public IReadOnlyList<DataFlashParameter> ReadParameters() =>

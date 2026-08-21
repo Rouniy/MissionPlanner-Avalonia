@@ -32,12 +32,11 @@ public class MapView : MapControl {
   private readonly WritableLayer _photoMarkers = new() { Name = "Camera feedback" };
   private readonly WritableLayer _photoFootprints = new() { Name = "Camera footprints" };
   private readonly WritableLayer _vehicle = new() { Name = "Vehicle" };
-  private readonly WritableLayer _traffic = new() { Name = "ADS-B traffic" };
+  private readonly WritableLayer _traffic = new() { Name = "ADS-B / AIS traffic" };
   private readonly DispatcherTimer _timer;
   private bool _centered;
   private MPoint? _lastTrackPt;
   private readonly Queue<Coordinate> _trackPts = new();
-  private bool _trafficWasVisible;
   private long _trafficRevision = -1;
   private bool _followingHeading;
   private int _lastPhotoCount = -1;
@@ -553,30 +552,41 @@ public class MapView : MapControl {
   }
 
   private void UpdateTraffic() {
-    bool visible = MissionPlanner.Utilities.Settings.Instance.GetBoolean("enableadsb", false);
-    if (!visible) {
-      if (_trafficWasVisible) {
-        _traffic.Clear();
-        _traffic.DataHasChanged();
-        _trafficWasVisible = false;
-        _trafficRevision = -1;
+    try {
+      var location = AppState.comPort.MAV.cs.Location;
+      if (double.IsFinite(location.Lat) && double.IsFinite(location.Lng)
+          && (location.Lat != 0 || location.Lng != 0)) {
+        AppState.Traffic.SetObserverPosition(location.Lat, location.Lng);
+      } else {
+        var viewport = Map.Navigator.Viewport;
+        var (lng, lat) = SphericalMercator.ToLonLat(viewport.CenterX, viewport.CenterY);
+        AppState.Traffic.SetObserverPosition(lat, lng);
       }
-      return;
+    } catch {
+      // The HTTP receiver waits until either a map centre or vehicle location is available.
     }
 
     var snapshot = AppState.Traffic.SnapshotWithRevision();
-    if (_trafficWasVisible && snapshot.Revision == _trafficRevision) {
+    if (snapshot.Revision == _trafficRevision) {
       return;
     }
     _traffic.Clear();
     foreach (var target in snapshot.Targets) {
+      if (target.Kind == TrafficKind.Obstacle) {
+        _traffic.Add(BuildTrafficRadius(target.Lng, target.Lat, target.Radius));
+        continue;
+      }
       var (x, y) = SphericalMercator.FromLonLat(target.Lng, target.Lat);
       var feature = new PointFeature(new MPoint(x, y));
-      feature.Styles.Add(MavMarker.Traffic(target.Heading,
-          target.ThreatLevel != MAVLink.MAV_COLLISION_THREAT_LEVEL.NONE));
+      feature.Styles.Add(target.Kind == TrafficKind.Vessel
+          ? MavMarker.Vessel(target.Heading)
+          : MavMarker.Traffic(target.Heading,
+              target.ThreatLevel == MAVLink.MAV_COLLISION_THREAT_LEVEL.HIGH));
       string label = string.IsNullOrWhiteSpace(target.CallSign) ? target.Id : target.CallSign;
       feature.Styles.Add(new LabelStyle {
-        Text = $"{label}  {target.Alt:0} m",
+        Text = target.Kind == TrafficKind.Vessel
+            ? $"{label}  {target.Speed / 100:0.0} m/s"
+            : $"{label}  {target.Alt:0} m",
         ForeColor = Color.White,
         BackColor = new Brush(new Color(0, 0, 0, 150)),
         Font = new Font { Size = 10 },
@@ -585,8 +595,29 @@ public class MapView : MapControl {
       _traffic.Add(feature);
     }
     _traffic.DataHasChanged();
-    _trafficWasVisible = true;
     _trafficRevision = snapshot.Revision;
+  }
+
+  internal static GeometryFeature BuildTrafficRadius(double lng, double lat, double radiusM) {
+    var center = SphericalMercator.FromLonLat(lng, lat);
+    double projectedRadius = Math.Max(0, radiusM)
+        / Math.Max(0.01, Math.Cos(lat * Math.PI / 180));
+    const int segments = 48;
+    var coordinates = new Coordinate[segments + 1];
+    for (int i = 0; i <= segments; i++) {
+      double angle = Math.PI * 2 * i / segments;
+      coordinates[i] = new Coordinate(center.x + Math.Cos(angle) * projectedRadius,
+          center.y + Math.Sin(angle) * projectedRadius);
+    }
+    var feature = new GeometryFeature {
+      Geometry = new Polygon(new LinearRing(coordinates)),
+    };
+    feature.Styles.Add(new VectorStyle {
+      Fill = new Brush(new Color(255, 0, 0, 35)),
+      Line = new Pen(Color.Red, 3),
+      Outline = new Pen(Color.Red, 3),
+    });
+    return feature;
   }
 
   private void UpdateCameraFeedback() {

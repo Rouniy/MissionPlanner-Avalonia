@@ -2,6 +2,8 @@ using System.IO;
 using System.Threading.Tasks;
 using Avalonia.Headless.XUnit;
 using MissionPlannerAvalonia.ViewModels;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace MissionPlannerAvalonia.Tests;
 
@@ -138,6 +140,7 @@ public class MissionFileTests {
     vm.AddPolygonPoint(40.3, 28.1);
     vm.AddDrawnPolygonToFence(true);
     var path = Path.Combine(Path.GetTempPath(), $"mp_test_{System.Guid.NewGuid():N}.fen");
+    var planPath = Path.Combine(Path.GetTempPath(), $"mp_test_{System.Guid.NewGuid():N}.plan");
     try {
       await vm.SaveFileAsync(path);
       var loaded = new FlightPlannerViewModel();
@@ -151,6 +154,13 @@ public class MissionFileTests {
         Assert.Equal(3, row.P1);
       });
 
+      await loaded.SaveFileAsync(planPath);
+      var breachReturn = Assert.IsType<JArray>(
+          JObject.Parse(File.ReadAllText(planPath))["geoFence"]!["breachReturn"]);
+      Assert.Equal(40, breachReturn[0]!.Value<double>(), 6);
+      Assert.Equal(28, breachReturn[1]!.Value<double>(), 6);
+      Assert.Equal(0, breachReturn[2]!.Value<double>(), 3);
+
       await loaded.LoadFileAsync(path, append: true);
       Assert.Single(loaded.Waypoints, row =>
           row.Command == (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT);
@@ -158,6 +168,9 @@ public class MissionFileTests {
     } finally {
       if (File.Exists(path)) {
         File.Delete(path);
+      }
+      if (File.Exists(planPath)) {
+        File.Delete(planPath);
       }
     }
   }
@@ -243,6 +256,13 @@ public class MissionFileTests {
       Lat = 40.25,
       Lng = 28.25,
     });
+    vm.Waypoints.Add(new WpRow {
+      Command = (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT,
+      Frame = (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT,
+      Lat = 40.15,
+      Lng = 28.15,
+      Alt = 45.5,
+    });
 
     vm.MissionType = "Rally";
     vm.Waypoints.Add(new WpRow {
@@ -256,22 +276,202 @@ public class MissionFileTests {
     var path = Path.Combine(Path.GetTempPath(), $"mp_test_{System.Guid.NewGuid():N}.plan");
     try {
       await vm.SaveFileAsync(path);
+      string firstJson = File.ReadAllText(path);
+      var breachReturn = Assert.IsType<JArray>(
+          JObject.Parse(firstJson)["geoFence"]!["breachReturn"]);
+      Assert.Equal(40.15, breachReturn[0]!.Value<double>(), 6);
+      Assert.Equal(28.15, breachReturn[1]!.Value<double>(), 6);
+      Assert.Equal(45.5, breachReturn[2]!.Value<double>(), 3);
+      await vm.SaveFileAsync(path);
+      Assert.Equal(firstJson, File.ReadAllText(path));
+
       var loaded = new FlightPlannerViewModel();
       await loaded.LoadFileAsync(path);
 
       Assert.Single(loaded.Waypoints);
       Assert.Equal((byte)MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT, loaded.Waypoints[0].Frame);
       loaded.MissionType = "Fence";
-      Assert.Equal(4, loaded.Waypoints.Count);
+      Assert.Equal(5, loaded.Waypoints.Count);
       Assert.Equal(3, loaded.Waypoints.Count(row =>
           row.Command == (ushort)MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_EXCLUSION));
       Assert.Contains(loaded.Waypoints, row =>
           row.Command == (ushort)MAVLink.MAV_CMD.FENCE_CIRCLE_INCLUSION && row.P1 == 125);
+      var loadedReturn = Assert.Single(loaded.Waypoints, row =>
+          row.Command == (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT);
+      Assert.Equal((byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT, loadedReturn.Frame);
+      Assert.Equal(40.15, loadedReturn.Lat, 6);
+      Assert.Equal(28.15, loadedReturn.Lng, 6);
+      Assert.Equal(45.5, loadedReturn.Alt, 3);
       loaded.MissionType = "Rally";
       Assert.Single(loaded.Waypoints);
       Assert.Equal((ushort)MAVLink.MAV_CMD.RALLY_POINT, loaded.Waypoints[0].Command);
       Assert.Equal((byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT, loaded.Waypoints[0].Frame);
       Assert.Equal(60, loaded.Waypoints[0].Alt, 3);
+    } finally {
+      if (File.Exists(path)) {
+        File.Delete(path);
+      }
+    }
+  }
+
+  [AvaloniaFact]
+  public async Task Qgc_plan_without_return_omits_breach_return() {
+    var vm = new FlightPlannerViewModel();
+    var path = Path.Combine(Path.GetTempPath(), $"mp_test_{System.Guid.NewGuid():N}.plan");
+    try {
+      await vm.SaveFileAsync(path);
+
+      var root = JObject.Parse(File.ReadAllText(path));
+      Assert.Null(root["geoFence"]!["breachReturn"]);
+    } finally {
+      if (File.Exists(path)) {
+        File.Delete(path);
+      }
+    }
+  }
+
+  [AvaloniaFact]
+  public async Task Invalid_qgc_breach_return_is_rejected_before_planner_state_changes() {
+    var source = new FlightPlannerViewModel();
+    var path = Path.Combine(Path.GetTempPath(), $"mp_test_{System.Guid.NewGuid():N}.plan");
+    try {
+      await source.SaveFileAsync(path);
+      var root = JObject.Parse(File.ReadAllText(path));
+      root["geoFence"]!["breachReturn"] = new JArray(40.1, 28.1);
+      File.WriteAllText(path, root.ToString(Formatting.Indented));
+
+      var target = new FlightPlannerViewModel { HomeLat = 51, HomeLng = 7, HomeAlt = 90 };
+      target.Waypoints.Add(new WpRow {
+        Command = (ushort)MAVLink.MAV_CMD.WAYPOINT,
+        Lat = 51.1,
+        Lng = 7.1,
+        Alt = 30,
+      });
+      await target.LoadFileAsync(path);
+
+      Assert.StartsWith("Load failed: QGC Plan geoFence.breachReturn", target.Status);
+      Assert.Equal(51, target.HomeLat, 6);
+      Assert.Single(target.Waypoints);
+      Assert.Equal(51.1, target.Waypoints[0].Lat, 6);
+    } finally {
+      if (File.Exists(path)) {
+        File.Delete(path);
+      }
+    }
+  }
+
+  [AvaloniaFact]
+  public async Task Malformed_qgc_geofence_is_rejected_before_planner_state_changes() {
+    var source = new FlightPlannerViewModel();
+    var path = Path.Combine(Path.GetTempPath(), $"mp_test_{System.Guid.NewGuid():N}.plan");
+    try {
+      await source.SaveFileAsync(path);
+      var root = JObject.Parse(File.ReadAllText(path));
+      root["geoFence"] = "not an object";
+      File.WriteAllText(path, root.ToString(Formatting.Indented));
+
+      var target = new FlightPlannerViewModel();
+      target.Waypoints.Add(new WpRow {
+        Command = (ushort)MAVLink.MAV_CMD.WAYPOINT,
+        Lat = 51.1,
+        Lng = 7.1,
+        Alt = 30,
+      });
+      await target.LoadFileAsync(path);
+
+      Assert.Equal("Load failed: QGC Plan geoFence must be an object.", target.Status);
+      Assert.Single(target.Waypoints);
+      Assert.Equal(51.1, target.Waypoints[0].Lat, 6);
+    } finally {
+      if (File.Exists(path)) {
+        File.Delete(path);
+      }
+    }
+  }
+
+  [AvaloniaFact]
+  public async Task Qgc_plan_rejects_multiple_breach_return_rows_before_writing() {
+    var vm = new FlightPlannerViewModel { MissionType = "Fence" };
+    vm.Waypoints.Add(new WpRow {
+      Command = (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT,
+      Lat = 40,
+      Lng = 28,
+      Alt = 30,
+    });
+    vm.Waypoints.Add(new WpRow {
+      Command = (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT,
+      Lat = 41,
+      Lng = 29,
+      Alt = 40,
+    });
+    var path = Path.Combine(Path.GetTempPath(), $"mp_test_{System.Guid.NewGuid():N}.plan");
+    try {
+      await vm.SaveFileAsync(path);
+
+      Assert.StartsWith("Save failed: QGC Plan supports exactly one", vm.Status);
+      Assert.False(File.Exists(path));
+    } finally {
+      if (File.Exists(path)) {
+        File.Delete(path);
+      }
+    }
+  }
+
+  [AvaloniaFact]
+  public async Task Qgc_plan_rejects_absolute_breach_return_altitude_without_overwriting() {
+    var vm = new FlightPlannerViewModel { MissionType = "Fence" };
+    vm.Waypoints.Add(new WpRow {
+      Command = (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT,
+      Frame = (byte)MAVLink.MAV_FRAME.GLOBAL,
+      Lat = 40,
+      Lng = 28,
+      Alt = 130,
+    });
+    var path = Path.Combine(Path.GetTempPath(), $"mp_test_{System.Guid.NewGuid():N}.plan");
+    try {
+      File.WriteAllText(path, "existing file");
+      await vm.SaveFileAsync(path);
+
+      Assert.StartsWith(
+          "Save failed: QGC Plan fence breach-return altitude must use a global-relative frame.",
+          vm.Status);
+      Assert.Equal("existing file", File.ReadAllText(path));
+    } finally {
+      if (File.Exists(path)) {
+        File.Delete(path);
+      }
+    }
+  }
+
+  [AvaloniaFact]
+  public async Task Appending_qgc_plan_does_not_duplicate_existing_breach_return() {
+    var source = new FlightPlannerViewModel { MissionType = "Fence" };
+    source.Waypoints.Add(new WpRow {
+      Command = (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT,
+      Frame = (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT,
+      Lat = 41,
+      Lng = 29,
+      Alt = 40,
+    });
+    var path = Path.Combine(Path.GetTempPath(), $"mp_test_{System.Guid.NewGuid():N}.plan");
+    try {
+      await source.SaveFileAsync(path);
+      var target = new FlightPlannerViewModel { MissionType = "Fence" };
+      target.Waypoints.Add(new WpRow {
+        Command = (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT,
+        Frame = (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT,
+        Lat = 40,
+        Lng = 28,
+        Alt = 30,
+      });
+
+      await target.LoadFileAsync(path, append: true);
+
+      var returnPoint = Assert.Single(target.Waypoints, row =>
+          row.Command == (ushort)MAVLink.MAV_CMD.FENCE_RETURN_POINT);
+      Assert.Equal(40, returnPoint.Lat, 6);
+      Assert.Equal(28, returnPoint.Lng, 6);
+      Assert.Equal(30, returnPoint.Alt, 3);
     } finally {
       if (File.Exists(path)) {
         File.Delete(path);

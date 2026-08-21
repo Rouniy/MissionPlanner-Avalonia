@@ -173,8 +173,9 @@ public partial class FlightPlannerView : UserControl {
         (_, _, _) => _ = PrefetchMapTilesAsync(pathOnly: true)));
     menu.Items.Add(Item("Enter UTM Coordinate…",
         (vm, lat, lng) => _ = vm.AddWaypointFromUtmAsync(lat, lng)));
-    menu.Items.Add(Item("Set Tracker Home…",
-        (vm, lat, lng) => _ = vm.SetTrackerHomeAsync(lat, lng)));
+    var trackerHome = Item("Set Tracker Home…",
+        (vm, lat, lng) => _ = vm.SetTrackerHomeAsync(lat, lng));
+    menu.Items.Add(trackerHome);
 
     var missionOnly = new List<Control>();
     void AddMissionOnly(Control c) {
@@ -216,24 +217,18 @@ public partial class FlightPlannerView : UserControl {
     autowp.Items.Add(Item("Survey (Grid)", (vm, _, _) => OpenSurveyGrid(vm)));
     autowp.Items.Add(Item("Area", (vm, _, _) => vm.PolygonArea()));
     autowp.Items.Add(Item("Circle", (vm, lat, lng) => _ = vm.CreateWpCircle(lat, lng)));
-    autowp.Items.Add(Item("Spline Circle", (vm, lat, lng) => _ = vm.CreateSplineCircle(lat, lng)));
-    autowp.Items.Add(Item("Circle Survey", (vm, lat, lng) => _ = vm.CreateCircleSurvey(lat, lng)));
-    autowp.Items.Add(Item("Text", (vm, lat, lng) => _ = vm.CreateTextWaypoints(lat, lng)));
+    var splineCircle = Item("Spline Circle", (vm, lat, lng) => _ = vm.CreateSplineCircle(lat, lng));
+    var circleSurvey = Item("Circle Survey", (vm, lat, lng) => _ = vm.CreateCircleSurvey(lat, lng));
+    var textAutoWp = Item("Text", (vm, lat, lng) => _ = vm.CreateTextWaypoints(lat, lng));
+    autowp.Items.Add(splineCircle);
+    autowp.Items.Add(circleSurvey);
+    autowp.Items.Add(textAutoWp);
     AddMissionOnly(autowp);
     AddMissionOnly(Item("Elevation Graph", (_, _, _) => ShowElevationGraph()));
     menu.Items.Add(new Separator());
     menu.Items.Add(Item("Clear", (vm, _, _) => vm.ClearMissionCommand.Execute(null)));
     AddMissionOnly(Item("Reverse WPs", (vm, _, _) => vm.ReverseWaypointsCommand.Execute(null)));
     AddMissionOnly(Item("Modify Alt", (vm, _, _) => _ = vm.ModifyAllAlt()));
-    menu.Opening += (_, _) => {
-      bool mission = Vm?.MissionType is null or "Mission";
-      foreach (var c in missionOnly) {
-        c.IsVisible = mission;
-      }
-      foreach (var c in fenceOnly) {
-        c.IsVisible = Vm?.MissionType == "Fence";
-      }
-    };
     menu.Items.Add(new Separator());
     var poi = new MenuItem { Header = "POI" };
     poi.Items.Add(Item("Add POI", (vm, lat, lng) => _ = vm.AddPoi(lat, lng)));
@@ -242,6 +237,21 @@ public partial class FlightPlannerView : UserControl {
     poi.Items.Add(Item("POI at Coords", (vm, _, _) => _ = vm.AddPoiAtCoords()));
     poi.Items.Add(Item("Clear POIs", (vm, _, _) => vm.ClearPois()));
     menu.Items.Add(poi);
+    menu.Opening += (_, _) => {
+      var profile = Services.DisplayViewService.Current;
+      bool mission = Vm?.MissionType is null or "Mission";
+      foreach (var c in missionOnly) {
+        c.IsVisible = mission;
+      }
+      foreach (var c in fenceOnly) {
+        c.IsVisible = profile.displayGeoFenceMenu && Vm?.MissionType == "Fence";
+      }
+      trackerHome.IsVisible = profile.displayTrackerHomeMenu;
+      splineCircle.IsVisible = profile.displaySplineCircleAutoWp;
+      circleSurvey.IsVisible = profile.displayCircleSurveyAutoWp;
+      textAutoWp.IsVisible = profile.displayTextAutoWp;
+      poi.IsVisible = profile.displayPoiMenu;
+    };
     menu.Items.Add(new Separator());
     var nofly = new MenuItem { Header = "Load NoFly Overlay…" };
     nofly.Click += OnLoadNoFly;

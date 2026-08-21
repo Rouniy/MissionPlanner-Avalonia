@@ -32,6 +32,15 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
   [NotifyPropertyChangedFor(nameof(HeaderHeight))]
   private bool _headerHovered;
 
+  [ObservableProperty]
+  private bool _showSimulation = true;
+
+  [ObservableProperty]
+  private bool _showHelp = true;
+
+  [ObservableProperty]
+  private bool _showMenuAutoHideOption = true;
+
   public double HeaderHeight => HeaderHeightFor(MenuAutoHide, HeaderHovered);
 
   public MainWindowViewModel() {
@@ -41,7 +50,10 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
 
     Connection.Connected += OnConnected;
     AppState.ConnectionChanged += OnConnectionChanged;
+    Services.DisplayViewService.Changed += OnDisplayViewChanged;
     FlightData.RequestFlightPlanner += OnFlightPlannerRequested;
+
+    RefreshDisplayView();
 
     Simulation.RequestFlightData += () =>
         Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = Navigate("DATA"));
@@ -50,6 +62,25 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
 
   private void OnConnectionChanged() =>
       Avalonia.Threading.Dispatcher.UIThread.Post(() => WindowTitle = BuildWindowTitle());
+
+  private void OnDisplayViewChanged(object? sender, System.EventArgs e) =>
+      Avalonia.Threading.Dispatcher.UIThread.Post(() => {
+        RefreshDisplayView();
+        if ((ActiveTab == "SIMULATION" && !ShowSimulation)
+            || (ActiveTab == "HELP" && !ShowHelp)) {
+          _ = Navigate("DATA");
+        }
+      });
+
+  private void RefreshDisplayView() {
+    var profile = Services.DisplayViewService.Current;
+    ShowSimulation = profile.displaySimulation;
+    ShowHelp = profile.displayHelp;
+    ShowMenuAutoHideOption = !profile.autoHideMenuForce;
+    if (profile.autoHideMenuForce) {
+      MenuAutoHide = true;
+    }
+  }
 
   private void OnFlightPlannerRequested() =>
       Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = Navigate("PLAN"));
@@ -146,6 +177,9 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
 
   [RelayCommand]
   private async System.Threading.Tasks.Task Navigate(string target) {
+    if ((target == "SIMULATION" && !ShowSimulation) || (target == "HELP" && !ShowHelp)) {
+      return;
+    }
     if ((target == "SETUP" || target == "CONFIG") && !await UnlockProtectedScreens()) {
       return;
     }
@@ -192,9 +226,11 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
   public void Dispose() {
     Connection.Connected -= OnConnected;
     AppState.ConnectionChanged -= OnConnectionChanged;
+    Services.DisplayViewService.Changed -= OnDisplayViewChanged;
     FlightData.RequestFlightPlanner -= OnFlightPlannerRequested;
     Connection.Dispose();
     FlightData.Dispose();
+    FlightPlanner.Dispose();
     Setup.Dispose();
 #pragma warning disable CS0612 // The CONFIG screen remains part of the current application shell.
     Config.Dispose();

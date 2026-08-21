@@ -5,20 +5,22 @@ using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Xml;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using MissionPlanner.Grid;
 using MissionPlanner.Utilities;
+using MissionPlannerAvalonia.Services;
 
 namespace MissionPlannerAvalonia.ViewModels;
 
 public partial class GridUIViewModel : ViewModelBase {
   private const double _rad2Deg = 180 / Math.PI;
 
-  private readonly List<PointLatLngAlt> _polygon;
+  private List<PointLatLngAlt> _polygon;
   private readonly PointLatLngAlt _home;
+  private readonly Func<PointLatLngAlt, double?> _elevationProvider;
 
-  private readonly Dictionary<string, CameraInfo> _cameras = new();
+  private readonly Dictionary<string, SurveyCameraProfile> _cameras = new();
   private readonly bool _loading = true;
   private bool _suppressRecalc;
 
@@ -31,7 +33,7 @@ public partial class GridUIViewModel : ViewModelBase {
     nameof(AddTakeoff), nameof(TakeoffAltitude), nameof(FinishAction),
     nameof(UseSplineWaypoints), nameof(HoldHeading), nameof(Heading), nameof(WaypointDelay),
     nameof(ServoNumber), nameof(ServoPwm), nameof(ServoRepeatSeconds),
-    nameof(ServoLowPwm), nameof(ServoHighPwm),
+    nameof(ServoLowPwm), nameof(ServoHighPwm), nameof(GroundElevationText),
   };
 
   public List<PointLatLngAlt> Result { get; private set; } = new();
@@ -116,6 +118,9 @@ public partial class GridUIViewModel : ViewModelBase {
   private int _servoHighPwm = 1900;
 
   [ObservableProperty]
+  private int _splitCount = 1;
+
+  [ObservableProperty]
   private string _selectedCamera = "";
 
   [ObservableProperty]
@@ -197,19 +202,10 @@ public partial class GridUIViewModel : ViewModelBase {
   private string _cmPixel = "";
 
   [ObservableProperty]
-  private bool _showMarkers = true;
-
-  [ObservableProperty]
   private bool _showFootprints;
 
   [ObservableProperty]
   private bool _showInternals;
-
-  [ObservableProperty]
-  private bool _showGrid = true;
-
-  [ObservableProperty]
-  private bool _showBoundary = true;
 
   [ObservableProperty]
   private string _areaText = "";
@@ -231,6 +227,9 @@ public partial class GridUIViewModel : ViewModelBase {
 
   [ObservableProperty]
   private string _turnRadText = "";
+
+  [ObservableProperty]
+  private string _groundElevationText = "Unavailable";
 
   [ObservableProperty]
   private int _photoCount;
@@ -256,9 +255,11 @@ public partial class GridUIViewModel : ViewModelBase {
   public GridUIViewModel() : this(new List<PointLatLngAlt>(), PointLatLngAlt.Zero) {
   }
 
-  public GridUIViewModel(List<PointLatLngAlt> polygon, PointLatLngAlt home) {
+  public GridUIViewModel(List<PointLatLngAlt> polygon, PointLatLngAlt home,
+      Func<PointLatLngAlt, double?>? elevationProvider = null) {
     _polygon = polygon ?? new List<PointLatLngAlt>();
     _home = home ?? PointLatLngAlt.Zero;
+    _elevationProvider = elevationProvider ?? GetElevation;
 
     LoadCameras();
     LoadSettings();
@@ -288,12 +289,17 @@ public partial class GridUIViewModel : ViewModelBase {
 
   [RelayCommand]
   private void Accept() {
-    var options = new SurveyMissionOptions(UseSpeed, FlyingSpeed, TriggerMode, Spacing,
-        StopTriggerAtStripEnds, AddTakeoff, TakeoffAltitude, FinishAction,
-        UseSplineWaypoints, HoldHeading, Heading, WaypointDelay, ServoNumber, ServoPwm,
-        ServoRepeatSeconds, ServoLowPwm, ServoHighPwm);
-    GridAccepted?.Invoke(SurveyMissionBuilder.Build(Result, _home, options));
-    CloseRequested?.Invoke();
+    try {
+      var options = new SurveyMissionOptions(UseSpeed, FlyingSpeed, TriggerMode, Spacing,
+          StopTriggerAtStripEnds, AddTakeoff, TakeoffAltitude, FinishAction,
+          UseSplineWaypoints, HoldHeading, Heading, WaypointDelay, ServoNumber, ServoPwm,
+          ServoRepeatSeconds, ServoLowPwm, ServoHighPwm, SplitCount, ReadRestoreSpeed());
+      GridAccepted?.Invoke(SurveyMissionBuilder.Build(Result, _home, options));
+      SaveCameraFov();
+      CloseRequested?.Invoke();
+    } catch (Exception ex) {
+      Status = ex.Message;
+    }
   }
 
   [RelayCommand]
@@ -305,7 +311,7 @@ public partial class GridUIViewModel : ViewModelBase {
     }
 
     _suppressRecalc = true;
-    FocalLength = cam.FocalLen;
+    FocalLength = cam.FocalLength;
     ImageHeight = cam.ImageHeight.ToString(CultureInfo.InvariantCulture);
     ImageWidth = cam.ImageWidth.ToString(CultureInfo.InvariantCulture);
     SensorHeight = cam.SensorHeight.ToString(CultureInfo.InvariantCulture);
@@ -439,6 +445,12 @@ public partial class GridUIViewModel : ViewModelBase {
     FootprintText = FovH + " x " + FovV + " m";
     TurnRadText = (turnrad * 2).ToString("0", CultureInfo.InvariantCulture) + " m";
 
+    var terrain = SurveyGridSupport.ComputeTerrainStats(grid, _elevationProvider);
+    GroundElevationText = terrain.SampleCount == 0
+        ? "Unavailable"
+        : terrain.Minimum.ToString("0", CultureInfo.InvariantCulture) + "-" +
+          terrain.Maximum.ToString("0", CultureInfo.InvariantCulture) + " m";
+
     double flyspeedms = FlyingSpeed <= 0 ? 1 : FlyingSpeed;
     PhotoCount = images;
     StripCount = strips / 2;
@@ -525,69 +537,76 @@ public partial class GridUIViewModel : ViewModelBase {
   }
 
   private void LoadCameras() {
-    ReadCameraXml(Settings.GetRunningDirectory() + "camerasBuiltin.xml");
-    ReadCameraXml(Settings.GetUserDataDirectory() + "cameras.xml");
+    _cameras.Clear();
+    foreach (var (name, profile) in SurveyGridSupport.ReadCameraFiles(
+                 Path.Combine(Settings.GetRunningDirectory(), "camerasBuiltin.xml"),
+                 Path.Combine(Settings.GetUserDataDirectory(), "cameras.xml"))) {
+      _cameras[name] = profile;
+    }
+    RefreshCameraNames();
+  }
 
-    foreach (var name in _cameras.Keys.OrderBy(n => n)) {
-      if (!Cameras.Contains(name)) {
-        Cameras.Add(name);
+  public void LoadSamplePhoto(string filename) {
+    try {
+      var metadata = SurveyGridSupport.ReadSamplePhoto(filename);
+      _suppressRecalc = true;
+      ImageWidth = metadata.Width.ToString(CultureInfo.InvariantCulture);
+      ImageHeight = metadata.Height.ToString(CultureInfo.InvariantCulture);
+      if (metadata.FocalLength.HasValue) {
+        FocalLength = metadata.FocalLength.Value;
       }
+      _suppressRecalc = false;
+      Recalc();
+      Status = $"Loaded camera metadata from {Path.GetFileName(filename)}.";
+    } catch (Exception ex) {
+      _suppressRecalc = false;
+      Status = "Unable to read sample photo: " + ex.Message;
     }
   }
 
-  private void ReadCameraXml(string filename) {
-    if (!File.Exists(filename)) {
-      return;
+  public bool SaveCameraProfile(string name) {
+    name = name.Trim();
+    if (name.Length == 0 || !TryPositiveFloat(ImageWidth, out float imageWidth) ||
+        !TryPositiveFloat(ImageHeight, out float imageHeight) ||
+        !TryPositiveFloat(SensorWidth, out float sensorWidth) ||
+        !TryPositiveFloat(SensorHeight, out float sensorHeight) ||
+        !double.IsFinite(FocalLength) || FocalLength <= 0 || FocalLength > float.MaxValue) {
+      Status = "Camera name and all focal, sensor and image values must be positive numbers.";
+      return false;
     }
 
+    var profile = new SurveyCameraProfile(name, (float)FocalLength, sensorWidth, sensorHeight,
+        imageWidth, imageHeight);
+    _cameras[name] = profile;
     try {
-      using var reader = new XmlTextReader(filename);
-      var ci = new CultureInfo("en-US");
-      while (reader.Read()) {
-        reader.MoveToElement();
-        if (reader.Name != "Camera") {
-          continue;
-        }
+      SurveyGridSupport.WriteCameraFile(
+          Path.Combine(Settings.GetUserDataDirectory(), "cameras.xml"), _cameras.Values);
+      RefreshCameraNames();
+      SelectedCamera = name;
+      Status = $"Saved camera profile '{name}'.";
+      return true;
+    } catch (Exception ex) {
+      Status = "Unable to save camera profile: " + ex.Message;
+      return false;
+    }
+  }
 
-        var cam = new CameraInfo();
-        while (reader.Read()) {
-          reader.MoveToElement();
-          bool stop = false;
-          switch (reader.Name) {
-            case "name":
-              cam.Name = reader.ReadString();
-              break;
-            case "imgw":
-              cam.ImageWidth = float.Parse(reader.ReadString(), ci);
-              break;
-            case "imgh":
-              cam.ImageHeight = float.Parse(reader.ReadString(), ci);
-              break;
-            case "senw":
-              cam.SensorWidth = float.Parse(reader.ReadString(), ci);
-              break;
-            case "senh":
-              cam.SensorHeight = float.Parse(reader.ReadString(), ci);
-              break;
-            case "flen":
-              cam.FocalLen = float.Parse(reader.ReadString(), ci);
-              break;
-            case "Camera":
-              if (!string.IsNullOrEmpty(cam.Name)) {
-                _cameras[cam.Name] = cam;
-              }
+  public void SaveGridFile(string filename) {
+    try {
+      SurveyGridSupport.SaveGrid(filename, CreateGridData());
+      SaveSettings();
+      Status = $"Saved survey configuration to {Path.GetFileName(filename)}.";
+    } catch (Exception ex) {
+      Status = "Unable to save survey configuration: " + ex.Message;
+    }
+  }
 
-              stop = true;
-              break;
-          }
-
-          if (stop) {
-            break;
-          }
-        }
-      }
-    } catch {
-
+  public void LoadGridFile(string filename) {
+    try {
+      ApplyGridData(SurveyGridSupport.LoadGrid(filename));
+      Status = $"Loaded survey configuration from {Path.GetFileName(filename)}.";
+    } catch (Exception ex) {
+      Status = "Unable to load survey configuration: " + ex.Message;
     }
   }
 
@@ -672,6 +691,111 @@ public partial class GridUIViewModel : ViewModelBase {
     SelectedCamera = GetS("grid_camera", SelectedCamera);
   }
 
+  internal GridData CreateGridData() => new() {
+    poly = _polygon.ToList(),
+    camera = SelectedCamera,
+    alt = (decimal)Altitude,
+    angle = (decimal)Angle,
+    camdir = CamDirection,
+    speed = (decimal)FlyingSpeed,
+    usespeed = UseSpeed,
+    autotakeoff = AddTakeoff,
+    autotakeoff_RTL = FinishAction == SurveyMissionBuilder.FinishRtl,
+    splitmission = SplitCount,
+    internals = ShowInternals,
+    footprints = ShowFootprints,
+    advanced = true,
+    dist = (decimal)Distance,
+    overshoot1 = (decimal)Overshoot1,
+    overshoot2 = (decimal)Overshoot2,
+    leadin = (decimal)Leadin,
+    leadin2 = (decimal)Leadin2,
+    startfrom = StartFrom,
+    overlap = (decimal)Overlap,
+    sidelap = (decimal)Sidelap,
+    spacing = (decimal)Spacing,
+    crossgrid = CrossGrid,
+    spiral = Spiral,
+    copter_delay = (decimal)WaypointDelay,
+    copter_headinghold_chk = HoldHeading,
+    copter_headinghold = (decimal)Heading,
+    copter_spline = UseSplineWaypoints,
+    minlaneseparation = (decimal)MinLaneSeparation,
+    clockwiseLaps = ClockwiseLaps,
+    laps = Laps,
+    matchPerimeter = MatchSpiralPerimeter,
+    trigdist = TriggerMode == SurveyMissionBuilder.TriggerDistance,
+    digicam = TriggerMode == SurveyMissionBuilder.TriggerDigicam,
+    repeatservo = TriggerMode == SurveyMissionBuilder.TriggerRepeatServo,
+    breaktrigdist = StopTriggerAtStripEnds,
+    repeatservo_no = ServoNumber,
+    repeatservo_pwm = ServoPwm,
+    repeatservo_cycle = (decimal)ServoRepeatSeconds,
+    setservo_no = TriggerMode == SurveyMissionBuilder.TriggerSetServo ? ServoNumber : 0,
+    setservo_low = ServoLowPwm,
+    setservo_high = ServoHighPwm,
+  };
+
+  internal void ApplyGridData(GridData data) {
+    _suppressRecalc = true;
+    _polygon = data.poly?.ToList() ?? new List<PointLatLngAlt>();
+    Altitude = (double)data.alt;
+    Angle = (double)data.angle;
+    CamDirection = data.camdir;
+    UseSpeed = data.usespeed;
+    FlyingSpeed = (double)data.speed;
+    AddTakeoff = data.autotakeoff;
+    FinishAction = !data.autotakeoff ? SurveyMissionBuilder.FinishNone
+        : data.autotakeoff_RTL ? SurveyMissionBuilder.FinishRtl : SurveyMissionBuilder.FinishLand;
+    SplitCount = Math.Max(1, (int)data.splitmission);
+    Distance = (double)data.dist;
+    Overshoot1 = (double)data.overshoot1;
+    Overshoot2 = (double)data.overshoot2;
+    Leadin = (double)data.leadin;
+    Leadin2 = (double)data.leadin2;
+    StartFrom = Enum.TryParse<Grid.StartPosition>(data.startfrom, out _) ? data.startfrom : StartFrom;
+    Overlap = (double)data.overlap;
+    Sidelap = (double)data.sidelap;
+    Spacing = (double)data.spacing;
+    CrossGrid = data.crossgrid;
+    Spiral = data.spiral;
+    WaypointDelay = (double)data.copter_delay;
+    HoldHeading = data.copter_headinghold_chk;
+    Heading = (double)data.copter_headinghold;
+    UseSplineWaypoints = data.copter_spline;
+    MinLaneSeparation = (double)data.minlaneseparation;
+    ClockwiseLaps = Math.Max(0, (int)data.clockwiseLaps);
+    Laps = Math.Max(0, (int)data.laps);
+    MatchSpiralPerimeter = data.matchPerimeter;
+    TriggerMode = data.trigdist ? SurveyMissionBuilder.TriggerDistance
+        : data.digicam ? SurveyMissionBuilder.TriggerDigicam
+        : data.repeatservo ? SurveyMissionBuilder.TriggerRepeatServo
+        : data.setservo_no > 0 ? SurveyMissionBuilder.TriggerSetServo
+        : SurveyMissionBuilder.TriggerNone;
+    StopTriggerAtStripEnds = data.breaktrigdist;
+    if (data.repeatservo_no > 0) {
+      ServoNumber = (int)data.repeatservo_no;
+    } else if (data.setservo_no > 0) {
+      ServoNumber = (int)data.setservo_no;
+    }
+    if (data.repeatservo_pwm > 0) {
+      ServoPwm = (int)data.repeatservo_pwm;
+    }
+    ServoRepeatSeconds = (double)data.repeatservo_cycle;
+    if (data.setservo_low > 0) {
+      ServoLowPwm = (int)data.setservo_low;
+    }
+    if (data.setservo_high > 0) {
+      ServoHighPwm = (int)data.setservo_high;
+    }
+    ShowInternals = data.internals;
+    ShowFootprints = data.footprints;
+    SelectedCamera = data.camera ?? "";
+    _suppressRecalc = false;
+    ApplyCamera();
+    Recalc();
+  }
+
   private static void Set(string key, double v) =>
       Settings.Instance[key] = v.ToString(CultureInfo.InvariantCulture);
 
@@ -700,12 +824,46 @@ public partial class GridUIViewModel : ViewModelBase {
     return choices.Contains(value, StringComparer.Ordinal) ? value : fallback;
   }
 
-  private sealed class CameraInfo {
-    public string Name = "";
-    public float FocalLen;
-    public float SensorWidth;
-    public float SensorHeight;
-    public float ImageWidth;
-    public float ImageHeight;
+  private void RefreshCameraNames() {
+    Cameras.Clear();
+    foreach (string name in _cameras.Keys.OrderBy(name => name, StringComparer.Ordinal)) {
+      Cameras.Add(name);
+    }
+  }
+
+  private static bool TryPositiveFloat(string text, out float value) =>
+      float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value) &&
+      float.IsFinite(value) && value > 0;
+
+  private static double? GetElevation(PointLatLngAlt point) {
+    var result = srtm.getAltitude(point.Lat, point.Lng);
+    return result.currenttype == srtm.tiletype.invalid ? null : result.alt;
+  }
+
+  private static double ReadRestoreSpeed() {
+    try {
+      var parameters = AppState.comPort.MAV.param;
+      if (parameters["WPNAV_SPEED"] != null) {
+        return parameters["WPNAV_SPEED"].Value / 100.0;
+      }
+      if (parameters["WP_SPD"] != null) {
+        return parameters["WP_SPD"].Value;
+      }
+    } catch {
+    }
+    return 0;
+  }
+
+  private void SaveCameraFov() {
+    if (!TryPositiveFloat(SensorWidth, out float width) ||
+        !TryPositiveFloat(SensorHeight, out float height) || FocalLength <= 0) {
+      return;
+    }
+    double horizontal = 2 * Math.Atan(width / (2 * FocalLength)) * _rad2Deg;
+    double vertical = 2 * Math.Atan(height / (2 * FocalLength)) * _rad2Deg;
+    Settings.Instance["camera_fovh"] = (CamDirection ? horizontal : vertical)
+        .ToString(CultureInfo.InvariantCulture);
+    Settings.Instance["camera_fovv"] = (CamDirection ? vertical : horizontal)
+        .ToString(CultureInfo.InvariantCulture);
   }
 }

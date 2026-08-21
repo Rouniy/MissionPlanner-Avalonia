@@ -21,6 +21,15 @@ public static class MavMarker {
     RotateWithMap = true,
   };
 
+  public static SymbolStyle Vessel(double headingDeg) => new() {
+    SymbolType = SymbolType.Rectangle,
+    Fill = new Brush(new Color(40, 170, 255)),
+    Outline = new Pen(Color.White, 1),
+    SymbolScale = 0.6,
+    SymbolRotation = headingDeg,
+    RotateWithMap = true,
+  };
+
   public static SymbolStyle Camera(bool belowMinimumInterval) => new() {
     SymbolType = SymbolType.Ellipse,
     Fill = new Brush(belowMinimumInterval ? Color.Red : new Color(40, 210, 90)),

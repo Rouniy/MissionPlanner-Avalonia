@@ -7,7 +7,15 @@ namespace MissionPlannerAvalonia.Services;
 
 public readonly record struct GraphCurve(string Expression, int Axis);
 
-public readonly record struct GraphPreset(string Name, IReadOnlyList<GraphCurve> Curves);
+public readonly record struct GraphPresetAlternative(IReadOnlyList<GraphCurve> Curves);
+
+public readonly record struct GraphPreset(
+    string Name,
+    string Description,
+    IReadOnlyList<GraphPresetAlternative> Alternatives) {
+  public IReadOnlyList<GraphCurve> Curves =>
+      Alternatives.Count == 0 ? System.Array.Empty<GraphCurve>() : Alternatives[0].Curves;
+}
 
 public static class GraphPresets {
   public static List<GraphPreset> Parse(string xml) {
@@ -15,11 +23,17 @@ public static class GraphPresets {
     var list = new List<GraphPreset>();
     foreach (var g in doc.Descendants("graph")) {
       var name = (string?)g.Attribute("name");
-      var expr = (string?)g.Element("expression");
-      if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(expr)) {
+      var expressions = g.Elements("expression")
+          .Select(element => element.Value.Trim())
+          .Where(expression => !string.IsNullOrWhiteSpace(expression))
+          .Select(expression => new GraphPresetAlternative(ParseCurves(expression)))
+          .Where(alternative => alternative.Curves.Count > 0)
+          .ToArray();
+      if (string.IsNullOrWhiteSpace(name) || expressions.Length == 0) {
         continue;
       }
-      list.Add(new GraphPreset(name!, ParseCurves(expr!)));
+      string description = g.Elements("description").FirstOrDefault()?.Value.Trim() ?? string.Empty;
+      list.Add(new GraphPreset(name!, description, expressions));
     }
     return list;
   }

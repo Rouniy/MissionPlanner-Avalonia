@@ -39,7 +39,8 @@
           <CheckBox Content="Spline" IsChecked="{Binding SplineDefault}" Foreground="#E0E0E0"
                     Margin="0,0,10,0" VerticalAlignment="Center" />
           <CheckBox Content="Verify Height" IsChecked="{Binding VerifyHeight}" Foreground="#E0E0E0"
-                    Margin="0,0,10,0" VerticalAlignment="Center" />
+                    Margin="0,0,10,0" VerticalAlignment="Center"
+                    IsVisible="{Binding ShowVerifyHeight}" />
           <TextBlock Text="Zoom" Classes="fieldlbl" Margin="0,0,4,0" />
           <Slider x:Name="ZoomSlider" Width="120" Minimum="3" Maximum="20" Value="17"
                   ValueChanged="OnZoomSliderChanged" VerticalAlignment="Center" Margin="0,0,10,0" />

@@ -63,6 +63,7 @@
 
     <Compile Include="../../external/MissionPlanner/Radio/Uploader.cs" Link="Radio/Uploader.cs" />
     <Compile Include="../../external/MissionPlanner/Radio/IHex.cs" Link="Radio/IHex.cs" />
+    <Compile Include="../../external/MissionPlanner/Grid/GridData.cs" Link="Grid/GridData.cs" />
   </ItemGroup>
 
   <ItemGroup>
