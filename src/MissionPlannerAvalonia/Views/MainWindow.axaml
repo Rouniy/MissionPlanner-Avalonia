@@ -135,6 +135,7 @@
         <Menu Grid.Column="1" Background="Transparent" VerticalAlignment="Center">
           <MenuItem Header="TOOLS">
             <MenuItem Header="Developer Tools     Ctrl+F" Click="OnAdvancedTools" />
+            <MenuItem Header="Plugin Manager     Ctrl+P" Click="OnPluginManager" />
             <Separator />
             <MenuItem Header="MAVLink Inspector     Ctrl+I" Click="OnMavlinkInspector" />
             <MenuItem Header="MAVLink Mirror" Click="OnMavlinkMirror" />

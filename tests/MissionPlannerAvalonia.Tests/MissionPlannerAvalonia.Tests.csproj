@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj" />
+    <ProjectReference Include="../MissionPlannerAvalonia.TestPlugin/MissionPlannerAvalonia.TestPlugin.csproj" />
   </ItemGroup>
 
   <ItemGroup>

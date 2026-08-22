@@ -33,10 +33,19 @@ public partial class App : Application {
     if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop) {
       var mainViewModel = new MainWindowViewModel();
       desktop.MainWindow = new MainWindow { DataContext = mainViewModel };
+      Services.PluginService.Initialize(mainViewModel);
       Avalonia.Threading.Dispatcher.UIThread.Post(
-          () => _ = mainViewModel.Connection.TryAutoConnectAsync());
+          () => {
+            _ = mainViewModel.Connection.TryAutoConnectAsync();
+            _ = Services.PluginService.RefreshAsync();
+          });
 
       desktop.Exit += (_, _) => {
+        try {
+          Services.PluginService.ShutdownAsync().AsTask().Wait(System.TimeSpan.FromSeconds(4));
+        } catch {
+          // A third-party plugin is never allowed to hold process shutdown indefinitely.
+        }
         try {
           System.Threading.Tasks.Task.Run(Services.AudioVario.Shutdown)
               .Wait(System.TimeSpan.FromSeconds(2));

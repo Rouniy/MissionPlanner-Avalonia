@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 751 tests verified; the HUD-recording/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 759 tests verified; the portable-plugin-host/HUD-recording/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -95,6 +95,15 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   latest parameter values, and reconstruction of complete QGC WPL mission snapshots in addition to
   KML, GPX and Matlab output.
 - Upstream-compatible custom flight actions and HUD drawing extension points.
+- The official plugin lifecycle now has a native cross-platform host. Portable DLLs are discovered
+  in user and install `plugins` directories, run `Init`/`Loaded`/scheduled `Loop`/bounded `Exit`,
+  resolve private managed and native dependencies in collectible load contexts and share the live
+  MAVLink/settings contracts. Tools > Plugin Manager and Ctrl+P expose metadata, diagnostics,
+  refresh/load and the upstream `DisabledPlugins` enable policy. Plugin actions, connection events
+  and HUD overlays are cleaned automatically; one blocking/erroring loop cannot stall the shared
+  scheduler, repeated loop faults are stopped, and plugin diagnostics use a bounded rotating log.
+  Plugins remain trusted in-process code. Existing WinForms binaries still require source-level UI
+  adaptation and recompilation against the documented portable API.
 - Linux joystick input uses a port-native joydev reader with deterministic lifecycle, raw input
   preview and Avalonia-safe axis/button detection; Windows continues to use upstream DirectInput.
   An application-level 20 Hz sender now mirrors upstream RC override/manual-control behaviour,
@@ -412,12 +421,12 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 751 passed, 0 failed.
+- Automated tests: 759 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target was rebuilt from the current 751-test source on 2026-08-22. Package metadata,
+- The `.deb` target was rebuilt from the current 759-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 396 packaged-file checksums match after extraction, including the
   byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -435,7 +444,7 @@ The most recent Debian artifact is
 `out/packages/missionplanner-avalonia_1.3.83-20260822.afe9a7f_amd64.deb`
 (53,910,782 bytes; SHA-256
 `09a4f7360eec1512177b58e3fc4438e2dcbf03cd0edb4781c569bfbf3ddf0e51`), built from the current
-751-test source including HUD-to-MJPEG/AVI recording, the integrated Grid v2 boundary editor,
+759-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, the integrated Grid v2 boundary editor,
 interactive MAVLink
 camera/gimbal video control and all official
 Maestro/ArduTracker/DegreeTracker serial antenna outputs,
@@ -493,7 +502,7 @@ not remove required Windows-native files from `win-x64` builds.
 
 | Area | Affected targets | Current state and direction |
 | --- | --- | --- |
-| Full Mission Planner plugin loader | All | Discovery, lifecycle and WinForms plugin hosting are absent. Keep the new portable action/HUD hooks and add a cross-platform plugin host separately. |
+| Legacy Mission Planner plugin compatibility | All | Portable DLL discovery, dependency loading, `Init`/`Loaded`/`Loop`/`Exit`, enable/disable UI, current MAVLink/settings access, Flight Data actions and HUD overlays are native and operational. Existing DLLs compiled against Mission Planner's WinForms executable are not binary-compatible; their UI must be adapted to Avalonia and rebuilt. Loose `.cs` runtime compilation is intentionally not treated as DLL compatibility. |
 | Optional native GDAL/OGR map drivers | All | GeoPackage feature layers, SHP and DXF are available through managed cross-platform readers. The generic native OGR/GDAL driver path for additional formats remains absent. |
 | Swarm / formation flight | All | The upstream swarm controllers and UI are absent. The control logic is portable, but needs a new multi-vehicle foundation and Avalonia safety UI. |
 | Signed beta application updates | All | Stable signed updates work. The Beta Updates control is disabled until this project publishes and signs a separate beta manifest/channel. |

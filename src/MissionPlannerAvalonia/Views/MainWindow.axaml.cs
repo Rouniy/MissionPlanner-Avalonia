@@ -85,6 +85,9 @@ public partial class MainWindow : Window {
       case Key.J when ctrl:
         DeviceOperationsWindow.OpenWindow();
         break;
+      case Key.P when ctrl:
+        PluginManagerWindow.OpenWindow();
+        break;
       case Key.W when ctrl:
         PropagationSettingsWindow.OpenWindow();
         break;
@@ -180,6 +183,9 @@ public partial class MainWindow : Window {
       vm.NavigateCommand.Execute("SETUP");
     }
   }
+
+  private void OnPluginManager(object? sender, RoutedEventArgs e) =>
+      PluginManagerWindow.OpenWindow();
 
   private void OnMavlinkInspector(object? sender, RoutedEventArgs e) =>
       MAVLinkInspectorWindow.OpenWindow();
