@@ -124,6 +124,14 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   their advertised range; uncalibrated devices keep the original bit-for-bit mapping. Calibration
   uses a detached read-only joydev session and releases active control first, so endpoint movements
   cannot reach SITL or a real vehicle.
+- Simulation now ports all four current official multi-instance launch actions: Copter single-link
+  chain and Copter/Plane/Rover multilink swarms. Each instance receives the upstream four-metre home
+  offset, instance-specific TCP/RC ports and an isolated `identity.parm` with its own MAV sysid.
+  Multilink instances use the shared independent-connection runtime, so parameters and disconnects
+  remain scoped to the selected vehicle. A partial process or telemetry-link failure rolls the whole
+  launch back instead of leaving an ambiguous half-running swarm, and Stop all removes only links
+  owned by that simulation session. A two-Copter Linux acceptance run verified both real SITL
+  processes, TCP links and distinct sysids end to end.
 - Standalone Antenna Tracker serial output ports all three interfaces from the pinned Mission
   Planner source: Maestro compact binary commands, ArduTracker PWM text commands and DegreeTracker
   tenths-of-a-degree text commands. Both Setup entries share the same tested drivers and settings;
@@ -652,16 +660,18 @@ A Flysky FS-i6XCN was used for a Linux joydev smoke: the port-native reader open
 Its advertised `-127..127` HID axes only reached about `-90..90` physically, producing roughly
 `7431..58105` instead of the full unsigned range; the new per-device range calibration specifically
 covers this mismatch and its endpoint/clamping/monotonicity behaviour is unit-tested.
-The 20 Hz MAVLink and built-in-SITL packet paths are unit-tested; hands-on auto-detect/mapping and
-RC output to a live vehicle or SITL still need acceptance. Camera-footprint projection is
+The 20 Hz MAVLink and built-in-SITL packet paths are unit-tested; a two-instance Linux Copter swarm
+has also been started and connected over two real MAVLink TCP links with distinct sysids. Hands-on
+joystick auto-detect/mapping and RC output to a live vehicle or SITL still need acceptance.
+Camera-footprint projection is
 unit-tested, but a live `CAMERA_FEEDBACK` source is still required for acceptance. No USB flight
 controller, CAN adapter, camera or live vehicle was attached during this verification. Each release
 target still needs acceptance tests with its native serial/USB permissions, video/audio stack and
 representative hardware. The port-native PX4Flow frame path is unit-tested but still needs a live
 sensor acceptance run. ArduPlane Formation quaternion/PID generation and exact-link packet routing
 are unit-tested, but the experimental controller still requires ArduPlane SITL and live-aircraft
-acceptance before operational use. ArduPilot SITL end-to-end mission testing is also pending; macOS SITL
-currently has no prebuilt launcher binary in this port.
+acceptance before operational use. Full ArduPilot SITL mission execution testing is still pending;
+macOS SITL currently has no prebuilt launcher binary in this port.
 
 ## Security dependency overrides
 

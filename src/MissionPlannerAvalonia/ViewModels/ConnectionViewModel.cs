@@ -441,6 +441,9 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     });
   }
 
+  internal void RefreshManagedConnections(bool reloadActiveParameters = false) =>
+      RefreshVehicleChoices(reloadActiveParameters);
+
   private void OnActiveConnectionChanged(
       Services.MavLinkConnection previous,
       Services.MavLinkConnection current) {

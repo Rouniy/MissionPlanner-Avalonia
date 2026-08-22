@@ -175,30 +175,46 @@ internal static class ConnectionListService {
     }
     ConnectionListParseResult parsed = ConnectionListParser.Parse(
         await File.ReadAllLinesAsync(path, cancellationToken).ConfigureAwait(false));
-    if (parsed.Endpoints.Count == 0) {
+    return await OpenEndpointsAsync(
+            parsed.Endpoints, manager, cancellationToken, progress,
+            openTelemetryLogs, parsed.Errors)
+        .ConfigureAwait(false);
+  }
+
+  internal static async Task<ConnectionListOpenResult> OpenEndpointsAsync(
+      IReadOnlyList<ConnectionListEndpoint> endpoints,
+      MavLinkConnectionManager manager,
+      CancellationToken cancellationToken = default,
+      Action<int, string>? progress = null,
+      bool openTelemetryLogs = true,
+      IReadOnlyList<ConnectionListParseError>? parseErrors = null) {
+    ArgumentNullException.ThrowIfNull(endpoints);
+    ArgumentNullException.ThrowIfNull(manager);
+    parseErrors ??= [];
+    if (endpoints.Count == 0) {
       progress?.Invoke(100, "No valid connection entries found.");
-      return new ConnectionListOpenResult([], [], parsed.Errors);
+      return new ConnectionListOpenResult([], [], parseErrors);
     }
 
     // Upstream Mission Planner opens Connection List rows in parallel. Keep that behavior for
     // modem fleets, but cap concurrency so a large field file cannot exhaust the thread pool.
-    int maximumConcurrency = Math.Min(8, parsed.Endpoints.Count);
+    int maximumConcurrency = Math.Min(8, endpoints.Count);
     using var concurrency = new SemaphoreSlim(maximumConcurrency, maximumConcurrency);
     int completed = 0;
-    Task<OpenOutcome>[] tasks = parsed.Endpoints.Select(async endpoint => {
+    Task<OpenOutcome>[] tasks = endpoints.Select(async endpoint => {
       await concurrency.WaitAsync(cancellationToken).ConfigureAwait(false);
       try {
         cancellationToken.ThrowIfCancellationRequested();
         progress?.Invoke(
-            Volatile.Read(ref completed) * 100 / parsed.Endpoints.Count,
+            Volatile.Read(ref completed) * 100 / endpoints.Count,
             $"Opening {endpoint.DisplayName}…");
         return await OpenEndpointAsync(
                 endpoint, manager, cancellationToken, openTelemetryLogs)
             .ConfigureAwait(false);
       } finally {
         int done = Interlocked.Increment(ref completed);
-        progress?.Invoke(done * 100 / parsed.Endpoints.Count,
-            $"Processed {done} of {parsed.Endpoints.Count} connection(s)…");
+        progress?.Invoke(done * 100 / endpoints.Count,
+            $"Processed {done} of {endpoints.Count} connection(s)…");
         concurrency.Release();
       }
     }).ToArray();
@@ -211,8 +227,8 @@ internal static class ConnectionListService {
         .Where(outcome => outcome.Failure != null)
         .Select(outcome => outcome.Failure!)];
     progress?.Invoke(100,
-        $"Opened {opened.Length} of {parsed.Endpoints.Count} connection(s).");
-    return new ConnectionListOpenResult(opened, failures, parsed.Errors);
+        $"Opened {opened.Length} of {endpoints.Count} connection(s).");
+    return new ConnectionListOpenResult(opened, failures, parseErrors);
   }
 
   private static async Task<OpenOutcome> OpenEndpointAsync(
