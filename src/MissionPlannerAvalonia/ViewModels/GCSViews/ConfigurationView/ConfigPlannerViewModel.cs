@@ -106,6 +106,9 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
   private string _varioStatus = "vario stopped";
 
   [ObservableProperty]
+  private string _speechStatus = MissionPlannerAvalonia.Services.Speech.LastStatus;
+
+  [ObservableProperty]
   private bool _speechArmedOnly;
 
   [ObservableProperty]
@@ -246,6 +249,7 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
     Load();
     AudioVario.StateChanged += OnVarioStateChanged;
     DisplayViewService.Changed += OnDisplayViewChanged;
+    MissionPlannerAvalonia.Services.Speech.StatusChanged += HandleSpeechStatusChanged;
     RefreshVarioState();
   }
 
@@ -355,6 +359,20 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
   public void Dispose() {
     AudioVario.StateChanged -= OnVarioStateChanged;
     DisplayViewService.Changed -= OnDisplayViewChanged;
+    MissionPlannerAvalonia.Services.Speech.StatusChanged -= HandleSpeechStatusChanged;
+  }
+
+  private void HandleSpeechStatusChanged(string status) =>
+      Avalonia.Threading.Dispatcher.UIThread.Post(() => SpeechStatus = status);
+
+  [RelayCommand]
+  private void TestSpeech() {
+    if (!EnableSpeech) {
+      SpeechStatus = "Enable Speech before running the test.";
+      return;
+    }
+    MissionPlannerAvalonia.Services.Speech.Speak("Проверка звука Mission Planner");
+    SpeechStatus = MissionPlannerAvalonia.Services.Speech.LastStatus;
   }
 
   [RelayCommand]

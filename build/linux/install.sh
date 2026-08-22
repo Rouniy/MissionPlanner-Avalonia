@@ -15,10 +15,12 @@ echo
 echo "Serial access to a flight controller needs the dialout group:"
 echo "  sudo usermod -aG dialout \$USER   # then log out and back in"
 
-if ! command -v spd-say >/dev/null 2>&1; then
+if ! command -v spd-say >/dev/null 2>&1 ||
+    ! dpkg-query -W -f='${Status}' speech-dispatcher-espeak-ng 2>/dev/null |
+      grep -q 'install ok installed'; then
   echo
-  echo "Optional spoken warnings need speech-dispatcher:"
-  echo "  sudo apt-get install speech-dispatcher"
+  echo "Optional spoken warnings need Speech Dispatcher with the espeak-ng module:"
+  echo "  sudo apt-get install speech-dispatcher-espeak-ng"
 fi
 
 if ! ldconfig -p 2>/dev/null | grep -q 'libvlc\.so'; then
