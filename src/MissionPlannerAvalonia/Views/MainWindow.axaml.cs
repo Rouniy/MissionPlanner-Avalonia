@@ -177,6 +177,8 @@ public partial class MainWindow : Window {
 
   private void OnMapCache(object? sender, RoutedEventArgs e) => MapCacheWindow.OpenWindow();
 
+  private void OnTerrain3D(object? sender, RoutedEventArgs e) => Terrain3DWindow.OpenWindow();
+
   private void OnDeviceOperations(object? sender, RoutedEventArgs e) =>
       DeviceOperationsWindow.OpenWindow();
 

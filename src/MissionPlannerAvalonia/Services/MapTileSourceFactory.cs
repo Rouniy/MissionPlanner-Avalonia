@@ -173,6 +173,19 @@ internal static class MapTileSourceFactory {
     return source.GetTileAsync(_prefetchClient, tile, cancellationToken);
   }
 
+  /// <summary>
+  /// Reads a tile through the operator-selected online/cache policy. Interactive consumers such
+  /// as the official-compatible 3D terrain view are allowed to populate the shared cache, unlike
+  /// directory scanners which must use <see cref="GetCachedTileAsync"/>.
+  /// </summary>
+  internal static Task<byte[]?> GetTileAsync(
+      string mapType, TileInfo tile, CancellationToken cancellationToken = default) {
+    string normalized = NormalizeMapType(mapType);
+    HttpTileSource source = CreateSource(
+        normalized, UrlTemplateFor(normalized), CurrentAccessMode);
+    return source.GetTileAsync(_prefetchClient, tile, cancellationToken);
+  }
+
   internal static TileLayer CreateLayer(
       string name,
       string urlTemplate,

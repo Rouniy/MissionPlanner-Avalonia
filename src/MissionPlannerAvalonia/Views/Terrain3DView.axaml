@@ -1,0 +1,64 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  mc:Ignorable="d"
+  d:DesignWidth="1100"
+  d:DesignHeight="720"
+  x:Class="MissionPlannerAvalonia.Views.Terrain3DView"
+  x:DataType="vm:Terrain3DViewModel"
+  Background="#151817"
+  Focusable="True"
+>
+  <Grid RowDefinitions="Auto,*,Auto,Auto">
+    <Border Grid.Row="0" Background="#292D2B" Padding="10,7">
+      <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+          <CheckBox Content="Lock to MAV" IsChecked="{Binding LockToVehicle, Mode=TwoWay}" />
+          <CheckBox Content="Fog" IsChecked="{Binding FogEnabled, Mode=TwoWay}" />
+          <CheckBox Content="Imagery" IsChecked="{Binding ImageryEnabled, Mode=TwoWay}" />
+          <TextBlock Text="Range" VerticalAlignment="Center" />
+          <NumericUpDown Width="90" Minimum="250" Maximum="5000" Increment="250"
+                         FormatString="0 m" Value="{Binding RangeM, Mode=TwoWay}" />
+          <TextBlock Text="Grid" VerticalAlignment="Center" />
+          <NumericUpDown Width="72" Minimum="17" Maximum="65" Increment="8"
+                         FormatString="0" Value="{Binding GridSize, Mode=TwoWay}" />
+          <TextBlock Text="Imagery min/max" VerticalAlignment="Center" />
+          <NumericUpDown Width="68" Minimum="1" Maximum="20" Increment="1"
+                         FormatString="0" Value="{Binding TextureMinZoom, Mode=TwoWay}" />
+          <NumericUpDown Width="68" Minimum="1" Maximum="20" Increment="1"
+                         FormatString="0" Value="{Binding TextureMaxZoom, Mode=TwoWay}" />
+          <TextBlock Text="Vertical ×" VerticalAlignment="Center" />
+          <NumericUpDown Width="72" Minimum="0.25" Maximum="8" Increment="0.25"
+                         FormatString="0.##" Value="{Binding VerticalExaggeration, Mode=TwoWay}" />
+          <Button Name="ReloadTerrain" Content="Reload terrain" Command="{Binding ReloadCommand}" />
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+    <Border Grid.Row="1" Background="Black" ClipToBounds="True">
+      <Image Name="TerrainImage"
+             Source="{Binding Frame}"
+             Stretch="Fill"
+             HorizontalAlignment="Stretch"
+             VerticalAlignment="Stretch" />
+    </Border>
+
+    <Border Grid.Row="2" Background="#222624" Padding="10,5">
+      <TextBlock Name="TerrainPointerStatus" Text="{Binding PointerPosition}"
+                 TextTrimming="CharacterEllipsis" />
+    </Border>
+    <Grid Grid.Row="3" ColumnDefinitions="*,Auto" Background="#292D2B" Margin="10,6">
+      <StackPanel>
+        <TextBlock Name="TerrainStatus" Text="{Binding Status}" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding Details}" FontSize="11" Foreground="#AAB4AF"
+                   TextWrapping="Wrap" />
+      </StackPanel>
+      <TextBlock Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center"
+                 Text="Free camera: W/S/A/D · Q/E yaw · R/F altitude · arrows pitch/yaw"
+                 FontSize="11" Foreground="#AAB4AF" />
+    </Grid>
+  </Grid>
+</UserControl>
