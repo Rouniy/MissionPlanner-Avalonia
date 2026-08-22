@@ -33,7 +33,8 @@
                 IsEnabled="{Binding CanFilterFrames}" />
         <Button Content="Stats" Command="{Binding StatsCommand}" />
         <Button Name="BusInspectorBtn" Content="Bus Inspector" />
-        <CheckBox Content="Exit SLCAN on leave?" IsChecked="{Binding ExitSlcanOnLeave}" />
+        <CheckBox Content="Exit SLCAN on leave?" IsChecked="{Binding ExitSlcanOnLeave}"
+                  IsVisible="{Binding ShowDirectSerialOptions}" />
         <CheckBox Content="Log" IsChecked="{Binding LogToFile}" />
       </StackPanel>
 
@@ -66,6 +67,26 @@
                 Command="{Binding PrepareAutopilotSlcanCommand}"
                 IsEnabled="{Binding CanChangeInterface}" />
       </StackPanel>
+
+      <StackPanel
+        x:Name="MulticastOptions"
+        Orientation="Horizontal"
+        Spacing="8"
+        IsVisible="{Binding ShowMulticastOptions}"
+      >
+        <TextBlock Classes="fieldlbl" Text="IPv4 network interface" VerticalAlignment="Center" />
+        <ComboBox
+          x:Name="MulticastInterfaceSelector"
+          ItemsSource="{Binding NetworkInterfaces}"
+          SelectedItem="{Binding SelectedNetworkInterface}"
+          IsEnabled="{Binding CanEditNetworkInterface}"
+          MinWidth="440"
+        />
+        <Button x:Name="RefreshMulticastInterfacesButton"
+                Content="Rescan interfaces"
+                Command="{Binding RefreshNetworkInterfacesCommand}"
+                IsEnabled="{Binding CanEditNetworkInterface}" />
+      </StackPanel>
     </StackPanel>
 
     <TextBlock
@@ -74,6 +95,16 @@
       Classes="fieldlbl"
       TextWrapping="Wrap"
       Margin="0,0,0,4"
+      IsVisible="{Binding ShowDirectSerialOptions}"
+    />
+
+    <TextBlock
+      Grid.Row="2"
+      Text="Multicast CAN1/CAN2 uses the official pydronecan-compatible groups 239.65.82.0/1 on UDP port 57732. Select the IPv4 interface connected to that multicast network; no MAVLink vehicle connection is required."
+      Classes="fieldlbl"
+      TextWrapping="Wrap"
+      Margin="0,0,0,4"
+      IsVisible="{Binding ShowMulticastOptions}"
     />
 
     <TextBlock

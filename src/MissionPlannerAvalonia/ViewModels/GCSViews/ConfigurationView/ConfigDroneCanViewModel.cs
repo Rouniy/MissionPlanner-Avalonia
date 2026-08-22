@@ -26,13 +26,18 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   private const string _favoritesKey = "dronecan_fav_params";
   private const string _slcanPortKey = "dronecan_slcan_port";
   private const string _slcanBaudKey = "dronecan_slcan_baud";
+  private const string _multicastInterfaceKey = "dronecan_mcast_interface";
   private readonly Func<DroneCanSessionTarget?> _activeTarget;
   private readonly Func<string[]> _serialPortNames;
   private readonly Func<string, int, ICommsSerial> _serialPortFactory;
+  private readonly Func<IReadOnlyList<DroneCanNetworkInterfaceOption>> _networkInterfaces;
+  private readonly Func<DroneCanNetworkInterfaceOption, byte, IDroneCanMulticastSession>
+      _multicastSessionFactory;
   private readonly bool _subscribedToAppState;
   private DroneCAN.DroneCAN? _can;
   private CommsInjection? _port;
   private ICommsSerial? _directPort;
+  private IDroneCanMulticastSession? _multicastSession;
   private MAVLinkInterface? _subscribedLink;
   private DroneCanSessionTarget? _observedTarget;
   private DroneCanSessionTarget? _sessionTarget;
@@ -54,17 +59,24 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       Func<DroneCanSessionTarget?> activeTarget,
       bool subscribeToAppState = false,
       Func<string[]>? serialPortNames = null,
-      Func<string, int, ICommsSerial>? serialPortFactory = null) {
+      Func<string, int, ICommsSerial>? serialPortFactory = null,
+      Func<IReadOnlyList<DroneCanNetworkInterfaceOption>>? networkInterfaces = null,
+      Func<DroneCanNetworkInterfaceOption, byte, IDroneCanMulticastSession>?
+          multicastSessionFactory = null) {
     _activeTarget = activeTarget;
     _serialPortNames = serialPortNames ?? SerialPort.GetPortNames;
     _serialPortFactory = serialPortFactory ?? ((port, baud) => new SerialPort {
       PortName = port,
       BaudRate = baud,
     });
+    _networkInterfaces = networkInterfaces ?? DroneCanMulticastSession.GetAvailableInterfaces;
+    _multicastSessionFactory = multicastSessionFactory ??
+        ((networkInterface, bus) => new DroneCanMulticastSession(networkInterface, bus));
     _subscribedToAppState = subscribeToAppState;
     _observedTarget = CaptureActiveTarget();
     LoadDirectSlcanSettings();
     RefreshSerialPorts();
+    RefreshNetworkInterfaces();
     if (_subscribedToAppState) {
       AppState.ConnectionChanged += OnConnectionChanged;
     }
@@ -80,7 +92,11 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
   public ObservableCollection<string> SerialPorts { get; } = new();
 
-  public string[] BusOptions { get; } = { "MAVLink-CAN1", "MAVLink-CAN2", "SLCAN" };
+  public ObservableCollection<DroneCanNetworkInterfaceOption> NetworkInterfaces { get; } = new();
+
+  public string[] BusOptions { get; } = {
+    "MAVLink-CAN1", "MAVLink-CAN2", "SLCAN", "Multicast-CAN1", "Multicast-CAN2",
+  };
 
   public int[] SerialBaudOptions { get; } = {
     1200, 2400, 4800, 9600, 19200, 38400, 57600, 111100, 115200, 230400,
@@ -97,6 +113,9 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   private int _selectedSerialBaud = 115200;
 
   [ObservableProperty]
+  private DroneCanNetworkInterfaceOption? _selectedNetworkInterface;
+
+  [ObservableProperty]
   private bool _exitSlcanOnLeave = true;
 
   [ObservableProperty]
@@ -106,7 +125,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   private bool _statsLogging;
 
   [ObservableProperty]
-  private string _status = "Connect over the active MAVLink link to enumerate DroneCAN / UAVCAN nodes.";
+  private string _status = "Select MAVLink CAN, direct SLCAN or multicast to enumerate DroneCAN / UAVCAN nodes.";
 
   [ObservableProperty]
   private bool _isConnected;
@@ -142,7 +161,9 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
   partial void OnSelectedBusIndexChanged(int value) {
     OnPropertyChanged(nameof(ShowDirectSerialOptions));
+    OnPropertyChanged(nameof(ShowMulticastOptions));
     OnPropertyChanged(nameof(CanEditDirectSerial));
+    OnPropertyChanged(nameof(CanEditNetworkInterface));
   }
 
   partial void OnSelectedSerialPortChanged(string? value) {
@@ -157,11 +178,19 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     }
   }
 
+  partial void OnSelectedNetworkInterfaceChanged(DroneCanNetworkInterfaceOption? value) {
+    if (value != null) {
+      Settings.Instance[_multicastInterfaceKey] = value.Id;
+    }
+  }
+
   public string ConnectLabel => IsConnected ? "Disconnect" : "Connect";
   public bool CanChangeInterface => !IsConnected && !IsBusy;
   public bool CanToggleConnection => IsConnected || !IsBusy;
   public bool ShowDirectSerialOptions => SelectedBusIndex == 2;
+  public bool ShowMulticastOptions => SelectedBusIndex is 3 or 4;
   public bool CanEditDirectSerial => ShowDirectSerialOptions && CanChangeInterface;
+  public bool CanEditNetworkInterface => ShowMulticastOptions && CanChangeInterface;
   public bool CanFilterFrames => IsConnected && _sessionRequiresVehicleTarget;
 
   partial void OnIsConnectedChanged(bool value) {
@@ -169,6 +198,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     OnPropertyChanged(nameof(CanChangeInterface));
     OnPropertyChanged(nameof(CanToggleConnection));
     OnPropertyChanged(nameof(CanEditDirectSerial));
+    OnPropertyChanged(nameof(CanEditNetworkInterface));
     OnPropertyChanged(nameof(CanFilterFrames));
   }
 
@@ -176,6 +206,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     OnPropertyChanged(nameof(CanChangeInterface));
     OnPropertyChanged(nameof(CanToggleConnection));
     OnPropertyChanged(nameof(CanEditDirectSerial));
+    OnPropertyChanged(nameof(CanEditNetworkInterface));
   }
 
   partial void OnLogToFileChanged(bool value) {
@@ -246,6 +277,34 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
         : SerialPorts.FirstOrDefault();
   }
 
+  [RelayCommand]
+  private void RefreshNetworkInterfaces() {
+    string? selectedId = SelectedNetworkInterface?.Id;
+    if (string.IsNullOrWhiteSpace(selectedId)) {
+      try {
+        selectedId = Settings.Instance[_multicastInterfaceKey];
+      } catch {
+      }
+    }
+
+    IReadOnlyList<DroneCanNetworkInterfaceOption> discovered;
+    try {
+      discovered = _networkInterfaces();
+    } catch {
+      discovered = [];
+    }
+
+    NetworkInterfaces.Clear();
+    foreach (DroneCanNetworkInterfaceOption option in discovered
+                 .GroupBy(item => item.Id, StringComparer.Ordinal)
+                 .Select(group => group.First())) {
+      NetworkInterfaces.Add(option);
+    }
+    SelectedNetworkInterface = NetworkInterfaces.FirstOrDefault(
+        item => string.Equals(item.Id, selectedId, StringComparison.Ordinal))
+        ?? NetworkInterfaces.FirstOrDefault();
+  }
+
   private void StartDirectSlcan() {
     string? portName = SelectedSerialPort?.Trim();
     int baud = SelectedSerialBaud;
@@ -289,6 +348,57 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
         _can, directPort, null, revision,
         $"Listening for DroneCAN nodes on direct SLCAN adapter {portName} at {baud} baud.",
         openTransport: true);
+  }
+
+  private void StartMulticast() {
+    DroneCanNetworkInterfaceOption? networkInterface = SelectedNetworkInterface;
+    if (networkInterface == null || !NetworkInterfaces.Contains(networkInterface)) {
+      Status = "Select an active multicast-capable IPv4 network interface first.";
+      return;
+    }
+
+    byte bus = SelectedBusIndex == 4 ? (byte)1 : (byte)0;
+    IDroneCanMulticastSession session;
+    try {
+      session = _multicastSessionFactory(networkInterface, bus);
+    } catch (Exception ex) {
+      Status = "Unable to create the DroneCAN multicast transport: " + ex.Message;
+      return;
+    }
+
+    _observedTarget = CaptureActiveTarget();
+    _sessionTarget = null;
+    _sessionRequiresVehicleTarget = false;
+    _targetInvalidated = false;
+    long revision = Interlocked.Increment(ref _targetRevision);
+    _mavlinkCanRun = true;
+    _busInUse = bus;
+    _multicastSession = session;
+    var can = new DroneCAN.DroneCAN { SourceNode = 127 };
+    _can = can;
+    IsConnected = true;
+    IsBusy = true;
+    Status = $"Joining DroneCAN multicast {session.Endpoint} on {networkInterface.DisplayName}…";
+
+    session.TransportFailed += ex => Dispatcher.UIThread.Post(() => {
+      if (ReferenceEquals(_multicastSession, session) &&
+          IsCanSessionCurrent(can, null, revision)) {
+        Disconnect("DroneCAN multicast transport failed: " + ex.Message);
+      }
+    });
+
+    try {
+      session.Start();
+    } catch (Exception ex) {
+      Disconnect("Unable to join DroneCAN multicast: " + ex.Message);
+      return;
+    }
+
+    StartCanProtocol(
+        can, session.Serial, null, revision,
+        $"Listening for DroneCAN nodes on {session.Endpoint} through "
+            + $"{networkInterface.DisplayName}.",
+        openTransport: false);
   }
 
   [RelayCommand]
@@ -457,6 +567,14 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       StartDirectSlcan();
       return;
     }
+    if (SelectedBusIndex is 3 or 4) {
+      StartMulticast();
+      return;
+    }
+    if (SelectedBusIndex is < 0 or > 4) {
+      Status = "Select a supported DroneCAN interface first.";
+      return;
+    }
 
     DroneCanSessionTarget? target = CaptureActiveTarget();
     if (target == null) {
@@ -479,7 +597,8 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   [RelayCommand]
   private void Filter() {
     if (IsConnected && !_sessionRequiresVehicleTarget) {
-      Status = "Frame filtering is available for MAVLink-CAN1/CAN2; direct SLCAN uses the adapter's stream.";
+      Status = "Frame filtering is available for MAVLink-CAN1/CAN2; direct SLCAN and multicast "
+          + "use their complete bus streams.";
       return;
     }
     var can = _can;
@@ -1282,11 +1401,13 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     DroneCAN.DroneCAN? can = _can;
     CommsInjection? port = _port;
     ICommsSerial? directPort = _directPort;
+    IDroneCanMulticastSession? multicastSession = _multicastSession;
     MAVLinkInterface? subscribedLink = _subscribedLink;
     int subscription = _subId;
     _can = null;
     _port = null;
     _directPort = null;
+    _multicastSession = null;
     _subscribedLink = null;
     _subId = -1;
     _sessionTarget = null;
@@ -1297,6 +1418,13 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
         subscribedLink.UnSubscribeToPacketType(subscription);
       } catch {
       }
+    }
+
+    // Stop UDP receive/send before stopping DroneCAN. This prevents its final virtual SLCAN close
+    // command from being interpreted as network traffic and guarantees that the shared port is free.
+    try {
+      multicastSession?.Stop();
+    } catch {
     }
 
     try {
@@ -1317,6 +1445,10 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     }
     try {
       (directPort as IDisposable)?.Dispose();
+    } catch {
+    }
+    try {
+      multicastSession?.Dispose();
     } catch {
     }
 

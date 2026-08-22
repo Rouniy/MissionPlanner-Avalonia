@@ -128,6 +128,112 @@ public class DroneCanSessionSafetyTests {
     Assert.Contains("/dev/test-slcan", viewModel.SerialPorts);
   }
 
+  [Fact]
+  public void Multicast_codec_matches_the_official_pydronecan_packet_format() {
+    byte[] payload = Enumerable.Range(0, 12).Select(value => (byte)value).ToArray();
+    var frame = new DroneCanMulticastFrame(
+        0x1ABCDE, Extended: true, CanFd: true, payload);
+
+    byte[] packet = DroneCanMulticastCodec.Encode(frame);
+
+    Assert.Equal(
+        "3429F8640100DEBC1A80000102030405060708090A0B",
+        Convert.ToHexString(packet));
+    Assert.Equal("239.65.82.0", DroneCanMulticastCodec.GroupForBus(0).ToString());
+    Assert.Equal("239.65.82.1", DroneCanMulticastCodec.GroupForBus(1).ToString());
+    Assert.Equal(57732, DroneCanMulticastCodec.Port);
+    Assert.True(DroneCanMulticastCodec.TryDecode(packet, out DroneCanMulticastFrame decoded));
+    Assert.Equal(frame.Identifier, decoded.Identifier);
+    Assert.True(decoded.Extended);
+    Assert.True(decoded.CanFd);
+    Assert.Equal(payload, decoded.Payload);
+
+    byte[] slcan = System.Text.Encoding.ASCII.GetBytes(
+        "B001ABCDE9000102030405060708090A0B");
+    Assert.True(DroneCanMulticastCodec.TryEncodeSlcan(slcan, out byte[] fromSlcan));
+    Assert.Equal(packet, fromSlcan);
+    Assert.Equal(
+        "D001ABCDE9000102030405060708090A0B\r",
+        System.Text.Encoding.ASCII.GetString(DroneCanMulticastCodec.ToSlcan(decoded)));
+  }
+
+  [Fact]
+  public void Multicast_codec_rejects_corrupt_or_out_of_contract_datagrams() {
+    byte[] packet = DroneCanMulticastCodec.Encode(new DroneCanMulticastFrame(
+        0x123, Extended: false, CanFd: false, [1, 2, 3, 4]));
+    packet[^1] ^= 0x80;
+
+    Assert.False(DroneCanMulticastCodec.TryDecode(packet, out _));
+    Assert.False(DroneCanMulticastCodec.TryDecode(new byte[9], out _));
+    Assert.False(DroneCanMulticastCodec.TryDecode(new byte[75], out _));
+    Assert.Throws<ArgumentOutOfRangeException>(() => DroneCanMulticastCodec.Encode(
+        new DroneCanMulticastFrame(0x123, Extended: false, CanFd: false, new byte[9])));
+    Assert.False(DroneCanMulticastCodec.TryEncodeSlcan(
+        System.Text.Encoding.ASCII.GetBytes("TFFFFFFFF1AA"), out _));
+  }
+
+  [AvaloniaFact]
+  public async Task Multicast_connects_without_mavlink_survives_target_switch_and_releases_socket() {
+    var networkInterface = new DroneCanNetworkInterfaceOption(
+        "test-id", "test0", "Test multicast interface", 17);
+    var session = new FakeMulticastSession("239.65.82.0:57732");
+    DroneCanSessionTarget? current = null;
+    DroneCanNetworkInterfaceOption? selectedByFactory = null;
+    byte selectedBus = byte.MaxValue;
+    using var viewModel = new ConfigDroneCanViewModel(
+        () => current,
+        networkInterfaces: () => [networkInterface],
+        multicastSessionFactory: (selected, bus) => {
+          selectedByFactory = selected;
+          selectedBus = bus;
+          return session;
+        });
+    viewModel.SelectedBusIndex = 3;
+
+    viewModel.ToggleConnectCommand.Execute(null);
+    await WaitForAsync(() => viewModel.IsConnected && !viewModel.IsBusy);
+
+    Assert.Same(networkInterface, selectedByFactory);
+    Assert.Equal((byte)0, selectedBus);
+    Assert.True(session.Started);
+    Assert.Contains("239.65.82.0:57732", viewModel.Status, StringComparison.Ordinal);
+    Assert.False(viewModel.CanFilterFrames);
+
+    current = new DroneCanSessionTarget(new MissionPlanner.MAVLinkInterface(), 9, 1);
+    viewModel.SynchronizeActiveTarget();
+    Dispatcher.UIThread.RunJobs();
+
+    Assert.True(viewModel.IsConnected);
+    Assert.True(session.Started);
+
+    session.Fail(new IOException("multicast link down"));
+    Dispatcher.UIThread.RunJobs();
+
+    Assert.False(viewModel.IsConnected);
+    Assert.Contains("multicast link down", viewModel.Status, StringComparison.Ordinal);
+    Assert.True(session.StopCount > 0);
+    Assert.True(session.DisposeCount > 0);
+  }
+
+  [AvaloniaFact]
+  public void Native_view_exposes_multicast_bus_and_network_interface_controls() {
+    var networkInterface = new DroneCanNetworkInterfaceOption(
+        "test-id", "test0", "Test multicast interface", 17);
+    using var viewModel = new ConfigDroneCanViewModel(
+        () => null, networkInterfaces: () => [networkInterface]);
+    viewModel.SelectedBusIndex = 4;
+    var view = new ConfigDroneCanView { DataContext = viewModel };
+
+    Assert.Contains("Multicast-CAN1", viewModel.BusOptions);
+    Assert.Contains("Multicast-CAN2", viewModel.BusOptions);
+    Assert.NotNull(view.FindControl<StackPanel>("MulticastOptions"));
+    Assert.NotNull(view.FindControl<ComboBox>("MulticastInterfaceSelector"));
+    Assert.NotNull(view.FindControl<Button>("RefreshMulticastInterfacesButton"));
+    Assert.True(viewModel.ShowMulticastOptions);
+    Assert.True(viewModel.CanEditNetworkInterface);
+    Assert.Same(networkInterface, viewModel.SelectedNetworkInterface);
+  }
+
   private static async Task WaitForAsync(Func<bool> predicate) {
     DateTime deadline = DateTime.UtcNow.AddSeconds(3);
     while (!predicate() && DateTime.UtcNow < deadline) {
@@ -135,7 +241,7 @@ public class DroneCanSessionSafetyTests {
       await Task.Delay(10);
     }
     Dispatcher.UIThread.RunJobs();
-    Assert.True(predicate(), "Timed out waiting for the direct SLCAN session state.");
+    Assert.True(predicate(), "Timed out waiting for the DroneCAN session state.");
   }
 
   private static int CountOccurrences(string text, string value) {
@@ -187,6 +293,32 @@ public class DroneCanSessionSafetyTests {
     public void Write(byte[] buffer, int offset, int count) => Stream.Write(buffer, offset, count);
     public void WriteLine(string text) => Write(text + "\n");
     public void toggleDTR() { }
+  }
+
+  private sealed class FakeMulticastSession(string endpoint) : IDroneCanMulticastSession {
+    private readonly FakeSlcanTransport _serial = new("multicast", 0);
+
+    public ICommsSerial Serial => _serial;
+    public string Endpoint { get; } = endpoint;
+    public bool Started { get; private set; }
+    public int StopCount { get; private set; }
+    public int DisposeCount { get; private set; }
+    public event Action<Exception>? TransportFailed;
+
+    internal void Fail(Exception exception) => TransportFailed?.Invoke(exception);
+
+    public void Start() => Started = true;
+
+    public void Stop() {
+      Started = false;
+      StopCount++;
+    }
+
+    public void Dispose() {
+      DisposeCount++;
+      Stop();
+      _serial.Dispose();
+    }
   }
 
   private sealed class FakeSlcanStream : Stream {
