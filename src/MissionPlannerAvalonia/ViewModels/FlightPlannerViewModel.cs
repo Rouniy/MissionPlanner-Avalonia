@@ -556,16 +556,11 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
     OnPropertyChanged(nameof(CanUndo));
   }
 
-  public ObservableCollection<string> MapTypes { get; } =
-      [
-            "GoogleSatelliteMap",
-            "GoogleHybridMap",
-            "BingSatelliteMap",
-            "OpenStreetMap",
-            "EsriWorldImagery",
-            Services.OgcMapProvider.WmsMapType,
-            Services.OgcMapProvider.WmtsMapType,
-      ];
+  public ObservableCollection<string> MapTypes { get; } = new(
+      Services.MapTileSourceFactory.BuiltInMapTypes.Concat([
+        Services.OgcMapProvider.WmsMapType,
+        Services.OgcMapProvider.WmtsMapType,
+      ]));
 
   [ObservableProperty]
   private string _mapType = "GoogleSatelliteMap";

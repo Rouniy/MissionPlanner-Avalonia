@@ -16,6 +16,7 @@ public sealed class MapCacheWindow : Window {
     var viewModel = new MapCacheViewModel();
     Content = new MapCacheView { DataContext = viewModel };
     DataContext = viewModel;
+    Closed += (_, _) => viewModel.Dispose();
   }
 
   public static void OpenWindow() {

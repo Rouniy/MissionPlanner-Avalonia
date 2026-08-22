@@ -29,6 +29,14 @@ internal enum MapTileAccessMode {
 /// return a tile downloaded from another service.
 /// </summary>
 internal static class MapTileSourceFactory {
+  internal static IReadOnlyList<string> BuiltInMapTypes { get; } = [
+    "GoogleSatelliteMap",
+    "GoogleHybridMap",
+    "BingSatelliteMap",
+    "OpenStreetMap",
+    "EsriWorldImagery",
+  ];
+
   private static readonly ConcurrentDictionary<string, FileCache> _caches = new();
   private static readonly HttpClient _prefetchClient = new() {
     Timeout = TimeSpan.FromSeconds(30),
@@ -271,6 +279,14 @@ internal static class MapTileSourceFactory {
           mode);
     }
     return CreateSource(normalized, UrlTemplateFor(normalized), mode);
+  }
+
+  internal static IPersistentCache<byte[]> GetPersistentCacheForMapType(string? mapType) {
+    string normalized = NormalizeMapType(mapType);
+    if (OgcMapProvider.TryCreateDefinition(normalized, out OgcTileDefinition definition)) {
+      return GetCache(definition.Name, definition.CacheIdentity);
+    }
+    return GetCache(normalized, UrlTemplateFor(normalized));
   }
 
   private static HttpTileSource CreateSource(

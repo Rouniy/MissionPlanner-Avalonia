@@ -2,19 +2,35 @@ using System;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MissionPlannerAvalonia.Services;
 
 namespace MissionPlannerAvalonia.ViewModels;
 
-public partial class MapCacheViewModel : ViewModelBase {
+public partial class MapCacheViewModel : ViewModelBase, IDisposable {
+  private CancellationTokenSource? _importCancellation;
+
   public MapCacheViewModel() {
+    foreach (string mapType in MapTileSourceFactory.BuiltInMapTypes) {
+      ImportMapTypes.Add(mapType);
+    }
+    string current = MapTileSourceFactory.CurrentMapType;
+    if (!ImportMapTypes.Contains(current)) {
+      ImportMapTypes.Add(current);
+    }
+    SelectedImportMapType = current;
     _ = RefreshAsync();
   }
 
   public ObservableCollection<MapCacheRow> Entries { get; } = new();
+  public ObservableCollection<string> ImportMapTypes { get; } = new();
+
+  [ObservableProperty]
+  private string _selectedImportMapType = "GoogleSatelliteMap";
 
   [ObservableProperty]
   private MapCacheRow? _selectedEntry;
@@ -24,6 +40,77 @@ public partial class MapCacheViewModel : ViewModelBase {
 
   [ObservableProperty]
   private bool _busy;
+
+  [ObservableProperty]
+  private bool _importing;
+
+  [RelayCommand]
+  private async Task ImportTilesAsync() {
+    if (Busy) {
+      return;
+    }
+    var owner = Dialogs.Owner;
+    if (owner?.StorageProvider == null) {
+      Status = "No window is available for selecting a tile directory.";
+      return;
+    }
+
+    var folders = await owner.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions {
+      Title = "Import Mission Planner Z/row/column map tiles",
+      AllowMultiple = false,
+    });
+    string? source = folders.FirstOrDefault()?.TryGetLocalPath();
+    if (string.IsNullOrWhiteSpace(source)) {
+      return;
+    }
+
+    string provider = MapTileSourceFactory.NormalizeMapType(SelectedImportMapType);
+    if (!await Dialogs.Confirm(
+            "Import Map Tiles",
+            $"Import JPEG/PNG tiles under Z<zoom>/<row>/<column> from '{source}' "
+            + $"into the persistent '{provider}' cache? Existing coordinates will be replaced.")) {
+      return;
+    }
+
+    Busy = true;
+    Importing = true;
+    var cancellation = new CancellationTokenSource();
+    _importCancellation = cancellation;
+    MapTileImportResult result;
+    try {
+      var progress = new Progress<MapTileImportProgress>(value => {
+        Status = $"Importing {provider}: scanned {value.Discovered:N0}, "
+            + $"imported {value.Imported:N0}, skipped {value.Skipped:N0}, "
+            + $"failed {value.Failed:N0}…";
+      });
+      result = await MapTileImporter.ImportAsync(
+          source, provider, progress, cancellation.Token);
+    } catch (OperationCanceledException) {
+      Status = "Map tile import cancelled. Tiles already imported remain in the cache.";
+      return;
+    } catch (Exception ex) {
+      Status = "Map tile import failed: " + ex.Message;
+      return;
+    } finally {
+      if (ReferenceEquals(_importCancellation, cancellation)) {
+        _importCancellation = null;
+      }
+      cancellation.Dispose();
+      Importing = false;
+      Busy = false;
+    }
+
+    await RefreshAsync();
+    Status = $"Imported {result.Imported:N0} of {result.Discovered:N0} image files "
+        + $"({MapCacheManager.FormatBytes(result.ImportedBytes)}) into {provider}; "
+        + $"skipped {result.Skipped:N0}, failed {result.Failed:N0}.";
+    if (MapTileSourceFactory.CurrentMapType == provider) {
+      MapTileSourceFactory.RefreshMapType(provider);
+    }
+  }
+
+  [RelayCommand]
+  private void CancelImport() => _importCancellation?.Cancel();
 
   [RelayCommand]
   private async Task RefreshAsync() {
@@ -89,6 +176,10 @@ public partial class MapCacheViewModel : ViewModelBase {
     }
     await RefreshAsync();
     Status = resultStatus;
+  }
+
+  public void Dispose() {
+    _importCancellation?.Cancel();
   }
 }
 
