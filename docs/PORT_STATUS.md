@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 671 tests verified; the camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` passed lintian, checksum and Xvfb smoke checks; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 686 tests verified; the default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` passed lintian, checksum and Xvfb smoke checks; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -134,8 +134,14 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 - The integrated DroneCAN parameter page now has search, favourites, modified-only filtering and
   `.param` import/export; failed writes remain visibly dirty instead of being accepted locally.
 - Full Parameter List includes the upstream-compatible, explicitly confirmed reset-to-default and
-  reboot flow. Local parameter files and ArduPilot GitHub frame defaults can be compared against the
-  live parameter set, selectively staged and reviewed before any write reaches the vehicle.
+  reboot flow. Setup now also exposes the official Mission Planner `DefaultSettings` workflow as a
+  dedicated page: it recursively catalogs `.param` profiles below ArduPilot `Tools/Frame_params`,
+  caches the list for the session and supports an explicit refresh. Catalog/download requests are
+  cancellable and paths are constrained to that upstream tree. Local files and downloaded profiles
+  are compared with the live parameter set, with the upstream runtime and barometer-calibration
+  exclusions, then selectively staged and reviewed before any write reaches the vehicle. A profile
+  comparison is bound to the exact modem/system/component selection revision and is discarded if
+  the user switches away while the download or comparison dialog is open.
 - Traditional Heli setup now includes the official live visual feedback as native Avalonia controls:
   the four-point Stabilize collective curve, 101-point Acro expo curve, live mapped collective
   cursor, collective/rudder inputs with manual-mode range capture and the three swash-servo position
@@ -342,10 +348,10 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 671 passed, 0 failed.
+- Automated tests: 686 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
-- The `.deb` target was rebuilt from the current 671-test source on 2026-08-22. Package metadata,
+- The `.deb` target was rebuilt from the current 686-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 396 packaged-file checksums match after extraction, including the
   byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -359,10 +365,11 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.2114272_amd64.deb`
-(53,862,420 bytes; SHA-256
-`4b54184f1e73ab7d0c585ac995f5579e513703a6797813939a305394e632f7a0`), built from the current
-671-test source including camera feedback/overlap/gimbal overlays, managed SHP/DXF/GeoPackage
+`out/packages/missionplanner-avalonia_1.3.83-20260822.bbb73f4_amd64.deb`
+(53,867,722 bytes; SHA-256
+`8f7de3acaf375df20764ad6de239a329efd3b5e66427e538fca01fc1735e1735`), built from the current
+686-test source including the target-safe official ArduPilot Default Settings profile workflow,
+camera feedback/overlap/gimbal overlays, managed SHP/DXF/GeoPackage
 planner import, local GeoTIFF/DTED elevation sources,
 styled KML/KMZ vector/GroundOverlay layers, Flight Data overlay copying, corrected translucent-red
 airport disks, Rally Points actions, switchable Planner docking, the interactive verified-host-key
@@ -372,8 +379,8 @@ Flight Data splitter, session-only/latest-wins vehicle parameter loading, single
 connections, independent multi-link Connection List support and composite upstream/date/commit
 versioning.
 Its APT version is
-`1:1.3.83+20260822.r147.2114272`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r147` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r150.bbb73f4`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r150` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -428,7 +435,7 @@ not remove required Windows-native files from `win-x64` builds.
 | HUD frame recording | All | "Record Video Stream" records the libVLC stream and the upstream 4:3/16:9 HUD aspect toggle is ported. The separate upstream HUD-to-AVI frame-capture path remains absent. The current upstream `dropOutToolStripMenuItem_Click` handler is empty and is not counted as a functional gap. |
 | Flight Data map extras | All | Mission/Home/current-WP, fence, rally, Guided target, POIs, camera feedback with latest footprints and opt-in overlap count, live terrain-projected gimbal target, ADS-B/AIS/OA_DB traffic, airports, RF propagation/elevation/distance overlays and mission-distance progress are ported. The current upstream `ProximityControl` launch in `FlightData` is commented out; the port already provides a live Proximity radar tab, so it is not counted as a missing map workflow. |
 | Log tooling extras | All | Interactive DataFlash graphing, upstream expressions/preset alternatives/MODE overlays, log message/parameter inspection, MAVLink Inspector "Graph It", the recursive LogIndex with cache-only map thumbnails, offline three-compass sphere/ellipsoid MagFit and the upstream-named SCP workflow (actually SFTP over SSH) are ported. The SFTP page lists/downloads selected or all BIN logs, creates text LOG/KML outputs, applies GPS-time names and safely deletes selected/all remote logs with host-key pinning; passwords are never persisted and an inherited plaintext `LogDownloadscppath` is erased during migration. OSD video rendering from tlog remains absent. |
-| Remaining developer utilities | All | The safe portable subset of `temp.cs` is now a native Developer Tools page. Translation/resource editor, OpenGL 3D terrain view, MicroDrones serial downlink, vehicle default-settings loader and DevopsUI still need dedicated Avalonia implementations. Local GeoTIFF/DTED configuration and PX4Flow live image assembly are already port-native. |
+| Remaining developer utilities | All | The safe portable subset of `temp.cs` is now a native Developer Tools page. Translation/resource editor, OpenGL 3D terrain view, MicroDrones serial downlink and DevopsUI still need dedicated Avalonia implementations. Vehicle Default Settings, local GeoTIFF/DTED configuration and PX4Flow live image assembly are already port-native. |
 
 ## Intentionally disabled or replaced
 
