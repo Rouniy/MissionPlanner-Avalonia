@@ -177,9 +177,12 @@
             HorizontalAlignment="Stretch"
             ItemsSource="{Binding MapTypes}"
             SelectedItem="{Binding MapType}"
-            SelectionChanged="OnMapTypeChanged"
           />
           <TextBlock Text="Status: ready" Foreground="#BBBBBB" FontSize="11" />
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Button Content="WMS…" HorizontalAlignment="Stretch" Click="OnConfigureWms" />
+            <Button Content="WMTS…" HorizontalAlignment="Stretch" Click="OnConfigureWmts" />
+          </StackPanel>
           <Button Content="Inject Custom Map" HorizontalAlignment="Stretch" Click="OnInjectCustomMap" />
           <Button Content="Survey (Grid)" HorizontalAlignment="Stretch" Click="OnSurveyGrid" />
           <Separator />

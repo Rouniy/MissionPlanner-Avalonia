@@ -506,6 +506,12 @@ public partial class FlightPlannerView : UserControl {
     if (e.PropertyName == nameof(FlightPlannerViewModel.ShowGrid)) {
       Map.SetGraticuleVisible(Vm.ShowGrid);
     } else if (e.PropertyName == nameof(FlightPlannerViewModel.MapType)) {
+      string normalized = Services.MapTileSourceFactory.NormalizeMapType(Vm.MapType);
+      if (!string.Equals(normalized, Vm.MapType, StringComparison.Ordinal)) {
+        Vm.Status = $"Configure {Vm.MapType} before selecting it.";
+        Vm.MapType = normalized;
+        return;
+      }
       Map.SetMapType(Vm.MapType);
     } else if (e.PropertyName == nameof(FlightPlannerViewModel.HomeLat)
                || e.PropertyName == nameof(FlightPlannerViewModel.HomeLng)
@@ -530,12 +536,6 @@ public partial class FlightPlannerView : UserControl {
   }
 
   private void OnWaypointDragged(int seq, double lat, double lng) => Vm?.MoveWaypoint(seq, lat, lng);
-
-  private void OnMapTypeChanged(object? sender, SelectionChangedEventArgs e) {
-    if (Vm != null) {
-      Map.SetMapType(Vm.MapType);
-    }
-  }
 
   private async void OnLoadFile(object? sender, RoutedEventArgs e) {
     await PickAndLoadFile(false);
@@ -954,6 +954,86 @@ public partial class FlightPlannerView : UserControl {
       if (Vm != null) {
         Vm.Status = "Custom tile source applied.";
       }
+    }
+  }
+
+  private async void OnConfigureWms(object? sender, RoutedEventArgs e) {
+    if (Vm == null) {
+      return;
+    }
+    string initial = MissionPlanner.Utilities.Settings.Instance["WMSserver"] ?? "";
+    string? server = await Services.Dialogs.InputBox(
+        "WMS Server", "Enter the WMS server URL", initial);
+    if (server == null) {
+      return;
+    }
+    try {
+      Vm.Status = "Reading WMS capabilities…";
+      Services.WmsDiscovery discovery = await Services.OgcMapProvider.DiscoverWmsAsync(server);
+      string? selectedLayer = MissionPlanner.Utilities.Settings.Instance["WMSLayer"];
+      int selected = Math.Max(0, discovery.Layers.ToList()
+          .FindIndex(layer => string.Equals(layer.Name, selectedLayer, StringComparison.Ordinal)));
+      int? choice = await Services.Dialogs.Select(
+          "WMS Server", "Select a PNG map layer", discovery.Layers
+              .Select(layer => $"{layer.Title} — {layer.Name} ({layer.Crs})").ToArray(), selected);
+      if (choice == null) {
+        Vm.Status = "WMS configuration cancelled.";
+        return;
+      }
+      Services.OgcMapProvider.SaveWms(discovery, discovery.Layers[choice.Value]);
+      ActivateOgcMap(Services.OgcMapProvider.WmsMapType);
+      Vm.Status = $"WMS layer active: {discovery.Layers[choice.Value].Title}";
+    } catch (Exception ex) {
+      Vm.Status = "WMS configuration failed: " + ex.Message;
+      await Services.Dialogs.Alert("WMS Server", ex.Message);
+    }
+  }
+
+  private async void OnConfigureWmts(object? sender, RoutedEventArgs e) {
+    if (Vm == null) {
+      return;
+    }
+    string initial = MissionPlanner.Utilities.Settings.Instance["WMSTserver"]
+        ?? "https://maps.wien.gv.at/basemap/1.0.0/WMTSCapabilities.xml";
+    string? server = await Services.Dialogs.InputBox(
+        "WMTS Server", "Enter the WMTS capabilities URL", initial);
+    if (server == null) {
+      return;
+    }
+    try {
+      Vm.Status = "Reading WMTS capabilities…";
+      Services.WmtsDiscovery discovery = await Services.OgcMapProvider.DiscoverWmtsAsync(server);
+      int selectedSource = int.TryParse(
+          MissionPlanner.Utilities.Settings.Instance["WMSTLayer"],
+          NumberStyles.None, CultureInfo.InvariantCulture, out int stored) ? stored : -1;
+      int selected = Math.Max(0, discovery.Layers.ToList()
+          .FindIndex(layer => layer.SourceIndex == selectedSource));
+      int? choice = await Services.Dialogs.Select(
+          "WMTS Server", "Select a Web Mercator map layer",
+          discovery.Layers.Select(layer => layer.DisplayName).ToArray(), selected);
+      if (choice == null) {
+        Vm.Status = "WMTS configuration cancelled.";
+        return;
+      }
+      Services.WmtsLayerChoice layer = discovery.Layers[choice.Value];
+      Services.OgcMapProvider.SaveWmts(discovery, layer);
+      ActivateOgcMap(Services.OgcMapProvider.WmtsMapType);
+      Vm.Status = $"WMTS layer active: {layer.DisplayName}";
+    } catch (Exception ex) {
+      Vm.Status = "WMTS configuration failed: " + ex.Message;
+      await Services.Dialogs.Alert("WMTS Server", ex.Message);
+    }
+  }
+
+  private void ActivateOgcMap(string mapType) {
+    if (Vm == null) {
+      return;
+    }
+    string previous = Services.MapTileSourceFactory.CurrentMapType;
+    Vm.MapType = mapType;
+    Map.SetMapType(mapType);
+    if (string.Equals(previous, mapType, StringComparison.Ordinal)) {
+      Services.MapTileSourceFactory.RefreshMapType(mapType);
     }
   }
 

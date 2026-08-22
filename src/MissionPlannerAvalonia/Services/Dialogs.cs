@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
@@ -132,6 +133,33 @@ public static class Dialogs {
     }
     panel.Children.Add(row);
     return ShowOwned<string?>(w);
+  }
+
+  public static Task<int?> Select(
+      string title,
+      string text,
+      IReadOnlyList<string> labels,
+      int selectedIndex = 0) {
+    if (labels.Count == 0) {
+      return Task.FromResult<int?>(null);
+    }
+    var panel = Shell(title);
+    panel.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap });
+    var choices = new ComboBox {
+      ItemsSource = labels,
+      SelectedIndex = Math.Clamp(selectedIndex, 0, labels.Count - 1),
+      HorizontalAlignment = HorizontalAlignment.Stretch,
+      MaxDropDownHeight = 360,
+    };
+    panel.Children.Add(choices);
+    var cancel = new Button { Content = "Cancel", MinWidth = 80, IsCancel = true };
+    var select = new Button { Content = "Select", MinWidth = 80, IsDefault = true };
+    panel.Children.Add(Buttons(cancel, select));
+    var window = Frame(title, panel);
+    window.Width = 560;
+    cancel.Click += (_, _) => window.Close(null);
+    select.Click += (_, _) => window.Close((int?)choices.SelectedIndex);
+    return ShowOwned<int?>(window);
   }
 
   public static Task<(double Alt, string Frame)?> AltInputBox(
