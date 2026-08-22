@@ -34,6 +34,28 @@ public class VideoControl : UserControl, IDisposable {
 
   public string Status => _status;
 
+  internal Control? OverlayContent {
+    get => _videoView.Content as Control;
+    set => _videoView.Content = value;
+  }
+
+  internal double VideoAspectRatio {
+    get {
+      if (_mediaPlayer != null) {
+        try {
+          uint width = 0;
+          uint height = 0;
+          if (_mediaPlayer.Size(0, ref width, ref height) && width > 0 && height > 0) {
+            return (double)width / height;
+          }
+        } catch {
+          // The decoder has not published a video size yet.
+        }
+      }
+      return 16.0 / 9.0;
+    }
+  }
+
   public bool Play(string mrl) {
     if (_disposed || !_isAvailable || _libVlc is null || _mediaPlayer is null) {
       return false;
@@ -134,6 +156,8 @@ public class VideoControl : UserControl, IDisposable {
       LibVlcBootstrap.Initialize();
       _libVlc = new LibVLCSharp.Shared.LibVLC("--no-video-title-show", "--quiet");
       _mediaPlayer = new MediaPlayer(_libVlc);
+      _mediaPlayer.EnableKeyInput = false;
+      _mediaPlayer.EnableMouseInput = false;
       _mediaPlayer.Opening += (_, _) => PostStatus("opening video stream…");
       _mediaPlayer.Buffering += (_, args) => PostStatus($"buffering: {args.Cache:0}%");
       _mediaPlayer.Playing += (_, _) => PostStatus($"playing: {_currentMrl}");

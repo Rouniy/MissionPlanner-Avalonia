@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Avalonia.Controls;
+using Avalonia.Data;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using MissionPlannerAvalonia.Controls;
+using MissionPlannerAvalonia.ViewModels;
 
 namespace MissionPlannerAvalonia.Views;
 
@@ -76,29 +78,118 @@ public class MessagesWindow : Window {
 
 public class VideoPopupWindow : Window {
   public VideoControl Video { get; }
+  private readonly GimbalVideoOverlay _overlay;
   private readonly TextBlock _status = new() {
     Foreground = Brushes.WhiteSmoke,
     Margin = new Avalonia.Thickness(6),
     VerticalAlignment = VerticalAlignment.Center,
   };
 
-  public VideoPopupWindow(VideoControl video) {
+  public VideoPopupWindow(VideoControl video, FlightDataViewModel viewModel) {
     Video = video;
-    Title = "Video";
-    Width = 640;
-    Height = 400;
+    DataContext = viewModel;
+    Title = "MAVLink Camera / Gimbal Video";
+    Width = 900;
+    Height = 620;
     Background = Brushes.Black;
     WindowStartupLocation = WindowStartupLocation.CenterOwner;
     var grid = new Grid();
-    grid.RowDefinitions = new RowDefinitions("*,Auto");
+    grid.RowDefinitions = new RowDefinitions("*,Auto,Auto,Auto");
+
+    _overlay = new GimbalVideoOverlay(
+        () => Video.VideoAspectRatio,
+        viewModel.CurrentGimbalTrackingOverlay);
+    _overlay.CommandRequested += command =>
+        _ = viewModel.HandleGimbalVideoPointerCommand(command);
+    _overlay.KeyStateChanged += viewModel.HandleGimbalVideoKeyState;
+    _overlay.InputReleased += viewModel.ReleaseGimbalVideoInput;
+    Video.OverlayContent = _overlay;
+
     Grid.SetRow(video, 0);
-    Grid.SetRow(_status, 1);
     grid.Children.Add(video);
-    grid.Children.Add(_status);
+
+    var commands = new WrapPanel {
+      Margin = new Avalonia.Thickness(6, 5, 6, 2),
+      HorizontalAlignment = HorizontalAlignment.Center,
+    };
+    commands.Children.Add(CommandButton("Photo (Alt+F)", viewModel.TakeMavlinkPhotoCommand));
+    commands.Children.Add(CommandButton("Camera REC (Alt+R)", viewModel.StartMavlinkCameraRecordingCommand));
+    commands.Children.Add(CommandButton("Camera STOP", viewModel.StopMavlinkCameraRecordingCommand));
+    commands.Children.Add(CommandButton("Lock / Follow (L)", viewModel.ToggleGimbalYawLockCommand));
+    commands.Children.Add(CommandButton("Retract", viewModel.GimbalRetractCommand));
+    commands.Children.Add(CommandButton("Neutral (N)", viewModel.GimbalNeutralCommand));
+    commands.Children.Add(CommandButton("Point down", viewModel.GimbalPointDownCommand));
+    commands.Children.Add(CommandButton("Home (H)", viewModel.GimbalHomeCommand));
+    Grid.SetRow(commands, 1);
+    grid.Children.Add(commands);
+
+    var settings = new WrapPanel {
+      Margin = new Avalonia.Thickness(8, 2, 8, 3),
+      HorizontalAlignment = HorizontalAlignment.Center,
+      VerticalAlignment = VerticalAlignment.Center,
+    };
+    settings.Children.Add(NumberSetting(
+        "Gimbal ID", 0, 6, 1, "0",
+        () => viewModel.GimbalDeviceId,
+        value => viewModel.GimbalDeviceId = (int)value));
+    settings.Children.Add(NumberSetting(
+        "Slow", 0.1m, 360, 0.5m, "0.0",
+        () => viewModel.GimbalSlewSlow,
+        value => viewModel.GimbalSlewSlow = value));
+    settings.Children.Add(NumberSetting(
+        "Normal", 0.1m, 360, 0.5m, "0.0",
+        () => viewModel.GimbalSlewNormal,
+        value => viewModel.GimbalSlewNormal = value));
+    settings.Children.Add(NumberSetting(
+        "Fast", 0.1m, 360, 1, "0.0",
+        () => viewModel.GimbalSlewFast,
+        value => viewModel.GimbalSlewFast = value));
+    settings.Children.Add(NumberSetting(
+        "Zoom", 0.01m, 1, 0.05m, "0.00",
+        () => viewModel.GimbalZoomSpeed,
+        value => viewModel.GimbalZoomSpeed = value));
+    settings.Children.Add(NumberSetting(
+        "HFOV", 0.01m, 180, 1, "0.0",
+        () => viewModel.GimbalCameraHorizontalFov,
+        value => viewModel.GimbalCameraHorizontalFov = value));
+    settings.Children.Add(NumberSetting(
+        "VFOV", 0.01m, 180, 1, "0.0",
+        () => viewModel.GimbalCameraVerticalFov,
+        value => viewModel.GimbalCameraVerticalFov = value));
+    var reportedFov = new CheckBox {
+      Content = "Use reported FOV",
+      IsChecked = viewModel.GimbalUseReportedFov,
+      Foreground = Brushes.WhiteSmoke,
+      Margin = new Avalonia.Thickness(7, 3),
+      VerticalAlignment = VerticalAlignment.Center,
+    };
+    reportedFov.IsCheckedChanged += (_, _) =>
+        viewModel.GimbalUseReportedFov = reportedFov.IsChecked == true;
+    settings.Children.Add(reportedFov);
+    Grid.SetRow(settings, 2);
+    grid.Children.Add(settings);
+
+    var combinedStatus = new StackPanel {
+      Orientation = Orientation.Vertical,
+      Margin = new Avalonia.Thickness(6, 0, 6, 4),
+    };
+    var interactionStatus = new TextBlock {
+      Foreground = new SolidColorBrush(Color.Parse("#FFB74D")),
+      TextWrapping = TextWrapping.Wrap,
+    };
+    interactionStatus.Bind(
+        TextBlock.TextProperty,
+        new Binding(nameof(FlightDataViewModel.GimbalVideoStatus)));
+    combinedStatus.Children.Add(interactionStatus);
+    combinedStatus.Children.Add(_status);
+    Grid.SetRow(combinedStatus, 3);
+    grid.Children.Add(combinedStatus);
     Content = grid;
     Video.StatusChanged += OnVideoStatusChanged;
     Closed += (_, _) => {
       Video.StatusChanged -= OnVideoStatusChanged;
+      Video.OverlayContent = null;
+      _overlay.Dispose();
       Video.Stop();
     };
     UpdateStatus();
@@ -107,6 +198,51 @@ public class VideoPopupWindow : Window {
   private void OnVideoStatusChanged(object? sender, EventArgs e) => UpdateStatus();
 
   public void UpdateStatus() => _status.Text = Video.Status;
+
+  private static Button CommandButton(string text, System.Windows.Input.ICommand command) =>
+      new() {
+        Content = text,
+        Command = command,
+        Margin = new Avalonia.Thickness(3),
+        Padding = new Avalonia.Thickness(8, 4),
+      };
+
+  private static StackPanel NumberSetting(
+      string label,
+      decimal minimum,
+      decimal maximum,
+      decimal increment,
+      string format,
+      Func<double> get,
+      Action<double> set) {
+    var number = new NumericUpDown {
+      Minimum = minimum,
+      Maximum = maximum,
+      Increment = increment,
+      FormatString = format,
+      Value = (decimal)get(),
+      Width = 72,
+    };
+    number.ValueChanged += (_, _) => {
+      if (number.Value is { } value) {
+        set((double)value);
+      }
+    };
+    return new StackPanel {
+      Orientation = Orientation.Horizontal,
+      Margin = new Avalonia.Thickness(5, 2),
+      Spacing = 4,
+      VerticalAlignment = VerticalAlignment.Center,
+      Children = {
+        new TextBlock {
+          Text = label,
+          Foreground = Brushes.WhiteSmoke,
+          VerticalAlignment = VerticalAlignment.Center,
+        },
+        number,
+      },
+    };
+  }
 }
 
 public class EKFStatusWindow : Window {
