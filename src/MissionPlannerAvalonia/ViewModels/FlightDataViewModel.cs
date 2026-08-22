@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Input;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -160,6 +161,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     InitPreflightChecks();
     InitTuningFields();
     LoadHudSettings();
+    LoadGimbalVideoSettings();
 
     SelectedMessage = MessageOptions.FirstOrDefault(m =>
         m.Id == (uint)MAVLink.MAVLINK_MSG_ID.ATTITUDE) ?? MessageOptions.FirstOrDefault();
@@ -3087,6 +3089,19 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   private byte? _selectedCameraSystemId;
   private byte? _selectedCameraComponentId;
   private byte _selectedCameraStreamId;
+  private readonly HashSet<Key> _gimbalVideoHeldKeys = [];
+  private readonly HashSet<Key> _gimbalVideoPressedKeys = [];
+  private GimbalVideoMotion _lastGimbalVideoMotion;
+  private GimbalManagerTarget? _rateTarget;
+  private MissionPlanner.ArduPilot.Mavlink.CameraProtocol? _zoomTarget;
+  private bool _cameraRecordingRequested;
+
+  private sealed record GimbalManagerTarget(
+      MAVLinkInterface Link,
+      byte SystemId,
+      byte ComponentId,
+      byte DeviceId,
+      MissionPlanner.ArduPilot.Mavlink.GimbalManagerProtocol Manager);
 
   [ObservableProperty]
   private string _cameraTarget = "Auto-detect";
@@ -3094,14 +3109,86 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private double _cameraZoom;
 
+  [ObservableProperty]
+  private bool _gimbalYawLocked;
+
+  [ObservableProperty]
+  private int _gimbalDeviceId;
+
+  [ObservableProperty]
+  private double _gimbalSlewSlow = 1;
+
+  [ObservableProperty]
+  private double _gimbalSlewNormal = 5;
+
+  [ObservableProperty]
+  private double _gimbalSlewFast = 25;
+
+  [ObservableProperty]
+  private double _gimbalZoomSpeed = 1;
+
+  [ObservableProperty]
+  private double _gimbalCameraHorizontalFov = 40;
+
+  [ObservableProperty]
+  private double _gimbalCameraVerticalFov = 30;
+
+  [ObservableProperty]
+  private bool _gimbalUseReportedFov = true;
+
+  [ObservableProperty]
+  private string _gimbalVideoStatus =
+      "Click the video for control. W/A/S/D slew, Q/E zoom, Alt+drag tracks.";
+
+  private void LoadGimbalVideoSettings() {
+    var settings = Settings.Instance;
+    GimbalYawLocked = settings.ContainsKey("gimbal_video_yaw_lock")
+        && settings.GetBoolean("gimbal_video_yaw_lock");
+    GimbalDeviceId = Math.Clamp(settings.GetInt32("gimbal_video_device_id", 0), 0, 6);
+    GimbalSlewSlow = ClampSetting(settings.GetDouble("gimbal_video_slew_slow", 1), 0.1, 360, 1);
+    GimbalSlewNormal = ClampSetting(settings.GetDouble("gimbal_video_slew_normal", 5), 0.1, 360, 5);
+    GimbalSlewFast = ClampSetting(settings.GetDouble("gimbal_video_slew_fast", 25), 0.1, 360, 25);
+    GimbalZoomSpeed = ClampSetting(settings.GetDouble("gimbal_video_zoom_speed", 1), 0.01, 1, 1);
+    GimbalCameraHorizontalFov = ClampSetting(settings.GetDouble("camera_fovh", 40), 0.01, 180, 40);
+    GimbalCameraVerticalFov = ClampSetting(settings.GetDouble("camera_fovv", 30), 0.01, 180, 30);
+    GimbalUseReportedFov = !settings.ContainsKey("gimbal_video_reported_fov")
+        || settings.GetBoolean("gimbal_video_reported_fov");
+  }
+
+  private static double ClampSetting(double value, double min, double max, double fallback) =>
+      double.IsFinite(value) ? Math.Clamp(value, min, max) : fallback;
+
+  private static void SaveGimbalSetting(string key, object value) =>
+      Settings.Instance[key] = Convert.ToString(value, CultureInfo.InvariantCulture);
+
+  partial void OnGimbalYawLockedChanged(bool value) =>
+      SaveGimbalSetting("gimbal_video_yaw_lock", value);
+  partial void OnGimbalDeviceIdChanged(int value) =>
+      SaveGimbalSetting("gimbal_video_device_id", Math.Clamp(value, 0, 6));
+  partial void OnGimbalSlewSlowChanged(double value) =>
+      SaveGimbalSetting("gimbal_video_slew_slow", value);
+  partial void OnGimbalSlewNormalChanged(double value) =>
+      SaveGimbalSetting("gimbal_video_slew_normal", value);
+  partial void OnGimbalSlewFastChanged(double value) =>
+      SaveGimbalSetting("gimbal_video_slew_fast", value);
+  partial void OnGimbalZoomSpeedChanged(double value) =>
+      SaveGimbalSetting("gimbal_video_zoom_speed", value);
+  partial void OnGimbalCameraHorizontalFovChanged(double value) =>
+      SaveGimbalSetting("camera_fovh", value);
+  partial void OnGimbalCameraVerticalFovChanged(double value) =>
+      SaveGimbalSetting("camera_fovv", value);
+  partial void OnGimbalUseReportedFovChanged(bool value) =>
+      SaveGimbalSetting("gimbal_video_reported_fov", value);
+
   private Views.VideoPopupWindow EnsureVideoWindow() {
     var top = (Avalonia.Application.Current?.ApplicationLifetime
                as IClassicDesktopStyleApplicationLifetime)?.MainWindow;
     if (_videoWindow == null) {
 
       _video = new MissionPlannerAvalonia.Controls.VideoControl();
-      _videoWindow = new Views.VideoPopupWindow(_video);
+      _videoWindow = new Views.VideoPopupWindow(_video, this);
       _videoWindow.Closed += (_, _) => {
+        ReleaseGimbalVideoInput();
         _video?.Dispose();
         _video = null;
         _videoWindow = null;
@@ -3363,9 +3450,311 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     return fallback?.Camera;
   }
 
+  private GimbalManagerTarget? ResolveGimbalManagerTarget() {
+    if (!Connected) {
+      return null;
+    }
+    var managers = _comPort.MAVlist
+        .Where(state => state.sysid == Sysid && state.GimbalManager != null)
+        .OrderBy(state => state.compid == Compid ? 0 : 1)
+        .ThenBy(state => state.compid)
+        .ToArray();
+    var state = managers.FirstOrDefault();
+    return state?.GimbalManager == null
+        ? null
+        : new GimbalManagerTarget(
+            _comPort,
+            state.sysid,
+            state.compid,
+            (byte)Math.Clamp(GimbalDeviceId, 0, 6),
+            state.GimbalManager);
+  }
+
+  private MissionPlanner.ArduPilot.Mavlink.GimbalManagerProtocol?
+      ResolveGimbalManagerProtocol() => ResolveGimbalManagerTarget()?.Manager;
+
+  private void ConfigureCameraGeometry(
+      MissionPlanner.ArduPilot.Mavlink.CameraProtocol camera) {
+    camera.HFOV = (float)Math.Clamp(GimbalCameraHorizontalFov, 0.01, 180);
+    camera.VFOV = (float)Math.Clamp(GimbalCameraVerticalFov, 0.01, 180);
+    camera.UseFOVStatus = GimbalUseReportedFov
+        && GimbalVideoInteraction.HasUsableReportedFov(
+            camera.CameraFOVStatus.hfov,
+            camera.CameraFOVStatus.vfov);
+  }
+
+  internal GimbalTrackingOverlay CurrentGimbalTrackingOverlay() {
+    var camera = ResolveCameraProtocol(out _);
+    if (camera == null) {
+      return GimbalTrackingOverlay.None;
+    }
+    ConfigureCameraGeometry(camera);
+    return GimbalVideoInteraction.TrackingOverlay(camera.CameraTrackingImageStatus);
+  }
+
+  internal void HandleGimbalVideoKeyState(
+      Key key,
+      KeyModifiers modifiers,
+      bool pressed) {
+    if (GimbalVideoInteraction.IsModifierKey(key)) {
+      ApplyGimbalVideoMotion(modifiers);
+      return;
+    }
+    if (GimbalVideoInteraction.IsMotionKey(key)) {
+      if (pressed) {
+        _gimbalVideoHeldKeys.Add(key);
+      } else {
+        _gimbalVideoHeldKeys.Remove(key);
+      }
+      ApplyGimbalVideoMotion(modifiers);
+      return;
+    }
+
+    if (!pressed || !_gimbalVideoPressedKeys.Add(key)) {
+      if (!pressed) {
+        _gimbalVideoPressedKeys.Remove(key);
+      }
+      return;
+    }
+
+    switch (GimbalVideoInteraction.Hotkey(key, modifiers)) {
+      case GimbalVideoHotkeyAction.TakePicture:
+        _ = TakeMavlinkPhoto();
+        break;
+      case GimbalVideoHotkeyAction.ToggleRecording:
+        _ = ToggleMavlinkCameraRecording();
+        break;
+      case GimbalVideoHotkeyAction.ToggleYawLock:
+        _ = ToggleGimbalYawLock();
+        break;
+      case GimbalVideoHotkeyAction.Neutral:
+        _ = GimbalNeutral();
+        break;
+      case GimbalVideoHotkeyAction.Home:
+        _ = GimbalHome();
+        break;
+    }
+  }
+
+  internal void ReleaseGimbalVideoInput() {
+    _gimbalVideoHeldKeys.Clear();
+    _gimbalVideoPressedKeys.Clear();
+    ApplyGimbalVideoMotion(KeyModifiers.None);
+  }
+
+  private void ApplyGimbalVideoMotion(KeyModifiers modifiers) {
+    GimbalVideoMotion next = GimbalVideoInteraction.Motion(
+        _gimbalVideoHeldKeys,
+        modifiers,
+        GimbalSlewSlow,
+        GimbalSlewNormal,
+        GimbalSlewFast,
+        GimbalZoomSpeed);
+
+    if (next.PitchRate != _lastGimbalVideoMotion.PitchRate
+        || next.YawRate != _lastGimbalVideoMotion.YawRate) {
+      var target = next.PitchRate == 0 && next.YawRate == 0
+          ? _rateTarget
+          : ResolveGimbalManagerTarget();
+      if (_rateTarget != null && target != _rateTarget) {
+        try {
+          SendGimbalRates(_rateTarget, 0, 0);
+        } catch {
+          // Continue switching to the newly-selected vehicle/gimbal.
+        }
+      }
+      _rateTarget = target;
+      if (target != null) {
+        try {
+          SendGimbalRates(target, next.PitchRate, next.YawRate);
+          GimbalVideoStatus = $"Slew pitch {next.PitchRate:0.#}°/s, "
+              + $"yaw {next.YawRate:0.#}°/s ({(GimbalYawLocked ? "lock" : "follow")})";
+        } catch (Exception ex) {
+          GimbalVideoStatus = "Gimbal slew failed: " + ex.Message;
+        }
+      } else if (next.PitchRate != 0 || next.YawRate != 0) {
+        GimbalVideoStatus = "No MAVLink gimbal manager detected for the active vehicle.";
+      }
+      if (next.PitchRate == 0 && next.YawRate == 0) {
+        _rateTarget = null;
+      }
+    }
+
+    if (next.ZoomRate != _lastGimbalVideoMotion.ZoomRate) {
+      var camera = next.ZoomRate == 0 ? _zoomTarget : ResolveCameraProtocol(out _);
+      if (_zoomTarget != null && camera != _zoomTarget) {
+        _ = ObserveGimbalTask(
+            _zoomTarget.SetZoomAsync(0, MAVLink.CAMERA_ZOOM_TYPE.ZOOM_TYPE_CONTINUOUS),
+            "Stop camera zoom");
+      }
+      _zoomTarget = camera;
+      if (camera != null) {
+        _ = ObserveGimbalTask(
+            camera.SetZoomAsync(
+                next.ZoomRate,
+                MAVLink.CAMERA_ZOOM_TYPE.ZOOM_TYPE_CONTINUOUS),
+            next.ZoomRate == 0 ? "Stop camera zoom" : "Camera zoom");
+      } else if (next.ZoomRate != 0) {
+        GimbalVideoStatus = "No MAVLink camera detected for the active vehicle.";
+      }
+      if (next.ZoomRate == 0) {
+        _zoomTarget = null;
+      }
+    }
+    _lastGimbalVideoMotion = next;
+  }
+
+  private void SendGimbalRates(
+      GimbalManagerTarget target,
+      float pitchRate,
+      float yawRate) {
+    var packet = GimbalVideoInteraction.RatePacket(
+        target.SystemId,
+        target.ComponentId,
+        target.DeviceId,
+        pitchRate,
+        yawRate,
+        GimbalYawLocked);
+    target.Link.sendPacket(packet, target.SystemId, target.ComponentId);
+  }
+
+  private async Task ObserveGimbalTask(Task task, string title) {
+    try {
+      await task;
+    } catch (Exception ex) {
+      GimbalVideoStatus = title + " failed: " + ex.Message;
+    }
+  }
+
+  private async Task RunGimbalManagerCommand(
+      string title,
+      Func<MissionPlanner.ArduPilot.Mavlink.GimbalManagerProtocol, byte, Task<bool>> operation,
+      Action? accepted = null) {
+    var manager = ResolveGimbalManagerProtocol();
+    if (manager == null) {
+      GimbalVideoStatus = "No MAVLink gimbal manager detected for the active vehicle.";
+      return;
+    }
+    try {
+      bool success = await operation(
+          manager,
+          (byte)Math.Clamp(GimbalDeviceId, 0, 6));
+      if (success) {
+        accepted?.Invoke();
+        GimbalVideoStatus = title + " command accepted.";
+      } else {
+        GimbalVideoStatus = title + " is not supported by the selected gimbal.";
+      }
+    } catch (Exception ex) {
+      GimbalVideoStatus = title + " failed: " + ex.Message;
+    }
+  }
+
+  [RelayCommand]
+  private Task ToggleGimbalYawLock() {
+    bool requested = !GimbalYawLocked;
+    return RunGimbalManagerCommand(
+        requested ? "Yaw lock" : "Yaw follow",
+        (manager, id) => manager.SetRatesCommandAsync(
+            _lastGimbalVideoMotion.PitchRate,
+            _lastGimbalVideoMotion.YawRate,
+            requested,
+            id),
+        () => GimbalYawLocked = requested);
+  }
+
+  [RelayCommand]
+  private Task GimbalRetract() => RunGimbalManagerCommand(
+      "Gimbal retract", (manager, id) => manager.RetractAsync(id));
+
+  [RelayCommand]
+  private Task GimbalNeutral() => RunGimbalManagerCommand(
+      "Gimbal neutral", (manager, id) => manager.NeutralAsync(id));
+
+  [RelayCommand]
+  private Task GimbalPointDown() => RunGimbalManagerCommand(
+      "Gimbal point down",
+      (manager, id) => manager.SetAnglesCommandAsync(-90, 0, false, id));
+
+  [RelayCommand]
+  private Task GimbalHome() {
+    var home = _comPort.MAV.cs.HomeLocation;
+    return RunGimbalManagerCommand(
+        "Gimbal point home",
+        (manager, id) => manager.SetROILocationAsync(
+            home.Lat, home.Lng, home.Alt, id, MAVLink.MAV_FRAME.GLOBAL));
+  }
+
+  internal async Task HandleGimbalVideoPointerCommand(
+      GimbalVideoPointerCommand command) {
+    var camera = ResolveCameraProtocol(out _);
+    if (camera == null) {
+      GimbalVideoStatus = "No MAVLink camera detected for the active vehicle.";
+      return;
+    }
+    ConfigureCameraGeometry(camera);
+    try {
+      bool accepted;
+      switch (command.Action) {
+        case GimbalVideoPointerAction.TrackPoint:
+          camera.RequestTrackingMessageInterval(5);
+          accepted = await camera.SetTrackingPointAsync(
+              (float)command.End.X, (float)command.End.Y);
+          break;
+        case GimbalVideoPointerAction.TrackRectangle:
+          camera.RequestTrackingMessageInterval(5);
+          accepted = await camera.SetTrackingRectangleAsync(
+              (float)command.Start.X,
+              (float)command.Start.Y,
+              (float)command.End.X,
+              (float)command.End.Y);
+          break;
+        case GimbalVideoPointerAction.PointOfInterest: {
+            var location = camera.CalculateImagePointLocation(command.End.X, command.End.Y);
+            if (location == null) {
+              GimbalVideoStatus = "Camera FOV data cannot resolve that image point.";
+              return;
+            }
+            var manager = ResolveGimbalManagerProtocol();
+            if (manager == null) {
+              GimbalVideoStatus = "No MAVLink gimbal manager detected for the active vehicle.";
+              return;
+            }
+            accepted = await manager.SetROILocationAsync(
+                location.Lat,
+                location.Lng,
+                location.Alt,
+                (byte)Math.Clamp(GimbalDeviceId, 0, 6),
+                MAVLink.MAV_FRAME.GLOBAL);
+            break;
+          }
+        default: {
+            var manager = ResolveGimbalManagerProtocol();
+            var attitude = manager?.GetAttitude((byte)Math.Clamp(GimbalDeviceId, 0, 6));
+            if (manager == null || attitude == null) {
+              GimbalVideoStatus = "The selected gimbal has not reported its attitude yet.";
+              return;
+            }
+            var rotation = camera.CalculateImagePointRotation(command.End.X, command.End.Y);
+            accepted = await manager.SetAttitudeAsync(
+                attitude * rotation,
+                GimbalYawLocked,
+                (byte)Math.Clamp(GimbalDeviceId, 0, 6));
+            break;
+          }
+      }
+      GimbalVideoStatus = accepted
+          ? command.Action + " command accepted."
+          : command.Action + " is not supported by the selected payload.";
+    } catch (Exception ex) {
+      GimbalVideoStatus = command.Action + " failed: " + ex.Message;
+    }
+  }
+
   private async Task RunMavlinkCameraCommand(
       string title,
-      Func<MissionPlanner.ArduPilot.Mavlink.CameraProtocol, byte, Task> operation) {
+      Func<MissionPlanner.ArduPilot.Mavlink.CameraProtocol, byte, Task> operation,
+      Action? sent = null) {
     if (!Connected) {
       await Services.Dialogs.Alert(title, "Not connected.");
       return;
@@ -3380,8 +3769,11 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     }
     try {
       await operation(camera, streamId);
+      sent?.Invoke();
       Log(title + " command sent to " + CameraTarget);
+      GimbalVideoStatus = title + " command sent to " + CameraTarget + ".";
     } catch (Exception ex) {
+      GimbalVideoStatus = title + " failed: " + ex.Message;
       await Services.Dialogs.Alert(title, "Command failed: " + ex.Message);
     }
   }
@@ -3393,12 +3785,18 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   [RelayCommand]
   private Task StartMavlinkCameraRecording() => RunMavlinkCameraCommand(
       "Start Camera Recording",
-      (camera, streamId) => camera.StartRecordingAsync(streamId));
+      (camera, streamId) => camera.StartRecordingAsync(streamId),
+      () => _cameraRecordingRequested = true);
 
   [RelayCommand]
   private Task StopMavlinkCameraRecording() => RunMavlinkCameraCommand(
       "Stop Camera Recording",
-      (camera, streamId) => camera.StopRecordingAsync(streamId));
+      (camera, streamId) => camera.StopRecordingAsync(streamId),
+      () => _cameraRecordingRequested = false);
+
+  private Task ToggleMavlinkCameraRecording() => _cameraRecordingRequested
+      ? StopMavlinkCameraRecording()
+      : StartMavlinkCameraRecording();
 
   [RelayCommand]
   private Task SetMavlinkCameraZoom() {
