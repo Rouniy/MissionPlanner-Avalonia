@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 948 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/WMS-WMTS/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 955 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/WMS-WMTS/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
@@ -142,6 +142,11 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 - Persisted serial, TCP, UDP client/listener and WebSocket endpoints can auto-connect at normal app
   startup without reopening the endpoint prompt. An interactive network connection now uses the
   single combined Avalonia address/port dialog and suppresses the transport's second upstream prompt.
+- WebSocket telemetry now uses a port-owned managed transport instead of the inherited `async void`
+  reader. Raw WebSocket endpoints no longer receive a spurious Socket.IO probe, explicit Socket.IO
+  endpoints retain the MAVControl handshake and binary prefix, fragmented binary messages remain a
+  continuous MAVLink stream, queued input is bounded, writes are serialized, reconnect attempts are
+  bounded and a user Disconnect cancels and releases the reader promptly even after physical loss.
 - Serial connections restore the exact upstream baud-rate set plus arbitrary custom rates, remember
   rates per physical port and expose the active MAVLink system/component selector. AUTO scan now has
   visible progress and cancellation and records the actual detected port/rate instead of persisting
@@ -540,15 +545,16 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 948 passed, 0 failed, including Settings concurrency/null-reset stress,
-  WMS/WMTS capabilities and tile addressing, real
+- Automated tests: 955 passed, 0 failed, including Settings concurrency/null-reset stress,
+  WMS/WMTS capabilities and tile addressing, raw/Socket.IO WebSocket protocol, fragmentation,
+  reconnect and bounded-close integration, real
   loopback-UDP Moving Base input, blocking serial cancellation, exact multi-modem target isolation
   and reject-by-default command/rally starts.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 948-test source on 2026-08-22. Package metadata,
+- The `.deb` target is rebuilt from the current 955-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 401 packaged-file checksums match after extraction, including the
   portable plugin API, BLE dependency licenses and byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -567,10 +573,10 @@ native-platform acceptance testing.
   scans; no Nordic UART modem was in range for a traffic test.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.79bca5b_amd64.deb`
-(54,218,310 bytes; SHA-256
-`3b9b947d0e4b8ca1e4ee043517101ed929152399efe2b6b32b9039b2a8815c43`), built from commit
-`79bca5b` and the current 948-test source including the portable plugin host, HUD-to-MJPEG/AVI
+`out/packages/missionplanner-avalonia_1.3.83-20260822.a0e7a7b_amd64.deb`
+(54,222,378 bytes; SHA-256
+`6c8bfeb8e1159f456d9e9a70ee1058441a093b211bc1390862faf28a46eb657f`), built from commit
+`a0e7a7b` and the current 955-test source including the portable plugin host, HUD-to-MJPEG/AVI
 recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
@@ -600,10 +606,11 @@ the official FollowLeader and Sequence layout/step workflows, target-bound and c
 Follow Me/Moving Base NMEA workflows, immediate complete-list parameter
 clearing across device switches, and reject-by-default privacy warnings on location/parameter log
 exports identified during the current CodeQL triage, plus concurrent global-settings storage and
-serialized settings-file writes.
+serialized settings-file writes, and a cancellable bounded WebSocket transport with explicit
+raw-WebSocket/Socket.IO protocol separation and reconnect lifecycle ownership.
 Its APT version is
-`1:1.3.83+20260822.r229.79bca5b`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r229` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r232.a0e7a7b`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r232` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
