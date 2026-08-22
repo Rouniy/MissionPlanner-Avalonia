@@ -1,6 +1,6 @@
 using MissionPlanner;
-using MissionPlannerAvalonia.Services;
 using MissionPlanner.Utilities;
+using MissionPlannerAvalonia.Services;
 
 namespace MissionPlannerAvalonia.Tests;
 
