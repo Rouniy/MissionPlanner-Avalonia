@@ -39,6 +39,9 @@ public class SetupViewModel : BackstageViewModel {
         visibleWhen: When(profile => profile.displayFrameType, IsCopter));
     Add("Frame Type (Legacy)", () => new ConfigFrameTypeViewModel(), sub: true, requiresConnection: true,
         visibleWhen: When(profile => profile.displayFrameType, IsCopter));
+    Add("Default Settings", () => new ConfigDefaultSettingsViewModel(), sub: true,
+        requiresConnection: true,
+        visibleWhen: When(profile => profile.displayFrameType, IsCopter));
     Add("Accel Calibration", () => new ConfigAccelCalibrationViewModel(), sub: true, requiresConnection: true,
         visibleWhen: When(profile => profile.displayAccelCalibration));
     Add("Compass", () => new ConfigCompassViewModel(), sub: true, requiresConnection: true,
