@@ -236,11 +236,12 @@ internal static class ConnectionListService {
         _ = transportRelease.Begin(link);
       });
       // Closing the transport is what interrupts upstream's synchronous heartbeat wait. Do not
-      // rely on Task.Run cancellation alone: it cannot stop work that has already started.
-      await Task.Run(() => {
+      // rely on task cancellation alone: it cannot stop synchronous work that has already started.
+      Task open = Task.Factory.StartNew(() => {
         using IDisposable progressScope = MavLinkProgressContext.Use(cancellationToken);
         link.Open(getparams: false, skipconnectedcheck: true, showui: true);
-      }).WaitAsync(cancellationToken)
+      }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+      await open.WaitAsync(cancellationToken)
           .ConfigureAwait(false);
       cancellationToken.ThrowIfCancellationRequested();
       if (link.BaseStream?.IsOpen != true) {
@@ -522,7 +523,7 @@ internal sealed class MavLinkConnectionManager : IDisposable {
     } else if (close) {
       // Custom/test registrations need the same guarantee as normal secondary runtimes: changing
       // the active modem must not wait on a dead driver.
-      _ = Task.Run(() => SafeClose(connection.Link));
+      ScheduleSafeClose(connection.Link);
     }
     Changed?.Invoke();
     return true;
@@ -582,10 +583,10 @@ internal sealed class MavLinkConnectionManager : IDisposable {
         if (connection.Runtime != null) {
           connection.Runtime.StopAsync(close: true).GetAwaiter().GetResult();
         } else {
-          _ = Task.Run(() => SafeClose(connection.Link));
+          ScheduleSafeClose(connection.Link);
         }
       } catch {
-        _ = Task.Run(() => SafeClose(connection.Link));
+        ScheduleSafeClose(connection.Link);
       }
     }
   }
@@ -601,6 +602,13 @@ internal sealed class MavLinkConnectionManager : IDisposable {
     } catch {
     }
   }
+
+  private static void ScheduleSafeClose(MAVLinkInterface link) =>
+      _ = Task.Factory.StartNew(
+          () => SafeClose(link),
+          CancellationToken.None,
+          TaskCreationOptions.LongRunning,
+          TaskScheduler.Default);
 }
 
 /// <summary>

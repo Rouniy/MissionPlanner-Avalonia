@@ -1060,14 +1060,22 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       bool backgroundParamLoad = false;
       try {
 
-        await Task.Run(() =>
-            _comPort.Open(getparams: false, skipconnectedcheck: true, showui: true))
-            .WaitAsync(dlg.Token);
+        Task open = Task.Factory.StartNew(
+            () => _comPort.Open(getparams: false, skipconnectedcheck: true, showui: true),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        await open.WaitAsync(dlg.Token);
         if (_comPort.BaseStream.IsOpen && !dlg.CancelRequested &&
             _comPort.MAV.compid != (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_PERIPHERAL) {
           backgroundParamLoad = Settings.Instance.GetBoolean("Params_BG", false);
           if (!backgroundParamLoad) {
-            await Task.Run(() => _comPort.getParamList()).WaitAsync(dlg.Token);
+            Task parameters = Task.Factory.StartNew(
+                () => _comPort.getParamList(),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+            await parameters.WaitAsync(dlg.Token);
           }
         }
       } catch (Exception ex) {

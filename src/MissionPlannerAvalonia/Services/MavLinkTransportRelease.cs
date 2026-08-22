@@ -39,7 +39,13 @@ internal sealed class MavLinkTransportRelease {
       ICommsSerial? stream = MavLinkBaseStreamAccess.Detach(
           link, current, ClosedMavLinkTransport.Instance);
       _stream = stream;
-      _release = Task.Run(() => Release(stream, terrain));
+      // A broken native/serial driver can block forever in Close. Give it a dedicated background
+      // thread so several dead devices cannot starve async continuations or the shared thread pool.
+      _release = Task.Factory.StartNew(
+          () => Release(stream, terrain),
+          CancellationToken.None,
+          TaskCreationOptions.LongRunning,
+          TaskScheduler.Default);
       return _release;
     }
   }
