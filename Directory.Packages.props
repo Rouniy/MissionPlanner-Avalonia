@@ -19,6 +19,8 @@
     <PackageVersion Include="Projektanker.Icons.Avalonia" Version="9.6.2" />
     <PackageVersion Include="Projektanker.Icons.Avalonia.FontAwesome" Version="9.6.2" />
     <PackageVersion Include="System.IO.Ports" Version="9.0.0" />
+    <PackageVersion Include="Linux.Bluetooth" Version="5.67.1" />
+    <PackageVersion Include="Tmds.DBus" Version="0.92.0" />
     <PackageVersion Include="Tmds.DBus.Protocol" Version="0.21.3" />
     <PackageVersion Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <PackageVersion Include="SSH.NET" Version="2026.0.0" />

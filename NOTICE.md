@@ -20,6 +20,13 @@ interface of **ArduPilot Mission Planner**.
   via project reference — only the presentation layer (Views + ViewModels) is new.
 - See `docs/PORT_STATUS.md` for the page-by-page port state.
 
+## BLE transport dependencies
+
+- `Linux.Bluetooth` © 2024 Xeno Innovations, Inc. is used for the Linux BlueZ/D-Bus
+  transport under Apache License 2.0; see `LICENSES/Apache-2.0.txt`.
+- `Tmds.DBus` © Tom Deseyn and Alp Toker is used by that transport under the MIT
+  License; see `LICENSES/MIT-Tmds.DBus.txt`.
+
 ## License of this project
 
 Because this work links Mission Planner's GPLv3 code, the combined work is a **derivative work and is
