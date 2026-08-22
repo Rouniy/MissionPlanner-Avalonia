@@ -59,6 +59,9 @@ internal sealed record FormationVehicleSource(
   internal bool SupportsFormation => IsAutopilot &&
       State.cs.firmware is Firmwares.ArduCopter2 or Firmwares.ArduRover;
 
+  internal bool SupportsFollowPath => IsAutopilot &&
+      State.cs.firmware is Firmwares.ArduPlane or Firmwares.ArduCopter2 or Firmwares.ArduRover;
+
   internal string Label => $"{Endpoint} — {Id.SystemId}:{Id.ComponentId}";
 }
 
@@ -126,7 +129,7 @@ internal static class FormationGeometry {
     return new FormationOffset(x, y, followerAltitude - leaderAltitude);
   }
 
-  private static (double Latitude, double Longitude) Project(
+  internal static (double Latitude, double Longitude) Project(
       double latitude, double longitude, double bearing, double distance) {
     if (distance <= double.Epsilon) {
       return (latitude, longitude);
@@ -143,7 +146,7 @@ internal static class FormationGeometry {
     return (lat2 * RadiansToDegrees, normalizedLongitude);
   }
 
-  private static (double Distance, double Bearing) DistanceAndBearing(
+  internal static (double Distance, double Bearing) DistanceAndBearing(
       double fromLatitude, double fromLongitude, double toLatitude, double toLongitude) {
     double lat1 = fromLatitude * DegreesToRadians;
     double lat2 = toLatitude * DegreesToRadians;
@@ -335,6 +338,27 @@ internal sealed class FormationCommandRunner {
       DateTime nowUtc,
       out FormationVehicleSource source,
       out string error) {
+    if (!TryResolveAutopilot(sources, id, nowUtc, out source, out error)) {
+      return false;
+    }
+    if (!source.SupportsFormation) {
+      error = source.State.cs.firmware == Firmwares.ArduPlane
+          ? $"{source.Label} is ArduPlane; its upstream attitude/PID controller is not " +
+              "enabled in this position-target formation port."
+          : $"{source.Label} firmware {source.State.cs.firmware} is unsupported; " +
+              "only ArduCopter and ArduRover use this controller.";
+      return false;
+    }
+    error = "";
+    return true;
+  }
+
+  internal static bool TryResolveAutopilot(
+      IReadOnlyList<FormationVehicleSource> sources,
+      FormationVehicleId id,
+      DateTime nowUtc,
+      out FormationVehicleSource source,
+      out string error) {
     source = sources.FirstOrDefault(candidate => candidate.Id == id)!;
     if (source == null) {
       error = $"{id.SystemId}:{id.ComponentId} disappeared or moved to another link.";
@@ -346,14 +370,6 @@ internal sealed class FormationCommandRunner {
     }
     if (!source.IsAutopilot) {
       error = $"{source.Label} is not an autopilot component.";
-      return false;
-    }
-    if (!source.SupportsFormation) {
-      error = source.State.cs.firmware == Firmwares.ArduPlane
-          ? $"{source.Label} is ArduPlane; its upstream attitude/PID controller is not " +
-              "enabled in this position-target formation port."
-          : $"{source.Label} firmware {source.State.cs.firmware} is unsupported; " +
-              "only ArduCopter and ArduRover use this controller.";
       return false;
     }
     DateTime packetUtc = source.State.lastvalidpacket;

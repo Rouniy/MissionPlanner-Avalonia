@@ -206,4 +206,7 @@ public partial class MainWindow : Window {
 
   private void OnFormationControl(object? sender, RoutedEventArgs e) =>
       FormationControlWindow.OpenWindow();
+
+  private void OnFollowPathControl(object? sender, RoutedEventArgs e) =>
+      SwarmFollowPathWindow.OpenWindow();
 }
