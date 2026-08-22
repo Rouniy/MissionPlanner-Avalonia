@@ -98,6 +98,44 @@
         />
       </StackPanel>
 
+      <Border Background="#252627" CornerRadius="4" Padding="10">
+        <StackPanel Spacing="8">
+          <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+            <TextBlock Classes="lbl" Text="Advanced users — SITL swarm" />
+            <TextBlock Classes="lbl" Text="Instances" />
+            <NumericUpDown
+              Width="80"
+              Minimum="2"
+              Maximum="50"
+              Increment="1"
+              Value="{Binding SwarmCount}"
+            />
+          </StackPanel>
+          <WrapPanel HorizontalAlignment="Center">
+            <Button
+              Content="Copter swarm — single link"
+              Command="{Binding StartCopterSingleLinkSwarmCommand}"
+              Margin="4"
+            />
+            <Button
+              Content="Copter swarm — multilink"
+              Command="{Binding StartCopterMultiLinkSwarmCommand}"
+              Margin="4"
+            />
+            <Button
+              Content="Plane swarm — multilink"
+              Command="{Binding StartPlaneMultiLinkSwarmCommand}"
+              Margin="4"
+            />
+            <Button
+              Content="Rover swarm — multilink"
+              Command="{Binding StartRoverMultiLinkSwarmCommand}"
+              Margin="4"
+            />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+
       <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
         <Button
           Content="{Binding StartStopText}"

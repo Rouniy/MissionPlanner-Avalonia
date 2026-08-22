@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -14,8 +16,11 @@ namespace MissionPlannerAvalonia.ViewModels;
 
 public partial class SimulationViewModel : ViewModelBase {
   private readonly SitlLauncher _sitl = new();
+  private readonly List<SitlLauncher> _swarmLaunchers = [];
+  private readonly List<MavLinkConnection> _swarmConnections = [];
   private readonly MAVLinkInterface _comPort = AppState.comPort;
   private readonly ConnectionViewModel _connection;
+  private bool _singleOwnsPrimaryConnection;
 
   public event Action? RequestFlightData;
 
@@ -27,9 +32,17 @@ public partial class SimulationViewModel : ViewModelBase {
 
   [ObservableProperty]
   [NotifyCanExecuteChangedFor(nameof(StartStopCommand))]
+  [NotifyCanExecuteChangedFor(nameof(StartCopterSingleLinkSwarmCommand))]
+  [NotifyCanExecuteChangedFor(nameof(StartCopterMultiLinkSwarmCommand))]
+  [NotifyCanExecuteChangedFor(nameof(StartPlaneMultiLinkSwarmCommand))]
+  [NotifyCanExecuteChangedFor(nameof(StartRoverMultiLinkSwarmCommand))]
   private bool _isBusy;
 
   [ObservableProperty]
+  [NotifyCanExecuteChangedFor(nameof(StartCopterSingleLinkSwarmCommand))]
+  [NotifyCanExecuteChangedFor(nameof(StartCopterMultiLinkSwarmCommand))]
+  [NotifyCanExecuteChangedFor(nameof(StartPlaneMultiLinkSwarmCommand))]
+  [NotifyCanExecuteChangedFor(nameof(StartRoverMultiLinkSwarmCommand))]
   private bool _isRunning;
 
   [ObservableProperty]
@@ -73,6 +86,9 @@ public partial class SimulationViewModel : ViewModelBase {
 
   [ObservableProperty]
   private int _selectedChannelIndex;
+
+  [ObservableProperty]
+  private int _swarmCount = 10;
 
   public IReadOnlyList<string> Models { get; } = new[] {
     "", "quadplane", "xplane", "xplane-heli", "firefly", "+", "quad", "copter", "x",
@@ -152,11 +168,16 @@ public partial class SimulationViewModel : ViewModelBase {
   [RelayCommand(CanExecute = nameof(CanStartStop))]
   private async Task StartStop() {
     if (IsRunning) {
-      await DisconnectAsync();
-      _sitl.Stop();
-      IsRunning = false;
-      StartStopText = "Start";
-      Status = "SITL stopped.";
+      IsBusy = true;
+      StartStopText = "Stopping…";
+      try {
+        await StopAllSimulationAsync();
+        Status = "SITL stopped.";
+      } finally {
+        IsRunning = false;
+        IsBusy = false;
+        StartStopText = "Start";
+      }
       return;
     }
 
@@ -189,6 +210,7 @@ public partial class SimulationViewModel : ViewModelBase {
       Status = $"Connecting to {_sitl.TcpEndpoint} …";
       bool connected = await ConnectAsync();
       _sitl.SetAsPrimaryConnection(connected);
+      _singleOwnsPrimaryConnection = connected;
       IsRunning = true;
       StartStopText = "Stop";
       Status = connected
@@ -199,6 +221,8 @@ public partial class SimulationViewModel : ViewModelBase {
         RequestFlightData?.Invoke();
       }
     } catch (Exception ex) {
+      _sitl.Stop();
+      _singleOwnsPrimaryConnection = false;
       Status = "Start error: " + ex.Message;
       StartStopText = "Start";
     } finally {
@@ -208,6 +232,118 @@ public partial class SimulationViewModel : ViewModelBase {
 
   private bool CanStartStop() => !IsBusy && SitlSupported;
 
+  private bool CanStartSwarm() => !IsBusy && !IsRunning && SitlSupported;
+
+  [RelayCommand(CanExecute = nameof(CanStartSwarm))]
+  private Task StartCopterSingleLinkSwarm() =>
+      StartSwarmAsync(SitlVehicle.Copter, chained: true);
+
+  [RelayCommand(CanExecute = nameof(CanStartSwarm))]
+  private Task StartCopterMultiLinkSwarm() =>
+      StartSwarmAsync(SitlVehicle.Copter, chained: false);
+
+  [RelayCommand(CanExecute = nameof(CanStartSwarm))]
+  private Task StartPlaneMultiLinkSwarm() =>
+      StartSwarmAsync(SitlVehicle.Plane, chained: false);
+
+  [RelayCommand(CanExecute = nameof(CanStartSwarm))]
+  private Task StartRoverMultiLinkSwarm() =>
+      StartSwarmAsync(SitlVehicle.Rover, chained: false);
+
+  private async Task StartSwarmAsync(SitlVehicle vehicle, bool chained) {
+    if (SwarmCount is < 2 or > 50) {
+      Status = "Swarm count must be between 2 and 50.";
+      return;
+    }
+    if (ExtraCmdline.Contains("--defaults", StringComparison.OrdinalIgnoreCase)) {
+      Status = "Remove custom --defaults before starting a swarm; each instance needs identity.parm.";
+      return;
+    }
+
+    try {
+      Settings.Instance["sitl_download_version"] = SelectedChannelIndex.ToString();
+    } catch {
+
+    }
+
+    IsBusy = true;
+    StartStopText = "Starting swarm…";
+    try {
+      IReadOnlyList<SitlSwarmInstancePlan> plans = SitlLauncher.BuildSwarmPlan(
+          HomeLat, HomeLng, HomeAlt, Heading, SwarmCount, chained);
+      ConnectionListEndpoint[] endpoints = [.. (chained
+          ? plans.Where(plan => plan.Instance == 0)
+          : plans.OrderBy(plan => plan.Instance))
+          .Select(plan => new ConnectionListEndpoint(
+              ConnectionListTransport.TcpClient,
+              "127.0.0.1",
+              SitlLauncher.TcpPortForInstance(plan.Instance),
+              "",
+              0,
+              plan.Instance + 1))];
+      ConnectionListEndpoint? duplicate = endpoints.FirstOrDefault(endpoint =>
+          AppState.Connections.ContainsEndpoint(endpoint.Canonical));
+      if (duplicate != null) {
+        throw new InvalidOperationException(
+            $"Connection {duplicate.DisplayName} is already open.");
+      }
+
+      foreach (SitlSwarmInstancePlan plan in plans) {
+        var launcher = new SitlLauncher();
+        launcher.Log += OnLog;
+        _swarmLaunchers.Add(launcher);
+        bool started = await launcher.StartAsync(new SitlStartOptions {
+          Vehicle = vehicle,
+          Channel = SelectedChannel,
+          Home = plan.Home,
+          Speed = SimSpeed,
+          ExtraCmdline = ExtraCmdline,
+          WipeEeprom = WipeEeprom,
+          Instance = plan.Instance,
+          SystemId = plan.SystemId,
+          UseIdentityParameters = true,
+          SecondarySerialClientPort = plan.SecondarySerialClientPort,
+        });
+        if (!started) {
+          throw new InvalidOperationException(
+              $"SITL instance {plan.Instance} did not start. See the simulation log.");
+        }
+      }
+
+      OnLog($"Opening {endpoints.Length} SITL telemetry link(s)…");
+      ConnectionListOpenResult opened = await ConnectionListService.OpenEndpointsAsync(
+          endpoints, AppState.Connections,
+          progress: (_, message) => OnLog(message));
+      _swarmConnections.AddRange(opened.Opened);
+      if (opened.Failures.Count > 0 || opened.Opened.Count != endpoints.Length) {
+        string details = string.Join("; ", opened.Failures.Select(failure =>
+            $"{failure.Endpoint.DisplayName}: {failure.Message}"));
+        throw new IOException("Could not open every SITL link" +
+            (details.Length == 0 ? "." : ": " + details));
+      }
+
+      MavLinkConnection active = opened.Opened[0];
+      AppState.Connections.SetActive(active);
+      _connection.RefreshManagedConnections(reloadActiveParameters: true);
+      AppState.RaiseConnectionChanged();
+      SitlLauncher primaryLauncher = _swarmLaunchers.Single(launcher => launcher.TcpPort == 5760);
+      primaryLauncher.SetAsPrimaryConnection(true);
+
+      IsRunning = true;
+      StartStopText = "Stop all";
+      string linkMode = chained ? "single link" : $"{opened.Opened.Count} links";
+      Status = $"{vehicle} swarm running: {plans.Count} instances, {linkMode}.";
+      RequestFlightData?.Invoke();
+    } catch (Exception ex) {
+      await CleanupSwarmAsync();
+      IsRunning = false;
+      StartStopText = "Start";
+      Status = "Swarm start error: " + ex.Message;
+    } finally {
+      IsBusy = false;
+    }
+  }
+
   private async Task<bool> ConnectAsync() {
     if (AppState.Connections.Primary.IsOpen) {
       OnLog("Another vehicle connection is already active; SITL was not made the primary link.");
@@ -215,7 +351,7 @@ public partial class SimulationViewModel : ViewModelBase {
     }
 
     AppState.CommsSettings["TCP_host"] = "127.0.0.1";
-    AppState.CommsSettings["TCP_port"] = "5760";
+    AppState.CommsSettings["TCP_port"] = _sitl.TcpPort.ToString(CultureInfo.InvariantCulture);
     var result = await _connection.ConnectPreparedStreamAsync(
         new TcpSerial(), "SITL", getParams: true);
     if (!result.Connected) {
@@ -225,8 +361,30 @@ public partial class SimulationViewModel : ViewModelBase {
   }
 
   private async Task DisconnectAsync() {
-    if (AppState.Connections.Primary.IsOpen) {
+    if (_singleOwnsPrimaryConnection && AppState.Connections.Primary.IsOpen) {
       await _connection.DisconnectAsync("SITL disconnected.");
     }
+    _singleOwnsPrimaryConnection = false;
+  }
+
+  private async Task CleanupSwarmAsync() {
+    AppState.ParameterLoads.CancelCurrent();
+    foreach (MavLinkConnection connection in _swarmConnections.ToArray()) {
+      await AppState.Connections.RemoveAsync(connection);
+    }
+    _swarmConnections.Clear();
+    foreach (SitlLauncher launcher in _swarmLaunchers) {
+      launcher.Stop();
+      launcher.Log -= OnLog;
+    }
+    _swarmLaunchers.Clear();
+    _connection.RefreshManagedConnections();
+    AppState.RaiseConnectionChanged();
+  }
+
+  private async Task StopAllSimulationAsync() {
+    await CleanupSwarmAsync();
+    await DisconnectAsync();
+    _sitl.Stop();
   }
 }

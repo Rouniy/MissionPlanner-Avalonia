@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -10,6 +11,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using MissionPlanner.Utilities;
 
 namespace MissionPlannerAvalonia.Services;
 
@@ -27,7 +29,17 @@ public sealed class SitlStartOptions {
   public int Speed { get; init; } = 1;
   public string ExtraCmdline { get; init; } = "";
   public bool WipeEeprom { get; init; }
+  public int Instance { get; init; }
+  public int SystemId { get; init; } = 1;
+  public bool UseIdentityParameters { get; init; }
+  public int? SecondarySerialClientPort { get; init; }
 }
+
+internal sealed record SitlSwarmInstancePlan(
+    int Instance,
+    int SystemId,
+    string Home,
+    int? SecondarySerialClientPort);
 
 public class SitlLauncher {
   private const string _sitlBaseUrl =
@@ -42,8 +54,8 @@ public class SitlLauncher {
       "https://raw.githubusercontent.com/ArduPilot/ardupilot/master/Tools/autotest/";
   private const string _defaultHome = "-35.363261,149.165230,584,353";
   private const string _host = "127.0.0.1";
-  private const int _tcpPort = 5760;
-  private const int _rcOverridePort = 5501;
+  private const int _baseTcpPort = 5760;
+  private const int _baseRcOverridePort = 5501;
 
   private static readonly string[] _cygwinDlls = {
     "cygatomic-1.dll", "cyggcc_s-1.dll", "cyggcc_s-seh-1.dll", "cyggomp-1.dll",
@@ -57,6 +69,7 @@ public class SitlLauncher {
   private Process? _process;
 
   private UdpClient? _rcSend;
+  private int _instance;
 
   private static readonly System.Collections.Generic.List<SitlLauncher> _live = new();
   private static SitlLauncher? _primaryConnection;
@@ -79,7 +92,9 @@ public class SitlLauncher {
 
   public bool IsRunning => _process is { HasExited: false };
 
-  public string TcpEndpoint => $"tcp:{_host}:{_tcpPort}";
+  public int TcpPort => TcpPortForInstance(_instance);
+
+  public string TcpEndpoint => $"tcp:{_host}:{TcpPort}";
 
   private static string CacheDir => AppPaths.SitlCacheRoot;
 
@@ -91,12 +106,117 @@ public class SitlLauncher {
     _ => ("ArduCopter", "+"),
   };
 
+  internal static int TcpPortForInstance(int instance) {
+    ArgumentOutOfRangeException.ThrowIfNegative(instance);
+    return checked(_baseTcpPort + 10 * instance);
+  }
+
+  internal static int RcOverridePortForInstance(int instance) {
+    ArgumentOutOfRangeException.ThrowIfNegative(instance);
+    return checked(_baseRcOverridePort + 10 * instance);
+  }
+
+  internal static IReadOnlyList<SitlSwarmInstancePlan> BuildSwarmPlan(
+      double latitude,
+      double longitude,
+      double altitude,
+      int heading,
+      int count,
+      bool chained) {
+    if (count is < 2 or > 50) {
+      throw new ArgumentOutOfRangeException(nameof(count), "SITL swarm size must be between 2 and 50.");
+    }
+
+    var origin = new PointLatLngAlt(latitude, longitude, altitude);
+    var plans = new List<SitlSwarmInstancePlan>(count);
+    for (int instance = count - 1; instance >= 0; instance--) {
+      PointLatLngAlt position = origin.newpos(heading, instance * 4.0);
+      string home = string.Format(CultureInfo.InvariantCulture,
+          "{0},{1},{2},{3}", position.Lat, position.Lng, altitude, heading);
+      int? secondaryClientPort = chained && instance < count - 1
+          ? 5772 + 10 * instance
+          : null;
+      plans.Add(new SitlSwarmInstancePlan(
+          instance, instance + 1, home, secondaryClientPort));
+    }
+    return plans;
+  }
+
+  internal static string BuildIdentityParameters(int systemId) {
+    if (systemId is < 1 or > 255) {
+      throw new ArgumentOutOfRangeException(nameof(systemId));
+    }
+    return "SERIAL0_PROTOCOL=2\n" +
+        "SERIAL1_PROTOCOL=2\n" +
+        $"SYSID_THISMAV={systemId}\n" +
+        $"MAV_SYSID={systemId}\n" +
+        "SIM_TERRAIN=0\n" +
+        "TERRAIN_ENABLE=0\n" +
+        "SCHED_LOOP_RATE=50\n" +
+        "SIM_RATE_HZ=400\n" +
+        "SIM_DRIFT_SPEED=0\n" +
+        "SIM_DRIFT_TIME=0\n";
+  }
+
+  internal static string BuildLaunchArguments(
+      string model,
+      string home,
+      int speed,
+      int instance,
+      string? defaults,
+      string? extraCmdline,
+      bool wipeEeprom,
+      int? secondarySerialClientPort) {
+    if (string.IsNullOrWhiteSpace(model)) {
+      throw new ArgumentException("A SITL model is required.", nameof(model));
+    }
+    if (string.IsNullOrWhiteSpace(home)) {
+      throw new ArgumentException("A SITL home is required.", nameof(home));
+    }
+    _ = TcpPortForInstance(instance);
+
+    string arguments = $"--model {QuoteArgument(model.Trim())} " +
+        $"--home {QuoteArgument(home.Trim())} -O{QuoteArgument(home.Trim())} " +
+        $"-s{Math.Max(1, speed)} --instance {instance} --serial0 tcp:0";
+    if (secondarySerialClientPort is { } serialPort) {
+      if (serialPort is < 1 or > 65535) {
+        throw new ArgumentOutOfRangeException(nameof(secondarySerialClientPort));
+      }
+      arguments += $" --serial2 tcpclient:{_host}:{serialPort}";
+    }
+    if (!string.IsNullOrWhiteSpace(defaults)) {
+      arguments += $" --defaults {QuoteArgument(defaults)}";
+    }
+    if (wipeEeprom) {
+      arguments += " --wipe";
+    }
+    if (!string.IsNullOrWhiteSpace(extraCmdline)) {
+      arguments += " " + extraCmdline.Trim();
+    }
+    return arguments;
+  }
+
   public async Task<bool> StartAsync(SitlStartOptions opts) {
     if (IsRunning) {
       Emit("SITL already running.");
       return true;
     }
 
+    if (opts.Instance is < 0 or > 50) {
+      Emit("SITL instance must be between 0 and 50.");
+      return false;
+    }
+    if (opts.UseIdentityParameters && opts.SystemId is < 1 or > 255) {
+      Emit("SITL system ID must be between 1 and 255.");
+      return false;
+    }
+    if (opts.UseIdentityParameters &&
+        ContainsCommandLineOption(opts.ExtraCmdline, "--defaults")) {
+      Emit("Custom --defaults cannot be combined with swarm identity parameters.");
+      return false;
+    }
+
+    _instance = opts.Instance;
     var (exeName, defaultModel) = Map(opts.Vehicle);
 
     var model = string.IsNullOrWhiteSpace(opts.Model) ? defaultModel : opts.Model.Trim();
@@ -114,22 +234,22 @@ public class SitlLauncher {
       return false;
     }
 
-    var workdir = Path.Combine(CacheDir, SafeDir(model));
+    var workdir = opts.UseIdentityParameters
+        ? Path.Combine(CacheDir, "instances", SafeDir(model), (opts.Instance + 1).ToString(
+            CultureInfo.InvariantCulture))
+        : Path.Combine(CacheDir, SafeDir(model));
     Directory.CreateDirectory(workdir);
 
     var home = string.IsNullOrWhiteSpace(opts.Home) ? _defaultHome : opts.Home.Trim();
     var speed = opts.Speed <= 0 ? 1 : opts.Speed;
 
     var extra = opts.ExtraCmdline?.Trim() ?? "";
-    if (opts.WipeEeprom) {
-      extra = (extra + " --wipe").Trim();
-    }
-
+    string? defaultsArgument = null;
     if (!ContainsCommandLineOption(extra, "--defaults")) {
       try {
         string? defaults = await EnsureDefaultParametersAsync(model).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(defaults)) {
-          extra = ($"--defaults {QuoteArgument(defaults)} " + extra).Trim();
+          defaultsArgument = defaults;
           Emit($"Using frame defaults for {model}: {defaults}");
         }
       } catch (Exception ex) {
@@ -138,11 +258,18 @@ public class SitlLauncher {
       }
     }
 
-    var args =
-        $"--model {model} --home {home} -O{home} -s{speed} -I0 --serial0 tcp:0";
-    if (!string.IsNullOrEmpty(extra)) {
-      args += " " + extra;
+    if (opts.UseIdentityParameters) {
+      string identityPath = Path.Combine(workdir, "identity.parm");
+      await File.WriteAllTextAsync(identityPath, BuildIdentityParameters(opts.SystemId))
+          .ConfigureAwait(false);
+      defaultsArgument = string.IsNullOrWhiteSpace(defaultsArgument)
+          ? identityPath
+          : defaultsArgument + "," + identityPath;
     }
+
+    string args = BuildLaunchArguments(
+        model, home, speed, opts.Instance, defaultsArgument, extra,
+        opts.WipeEeprom, opts.SecondarySerialClientPort);
 
     var psi = new ProcessStartInfo {
       FileName = binary,
@@ -193,7 +320,7 @@ public class SitlLauncher {
     try {
       _rcSend?.Dispose();
       _rcSend = new UdpClient();
-      _rcSend.Connect(_host, _rcOverridePort);
+      _rcSend.Connect(_host, RcOverridePortForInstance(_instance));
     } catch (Exception ex) {
       Emit($"RC override socket unavailable: {ex.Message}");
       _rcSend = null;
@@ -625,7 +752,7 @@ public class SitlLauncher {
       }
       try {
         using var client = new TcpClient();
-        var connect = client.ConnectAsync(_host, _tcpPort);
+        var connect = client.ConnectAsync(_host, TcpPort);
         if (await Task.WhenAny(connect, Task.Delay(500)).ConfigureAwait(false) == connect &&
             client.Connected) {
           return true;
