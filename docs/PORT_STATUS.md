@@ -428,8 +428,8 @@ native-platform acceptance testing.
   interface and released both reused UDP 57732 sockets cleanly.
 - The `.deb` target was rebuilt from the current 759-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
-  resources were verified; all 396 packaged-file checksums match after extraction, including the
-  byte-for-byte pinned 8,443,722-byte `airports.csv`.
+  resources were verified; all 397 packaged-file checksums match after extraction, including the
+  portable plugin API and byte-for-byte pinned 8,443,722-byte `airports.csv`.
 - `lintian --fail-on error,warning` passes without diagnostics. The extracted x86-64 ELF apphost
   reaches the normal event loop under Xvfb and has no unresolved direct library dependencies.
   Complete and checkpoint-only HUD AVI samples are recognized as 25 fps MJPEG by `ffprobe`.
@@ -437,14 +437,17 @@ native-platform acceptance testing.
   not loaded during normal startup and EventPipe diagnostics are unaffected. Linux filtering
   removed the three known Windows-native SimpleBLE/libusb binaries.
 - The smoke routes downloaded parameter/log/SRTM data and application settings to isolated XDG
-  roots; the extracted application tree remains byte-for-byte unchanged.
+  roots; the extracted application tree remains byte-for-byte unchanged. A portable test plugin
+  and its private managed dependency were loaded from the isolated user directory and completed
+  `Init`, `Loaded` and `Loop`; repeated failures in a second plugin disabled only that loop.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.afe9a7f_amd64.deb`
-(53,910,782 bytes; SHA-256
-`09a4f7360eec1512177b58e3fc4438e2dcbf03cd0edb4781c569bfbf3ddf0e51`), built from the current
-759-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, the integrated Grid v2 boundary editor,
+`out/packages/missionplanner-avalonia_1.3.83-20260822.7964472_amd64.deb`
+(53,946,840 bytes; SHA-256
+`c0a2be2db6df53c8b22e9d75d34d444ca9477994eec72859eb9b2b3e345fd234`), built from the current
+759-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, the integrated
+Grid v2 boundary editor,
 interactive MAVLink
 camera/gimbal video control and all official
 Maestro/ArduTracker/DegreeTracker serial antenna outputs,
@@ -461,8 +464,8 @@ Flight Data splitter, session-only/latest-wins vehicle parameter loading, single
 connections, independent multi-link Connection List support and composite upstream/date/commit
 versioning.
 Its APT version is
-`1:1.3.83+20260822.r177.afe9a7f`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r177` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r180.7964472`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r180` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
