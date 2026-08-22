@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 936 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 945 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/WMS-WMTS/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
@@ -409,6 +409,13 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 - Flight Planner and Flight Data use the same persisted map provider and update together. Google,
   OpenStreetMap, Esri and Bing have distinct tile sources; the Bing selector no longer silently serves
   Esri imagery.
+- The official custom WMS and WMTS providers are available through native asynchronous server and
+  layer selectors in Flight Planner, use the compatible `WMSserver`/`WMSLayer` and historical
+  `WMSTserver`/`WMSTLayer` settings, and immediately update Flight Data and other shared imagery
+  consumers. WMS 1.1/1.3 handles Web Mercator and WGS84 axis order; WMTS capabilities are cached for
+  offline startup and restricted to matrix sets whose zoom/addressing matches the shared Web
+  Mercator cache. Capabilities downloads are cancellable, capped at 8 MiB and parsed with DTD/entity
+  resolution disabled instead of repeating the original synchronous/unbounded XML path.
 - Follow Me and Moving Base are available from both Tools and Advanced Tools. Follow Me accepts
   manual or serial NMEA GGA positions and sends confirmed GUIDED targets; Moving Base accepts serial,
   TCP client/host and UDP client/host GGA input, optional confirmed Rally Point 0 updates, raw logging
@@ -528,13 +535,14 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 936 passed, 0 failed, including real loopback-UDP Moving Base input, blocking
-  serial cancellation, exact multi-modem target isolation and reject-by-default command/rally starts.
+- Automated tests: 945 passed, 0 failed, including WMS/WMTS capabilities and tile addressing, real
+  loopback-UDP Moving Base input, blocking serial cancellation, exact multi-modem target isolation
+  and reject-by-default command/rally starts.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 936-test source on 2026-08-22. Package metadata,
+- The `.deb` target is rebuilt from the current 945-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 401 packaged-file checksums match after extraction, including the
   portable plugin API, BLE dependency licenses and byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -553,10 +561,10 @@ native-platform acceptance testing.
   scans; no Nordic UART modem was in range for a traffic test.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.99663cc_amd64.deb`
-(54,206,672 bytes; SHA-256
-`8b6f03e1c8be46ee6455d8a0740de90f990c3ead8cf0cde55d284128563832b5`), built from commit
-`99663cc` and the current 936-test source including the portable plugin host, HUD-to-MJPEG/AVI
+`out/packages/missionplanner-avalonia_1.3.83-20260822.b9a0ee3_amd64.deb`
+(54,216,628 bytes; SHA-256
+`60ba15ad1761c35490296c843a64ce2d7a07a35e78ee14ba14b2b3f15dd94103`), built from commit
+`b9a0ee3` and the current 945-test source including the portable plugin host, HUD-to-MJPEG/AVI
 recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
@@ -574,7 +582,8 @@ SSH terminal, secure SFTP DataFlash download/delete workflow, the recursive flig
 map thumbnails, offline sphere/ellipsoid MagFit, live Traditional Heli visualization, the movable
 Flight Data splitter, session-only/latest-wins vehicle parameter loading, single-prompt network
 connections, independent multi-link Connection List support and composite upstream/date/commit
-versioning, non-blocking physical-device loss/reconnect, the native official-compatible
+versioning, shared persisted WMS/WMTS maps, non-blocking physical-device loss/reconnect, the native
+official-compatible
 Translation / RESX Editor, bounded Linux speech-dispatcher/espeak-ng playback with an audible
 operator test, the managed BlueZ/D-Bus Nordic UART BLE transport, the native live SRTM/imagery 3D
 Terrain View from official `OpenGLtest2`, plus the
@@ -586,8 +595,8 @@ Follow Me/Moving Base NMEA workflows, immediate complete-list parameter
 clearing across device switches, and reject-by-default privacy warnings on location/parameter log
 exports identified during the current CodeQL triage.
 Its APT version is
-`1:1.3.83+20260822.r223.99663cc`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r223` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r226.b9a0ee3`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r226` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.

@@ -44,6 +44,16 @@ internal static class MapTileSourceFactory {
 
   internal static TileLayer CreateMapLayer(string? mapType) {
     string normalized = NormalizeMapType(mapType);
+    if (OgcMapProvider.TryCreateDefinition(normalized, out OgcTileDefinition definition)) {
+      HttpTileSource ogcSource = CreateSource(
+          definition.Name,
+          definition.Schema,
+          definition.UrlBuilder,
+          definition.CacheIdentity,
+          CurrentAccessMode);
+      ogcSource.Attribution = new BruTile.Attribution(definition.Attribution);
+      return new TileLayer(ogcSource) { Name = normalized };
+    }
     string url = UrlTemplateFor(normalized);
     string attribution = normalized switch {
       "GoogleSatelliteMap" or "GoogleHybridMap" => "© Google",
@@ -67,6 +77,10 @@ internal static class MapTileSourceFactory {
   internal static string NormalizeMapType(string? value) => value switch {
     "GoogleSatelliteMap" or "GoogleHybridMap" or "BingSatelliteMap" or
         "OpenStreetMap" or "EsriWorldImagery" => value,
+    OgcMapProvider.WmsMapType when OgcMapProvider.HasConfiguration(OgcMapProvider.WmsMapType) =>
+      OgcMapProvider.WmsMapType,
+    OgcMapProvider.WmtsMapType when OgcMapProvider.HasConfiguration(OgcMapProvider.WmtsMapType) =>
+      OgcMapProvider.WmtsMapType,
     _ => "GoogleSatelliteMap",
   };
 
@@ -132,8 +146,8 @@ internal static class MapTileSourceFactory {
     }
 
     string normalized = NormalizeMapType(mapType);
-    HttpTileSource source = CreateSource(
-        normalized, UrlTemplateFor(normalized), MapTileAccessMode.ServerAndCache);
+    HttpTileSource source = CreateSourceForMapType(
+        normalized, MapTileAccessMode.ServerAndCache);
     int completed = 0;
     int downloaded = 0;
     int failed = 0;
@@ -168,8 +182,7 @@ internal static class MapTileSourceFactory {
   internal static Task<byte[]?> GetCachedTileAsync(
       string mapType, TileInfo tile, CancellationToken cancellationToken = default) {
     string normalized = NormalizeMapType(mapType);
-    HttpTileSource source = CreateSource(
-        normalized, UrlTemplateFor(normalized), MapTileAccessMode.CacheOnly);
+    HttpTileSource source = CreateSourceForMapType(normalized, MapTileAccessMode.CacheOnly);
     return source.GetTileAsync(_prefetchClient, tile, cancellationToken);
   }
 
@@ -181,8 +194,7 @@ internal static class MapTileSourceFactory {
   internal static Task<byte[]?> GetTileAsync(
       string mapType, TileInfo tile, CancellationToken cancellationToken = default) {
     string normalized = NormalizeMapType(mapType);
-    HttpTileSource source = CreateSource(
-        normalized, UrlTemplateFor(normalized), CurrentAccessMode);
+    HttpTileSource source = CreateSourceForMapType(normalized, CurrentAccessMode);
     return source.GetTileAsync(_prefetchClient, tile, cancellationToken);
   }
 
@@ -214,6 +226,12 @@ internal static class MapTileSourceFactory {
     }
   }
 
+  internal static void RefreshMapType(string? value) {
+    string normalized = NormalizeMapType(value);
+    Settings.Instance["MapType"] = normalized;
+    MapTypeChanged?.Invoke(normalized);
+  }
+
   internal static MapTileAccessMode ParseAccessMode(string? value) =>
       Enum.TryParse(value, ignoreCase: true, out MapTileAccessMode parsed)
           ? parsed
@@ -233,19 +251,47 @@ internal static class MapTileSourceFactory {
       string urlTemplate,
       MapTileAccessMode mode,
       IPersistentCache<byte[]>? persistentCache = null) {
+    return CreateSource(
+        name,
+        new GlobalSphericalMercator("png", minZoomLevel: 0, maxZoomLevel: 21),
+        new BasicUrlBuilder(urlTemplate),
+        urlTemplate,
+        mode,
+        persistentCache);
+  }
+
+  private static HttpTileSource CreateSourceForMapType(
+      string normalized, MapTileAccessMode mode) {
+    if (OgcMapProvider.TryCreateDefinition(normalized, out OgcTileDefinition definition)) {
+      return CreateSource(
+          definition.Name,
+          definition.Schema,
+          definition.UrlBuilder,
+          definition.CacheIdentity,
+          mode);
+    }
+    return CreateSource(normalized, UrlTemplateFor(normalized), mode);
+  }
+
+  private static HttpTileSource CreateSource(
+      string name,
+      ITileSchema schema,
+      IUrlBuilder urlBuilder,
+      string cacheIdentity,
+      MapTileAccessMode mode,
+      IPersistentCache<byte[]>? persistentCache = null) {
     IPersistentCache<byte[]>? cache = mode == MapTileAccessMode.ServerOnly
         ? null
-        : persistentCache ?? GetCache(name, urlTemplate);
+        : persistentCache ?? GetCache(name, cacheIdentity);
 
     if (mode == MapTileAccessMode.CacheOnly) {
       return new CacheOnlyHttpTileSource(
-          new GlobalSphericalMercator("png", minZoomLevel: 0, maxZoomLevel: 21),
-          urlTemplate, name, cache ?? new NullCache());
+          schema, urlBuilder, name, cache ?? new NullCache());
     }
 
     return new HttpTileSource(
-        new GlobalSphericalMercator("png", minZoomLevel: 0, maxZoomLevel: 21),
-        urlTemplate,
+        schema,
+        urlBuilder,
         name: name,
         persistentCache: cache,
         configureHttpRequestMessage: AddUserAgent);
@@ -280,10 +326,10 @@ internal static class MapTileSourceFactory {
   private sealed class CacheOnlyHttpTileSource : HttpTileSource {
     internal CacheOnlyHttpTileSource(
         ITileSchema schema,
-        string urlTemplate,
+        IUrlBuilder urlBuilder,
         string name,
         IPersistentCache<byte[]> persistentCache)
-        : base(schema, urlTemplate, name: name, persistentCache: persistentCache) {
+        : base(schema, urlBuilder, name: name, persistentCache: persistentCache) {
     }
 
     public override Task<byte[]?> GetTileAsync(

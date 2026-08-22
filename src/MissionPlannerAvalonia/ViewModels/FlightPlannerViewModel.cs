@@ -97,8 +97,8 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
     DefaultAlt = FromDisplayAltitude(
         LoadDouble(settings, "TXT_DefaultAlt", ToDisplayAltitude(DefaultAlt)));
 
-    string? savedMapType = settings["MapType"];
-    if (!string.IsNullOrWhiteSpace(savedMapType) && MapTypes.Contains(savedMapType)) {
+    string savedMapType = Services.MapTileSourceFactory.NormalizeMapType(settings["MapType"]);
+    if (MapTypes.Contains(savedMapType)) {
       MapType = savedMapType;
     }
     ShowGrid = settings.GetBoolean("FP_showgrid", false);
@@ -563,6 +563,8 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
             "BingSatelliteMap",
             "OpenStreetMap",
             "EsriWorldImagery",
+            Services.OgcMapProvider.WmsMapType,
+            Services.OgcMapProvider.WmtsMapType,
       ];
 
   [ObservableProperty]
