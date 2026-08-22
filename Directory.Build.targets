@@ -29,6 +29,112 @@
       <Using Namespace="System.IO" />
       <Code Type="Fragment" Language="cs"><![CDATA[
         string source = File.ReadAllText(SourceFile).Replace("\r\n", "\n");
+        const string collectionsUsing = "using System.Collections.Generic;";
+        const string concurrentUsing = "using System.Collections.Concurrent;\n" + collectionsUsing;
+        if (!source.Contains(collectionsUsing)) {
+          throw new InvalidOperationException("Could not locate Settings collection imports in upstream source.");
+        }
+        source = source.Replace(collectionsUsing, concurrentUsing);
+
+        const string instanceField = "        static Settings _instance;";
+        const string instanceFields = "        static volatile Settings _instance;"
+            + "\n        static readonly object _instanceGate = new object();"
+            + "\n        static readonly object _settingsFileGate = new object();";
+        if (!source.Contains(instanceField)) {
+          throw new InvalidOperationException("Could not locate Settings singleton field in upstream source.");
+        }
+        source = source.Replace(instanceField, instanceFields);
+
+        const string oldInstance = @"        public static Settings Instance
+        {
+            get
+            {
+                if (_instance == null)
+                {
+                    _instance = new Settings();
+                    try
+                    {
+                        _instance.Load();
+                    } catch { }
+                }
+                return _instance;
+            }
+        }";
+        const string newInstance = @"        public static Settings Instance
+        {
+            get
+            {
+                if (_instance == null)
+                {
+                    lock (_instanceGate)
+                    {
+                        if (_instance == null)
+                        {
+                            var instance = new Settings();
+                            try
+                            {
+                                instance.Load();
+                            } catch { }
+                            _instance = instance;
+                        }
+                    }
+                }
+                return _instance;
+            }
+        }";
+        if (!source.Contains(oldInstance)) {
+          throw new InvalidOperationException("Could not locate Settings singleton initialization in upstream source.");
+        }
+        source = source.Replace(oldInstance, newInstance);
+
+        const string dictionaryField =
+            "        public static Dictionary<string, string> config = new Dictionary<string, string>();";
+        const string concurrentField =
+            "        public static ConcurrentDictionary<string, string> config = new ConcurrentDictionary<string, string>();";
+        if (!source.Contains(dictionaryField)) {
+          throw new InvalidOperationException("Could not locate Settings config dictionary in upstream source.");
+        }
+        source = source.Replace(dictionaryField, concurrentField)
+            .Replace("config.Remove(key);", "config.TryRemove(key, out _);");
+
+        const string oldIndexerSetter = @"            set
+            {
+                config[key] = value;
+            }";
+        const string newIndexerSetter = @"            set
+            {
+                if (value == null)
+                {
+                    config.TryRemove(key, out _);
+                    return;
+                }
+
+                config[key] = value;
+            }";
+        if (!source.Contains(oldIndexerSetter)) {
+          throw new InvalidOperationException("Could not locate Settings indexer setter in upstream source.");
+        }
+        source = source.Replace(oldIndexerSetter, newIndexerSetter);
+
+        const string saveStart = "        public void Save()\n        {\n";
+        const string saveEnd = "\n        }\n\n        public void Remove(string key)";
+        int saveStartIndex = source.IndexOf(saveStart, StringComparison.Ordinal);
+        int saveEndIndex = source.IndexOf(saveEnd, saveStartIndex + saveStart.Length,
+            StringComparison.Ordinal);
+        if (saveStartIndex < 0 || saveEndIndex < 0) {
+          throw new InvalidOperationException("Could not locate Settings.Save() in upstream source.");
+        }
+        int saveBodyIndex = saveStartIndex + saveStart.Length;
+        string saveBody = source.Substring(saveBodyIndex, saveEndIndex - saveBodyIndex);
+        string synchronizedSave = saveStart
+            + "            lock (_settingsFileGate)\n"
+            + "            {\n"
+            + "    " + saveBody.Replace("\n", "\n    ") + "\n"
+            + "            }\n"
+            + "        }";
+        source = source.Substring(0, saveStartIndex) + synchronizedSave
+            + source.Substring(saveEndIndex + "\n        }".Length);
+
         const string field = "public static string CustomUserDataDirectory = \"\";";
         const string extraField = "public static string CustomDataDirectory = \"\";";
         if (!source.Contains(extraField)) {
