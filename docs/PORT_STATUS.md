@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 1009 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/Hong-Kong-NoFly/GeoTIFF/DTED/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 1016 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/Hong-Kong-NoFly/GeoTIFF/DTED/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
@@ -596,7 +596,7 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 1009 passed, 0 failed, including Settings concurrency/null-reset stress,
+- Automated tests: 1016 passed, 0 failed, including Settings concurrency/null-reset stress,
   WMS/WMTS capabilities and tile addressing, raw/Socket.IO WebSocket protocol, fragmentation,
   reconnect and bounded-close integration, real
   loopback-UDP Moving Base input, blocking serial cancellation, exact multi-modem target isolation
@@ -616,6 +616,9 @@ native-platform acceptance testing.
   Hong Kong NoFly tests cover Polygon/MultiPolygon parsing, holes, WGS84 validation, the official
   alpha/color style, fresh/stale caches, network failure, cancellation cleanup, atomic publication,
   concurrent-load serialization and layer replacement on both Flight Planner and Flight Data.
+  Parameter-recovery tests cover exact link/system/component/MAVState identity, the official
+  ENABLE-first and `_ID` reset order, explicit cancellation, target loss and rejected values. The
+  `temp.cs` registry test proves that all 67 pinned click handlers have exactly one closed status.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop; the packaged Ctrl+X action opens
   the bound Map Tile Cache import UI and Ctrl+F shows the native SHP-to-POLY, Adjust Barometer
@@ -624,7 +627,7 @@ native-platform acceptance testing.
   its safe defaults were visually verified.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 1009-test source on 2026-08-23. Package metadata,
+- The `.deb` target is rebuilt from the current 1016-test source on 2026-08-23. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 401 packaged-file checksums match after extraction, including the
   portable plugin API, BLE dependency licenses and byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -643,10 +646,10 @@ native-platform acceptance testing.
   scans; no Nordic UART modem was in range for a traffic test.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260823.5a1ad70_amd64.deb`
-(54,269,730 bytes; SHA-256
-`c7148daa78024cb36558e7495bdc51e287ecf8ccd594f745449433d7995ea2ae`), built from commit
-`5a1ad70` and the current 1009-test source including the portable plugin host, HUD-to-MJPEG/AVI
+`out/packages/missionplanner-avalonia_1.3.83-20260823.31ced4b_amd64.deb`
+(54,253,938 bytes; SHA-256
+`3b09d76e098f99e33c922502c25d671bcd71e7ec9617383bcf69086444db04ce`), built from commit
+`31ced4b` and the current 1016-test source including the portable plugin host, HUD-to-MJPEG/AVI
 recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
@@ -680,13 +683,14 @@ Plane/Copter/Rover leader/follower Formation, including the opt-in ArduPlane att
 ArduPlane/Copter/Rover Follow Path workflows, the official Copter WaypointLeader state machine and
 the official FollowLeader and Sequence layout/step workflows, target-bound and cancellable official
 Follow Me/Moving Base NMEA workflows, immediate complete-list parameter
-clearing across device switches, and reject-by-default privacy warnings on location/parameter log
+clearing across device switches, exact-target cancellable parameter recovery and the complete
+67-handler official developer-form audit, and reject-by-default privacy warnings on location/parameter log
 exports identified during the current CodeQL triage, plus concurrent global-settings storage and
 serialized settings-file writes, and a cancellable bounded WebSocket transport with explicit
 raw-WebSocket/Socket.IO protocol separation and reconnect lifecycle ownership.
 Its APT version is
-`1:1.3.83+20260823.r258.5a1ad70`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r258` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260823.r261.31ced4b`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r261` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
