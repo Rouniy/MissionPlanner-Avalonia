@@ -18,7 +18,7 @@ namespace MissionPlannerAvalonia.Views;
 public partial class FlightPlannerView : UserControl {
   private FlightPlannerViewModel? _wired;
   private bool _polygonDrawMode;
-  private int _noFlyLoadVersion;
+  private readonly Services.NoFlyOverlayCoordinator _noFlyOverlay;
   private bool _tilePrefetchRunning;
   private bool _actionDockBottom;
 
@@ -40,11 +40,18 @@ public partial class FlightPlannerView : UserControl {
     KeyDown += OnPlannerKeyDown;
     DataContextChanged += (_, _) => WireViewModel();
     WireViewModel();
-    LoadAutoNoFly();
-    AttachedToVisualTree += (_, _) =>
-        Services.NoFlyOverlay.VisibilityChanged += OnNoFlyVisibilityChanged;
+    _noFlyOverlay = new Services.NoFlyOverlayCoordinator(
+        Map.SetNoFlyLayer,
+        status => {
+          if (Vm != null) {
+            Vm.Status = status;
+          }
+        });
+    AttachedToVisualTree += (_, _) => {
+      _noFlyOverlay.Activate();
+    };
     DetachedFromVisualTree += (_, _) => {
-      Services.NoFlyOverlay.VisibilityChanged -= OnNoFlyVisibilityChanged;
+      _noFlyOverlay.Deactivate();
       Vm?.SavePlannerSettings();
     };
   }
@@ -111,31 +118,6 @@ public partial class FlightPlannerView : UserControl {
           actionBottom ? "Bottom" : "Right";
     }
   }
-
-  private async void LoadAutoNoFly() {
-    int version = ++_noFlyLoadVersion;
-    if (!MissionPlanner.Utilities.Settings.Instance.GetBoolean("ShowNoFly", false)) {
-      Map.SetNoFlyLayer(null);
-      return;
-    }
-    try {
-      var layer = await Task.Run(() =>
-          Services.NoFlyOverlay.BuildLayerFromDirectory(Services.NoFlyOverlay.DefaultDirectory));
-      if (version != _noFlyLoadVersion ||
-          !MissionPlanner.Utilities.Settings.Instance.GetBoolean("ShowNoFly", false)) {
-        return;
-      }
-      Map.SetNoFlyLayer(layer);
-      if (layer != null) {
-        if (Vm != null) {
-          Vm.Status = "NoFly overlay loaded from " + Services.NoFlyOverlay.DefaultDirectory;
-        }
-      }
-    } catch {
-    }
-  }
-
-  private void OnNoFlyVisibilityChanged() => Dispatcher.UIThread.Post(LoadAutoNoFly);
 
   private void OnMapClicked(double lat, double lng) {
     if (Vm == null) {

@@ -47,6 +47,7 @@ public class MapView : MapControl {
   private readonly WritableLayer _otherVehicles = new() { Name = "Other vehicles" };
   private readonly WritableLayer _vehicle = new() { Name = "Vehicle" };
   private readonly WritableLayer _traffic = new() { Name = "ADS-B / AIS traffic" };
+  private ILayer? _noFly;
   private readonly DispatcherTimer _timer;
   private readonly AirportOverlayController _airports;
   private readonly PropagationOverlayController _propagation;
@@ -127,6 +128,18 @@ public class MapView : MapControl {
     } catch {
 
     }
+  }
+
+  public void SetNoFlyLayer(ILayer? layer) {
+    if (_noFly != null) {
+      Map.Layers.Remove(_noFly);
+      _noFly = null;
+    }
+    if (layer != null) {
+      _noFly = layer;
+      Map.Layers.Add(layer);
+    }
+    RefreshGraphics();
   }
 
   public MapView() {

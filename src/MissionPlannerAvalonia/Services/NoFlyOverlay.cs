@@ -7,8 +7,10 @@ using System.Linq;
 using System.Xml.Linq;
 using Mapsui;
 using Mapsui.Layers;
+using Mapsui.Nts;
 using Mapsui.Projections;
 using Mapsui.Styles;
+using NetTopologySuite.Geometries;
 
 namespace MissionPlannerAvalonia.Services;
 
@@ -42,6 +44,40 @@ public static class NoFlyOverlay {
       }
     }
     return rings.Count == 0 ? null : BuildLayer(rings, name);
+  }
+
+  internal static ILayer? BuildLayerFromDirectoryAndHongKong(
+      string directory,
+      IReadOnlyList<HongKongNoFlyZone> hongKongZones,
+      string name = "NoFly") {
+    var localLayer = BuildLayerFromDirectory(directory, name) as WritableLayer;
+    var layer = localLayer ?? new WritableLayer { Name = name };
+    int added = 0;
+    foreach (HongKongNoFlyZone zone in hongKongZones) {
+      LinearRing? shell = ProjectRing(zone.Outer);
+      if (shell == null) {
+        continue;
+      }
+      LinearRing[] holes = zone.Holes
+          .Select(ProjectRing)
+          .Where(ring => ring != null)
+          .Cast<LinearRing>()
+          .ToArray();
+      var feature = new GeometryFeature {
+        Geometry = new Polygon(shell, holes),
+      };
+      feature.Styles.Add(new VectorStyle {
+        Fill = new Brush(new Color(0, 0, 255, 30)),
+        Outline = new Pen(new Color(128, 0, 128, 255), 2),
+      });
+      layer.Add(feature);
+      added++;
+    }
+    if (added == 0 && localLayer == null) {
+      return null;
+    }
+    layer.DataHasChanged();
+    return layer;
   }
 
   public static ILayer BuildLayer(IReadOnlyList<IReadOnlyList<(double Lat, double Lng)>> rings,
@@ -107,6 +143,19 @@ public static class NoFlyOverlay {
         layer.Add(f);
       }
     }
+  }
+
+  private static LinearRing? ProjectRing(IReadOnlyList<(double Lat, double Lng)> ring) {
+    if (ring.Count < 3) {
+      return null;
+    }
+    var coordinates = new Coordinate[ring.Count + 1];
+    for (int index = 0; index < ring.Count; index++) {
+      var projected = SphericalMercator.FromLonLat(ring[index].Lng, ring[index].Lat);
+      coordinates[index] = new Coordinate(projected.x, projected.y);
+    }
+    coordinates[^1] = coordinates[0].Copy();
+    return new LinearRing(coordinates);
   }
 
   private static string ReadKmlText(string path) {
