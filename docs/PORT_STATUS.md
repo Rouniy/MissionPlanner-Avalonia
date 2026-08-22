@@ -277,9 +277,10 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 - Physical USB/serial removal and a silent UDP modem can no longer trap the UI inside an upstream
   driver `Close()`. The dead transport is atomically detached, its logical connection and parameter
   state are cleared immediately, and OS cleanup continues against only the captured old stream in
-  the background. Port selection, explicit disconnect, multi-link fallback and a new connection all
-  remain available even when that old driver never returns; cancelling an open or foreground
-  parameter read also stops waiting for its synchronous upstream worker.
+  a dedicated background thread, without starving shared async continuations. Port selection,
+  explicit disconnect, multi-link fallback and a new connection all remain available even when that
+  old driver never returns; cancelling an open or foreground parameter read also stops waiting for
+  its synchronous upstream worker.
 - Vehicle terrain serving was re-audited against the pinned source: each opened `MAVLinkInterface`
   instantiates the official `TerrainFollow`, receives `TERRAIN_REQUEST` through the shared reader and
   sends 4×4 `TERRAIN_DATA` grids from the cross-platform SRTM cache. This inherited workflow was
@@ -515,9 +516,9 @@ native-platform acceptance testing.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.6e6e775_amd64.deb`
-(54,057,362 bytes; SHA-256
-`20bcd64b9cde5806ee21b1306647b86ecd88c5886631eaa4cdcc8e38e296ce8b`), built from the current
+`out/packages/missionplanner-avalonia_1.3.83-20260822.77ce968_amd64.deb`
+(54,066,714 bytes; SHA-256
+`406c4a252bce6855d34c7d17b00009a935a22b8cfa100093708d563ca70bfe94`), built from the current
 894-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
@@ -543,8 +544,8 @@ the official FollowLeader and Sequence layout/step workflows, immediate complete
 clearing across device switches, and reject-by-default privacy warnings on location/parameter log
 exports identified during the current CodeQL triage.
 Its APT version is
-`1:1.3.83+20260822.r204.6e6e775`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r204` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r206.77ce968`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r206` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
