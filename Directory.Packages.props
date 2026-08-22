@@ -24,6 +24,7 @@
     <PackageVersion Include="SSH.NET" Version="2026.0.0" />
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageVersion Include="MetadataExtractor" Version="2.9.3" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.11" />
     <PackageVersion Include="NetTopologySuite.IO.Esri.Shapefile" Version="1.2.0" />
     <PackageVersion Include="DotNetZip.NetStandard" Version="1.12.0" />
     <PackageVersion Include="ScottPlot.Avalonia" Version="5.0.56" />

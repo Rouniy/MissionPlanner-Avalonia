@@ -124,6 +124,7 @@ public class SetupViewModel : BackstageViewModel {
     Add(">> Advanced", () => new InfoPageViewModel("Advanced", "Advanced configuration. Pick a sub-page."),
         advanced: true);
     Add("Advanced Tools", () => new ConfigAdvancedViewModel(), advanced: true, sub: true);
+    Add("Elevation Sources", () => new ConfigElevationSourcesViewModel(), advanced: true, sub: true);
     Add("Developer Tools", () => new ConfigDeveloperToolsViewModel(), advanced: true, sub: true);
     Add("Mission Command List", () => new ConfigMavCommandViewModel(), advanced: true, sub: true);
     Add("Terminal", () => new ConfigTerminalViewModel(), advanced: true, sub: true,

@@ -71,6 +71,7 @@
     <PackageReference Include="BouncyCastle.Cryptography" />
     <PackageReference Include="SSH.NET" />
     <PackageReference Include="MetadataExtractor" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="NetTopologySuite.IO.Esri.Shapefile" />
   </ItemGroup>
 

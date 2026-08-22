@@ -1,0 +1,57 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:cv="using:MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView"
+  mc:Ignorable="d"
+  d:DesignWidth="1000"
+  d:DesignHeight="700"
+  x:Class="MissionPlannerAvalonia.Views.GCSViews.ConfigurationView.ConfigElevationSourcesView"
+  x:DataType="cv:ConfigElevationSourcesViewModel"
+  Background="{DynamicResource MpControlBg}">
+  <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto" RowSpacing="10">
+    <StackPanel Grid.Row="0" Spacing="4">
+      <TextBlock Classes="pagetitle" Text="Elevation Sources" />
+      <TextBlock Classes="fieldlbl" TextWrapping="Wrap" MaxWidth="850" HorizontalAlignment="Left"
+                 Text="Load local GeoTIFF and DTED digital elevation models. As in official Mission Planner, local GeoTIFF is checked first, then DTED, then the downloaded SRTM cache." />
+    </StackPanel>
+
+    <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="8">
+      <TextBlock Grid.Column="0" Classes="lbl" Text="DEM directory" VerticalAlignment="Center" />
+      <TextBox Grid.Column="1" Text="{Binding DirectoryPath, Mode=TwoWay}"
+               Watermark="Directory containing .tif/.tiff/.dt0/.dt1/.dt2 files" />
+      <Button Grid.Column="2" x:Name="BrowseButton" Content="Browse…" IsEnabled="{Binding !IsBusy}" />
+      <Button Grid.Column="3" Content="Save &amp; Scan" Command="{Binding RescanCommand}"
+              IsEnabled="{Binding !IsBusy}" />
+      <Button Grid.Column="4" Content="Clear Saved" Command="{Binding ClearSavedCommand}"
+              IsEnabled="{Binding !IsBusy}" />
+    </Grid>
+
+    <TextBlock Grid.Row="2" Classes="fieldlbl" TextWrapping="Wrap"
+               Text="The selected directory is restored automatically at every start. Subdirectories are scanned; one unreadable file does not prevent other elevation models from loading." />
+
+    <Border Grid.Row="3" BorderBrush="#666" BorderThickness="1">
+      <DataGrid ItemsSource="{Binding Files}" AutoGenerateColumns="False" IsReadOnly="True"
+                GridLinesVisibility="Horizontal" CanUserResizeColumns="True" CanUserSortColumns="True">
+        <DataGrid.Columns>
+          <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="200" />
+          <DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="90" />
+          <DataGridTextColumn Header="State" Binding="{Binding State}" Width="90" />
+          <DataGridTextColumn Header="Coverage / size" Binding="{Binding Coverage}" Width="360" />
+          <DataGridTextColumn Header="Path" Binding="{Binding FullPath}" Width="300" />
+          <DataGridTextColumn Header="Error" Binding="{Binding Error}" Width="260" />
+        </DataGrid.Columns>
+      </DataGrid>
+    </Border>
+
+    <Grid Grid.Row="4" RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="5" ColumnSpacing="8">
+      <ProgressBar Grid.Row="0" Grid.Column="0" Minimum="0" Maximum="{Binding ProgressMaximum}"
+                   Value="{Binding Progress}" Height="15" />
+      <Button Grid.Row="0" Grid.Column="1" Content="Cancel" Command="{Binding CancelCommand}"
+              IsEnabled="{Binding IsBusy}" />
+      <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Status}" Foreground="#9CDCFE"
+                 TextWrapping="Wrap" />
+    </Grid>
+  </Grid>
+</UserControl>
