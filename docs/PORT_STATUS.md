@@ -481,10 +481,10 @@ native-platform acceptance testing.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.90880d2_amd64.deb`
-(53,972,622 bytes; SHA-256
-`1edefe4ccb1dbed6d32fdc7f3af188b081a2ec43b9d1b4ad49f877ecb9256870`), built from the current
-806-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, the integrated
+`out/packages/missionplanner-avalonia_1.3.83-20260822.5df75a4_amd64.deb`
+(53,981,956 bytes; SHA-256
+`b97d48718ac1ae129b3b4bd52697730db5bbe7d28788b65dea99bbc87e35680e`), built from the current
+842-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, the integrated
 Grid v2 boundary editor,
 interactive MAVLink
 camera/gimbal video control and all official
@@ -501,10 +501,11 @@ map thumbnails, offline sphere/ellipsoid MagFit, live Traditional Heli visualiza
 Flight Data splitter, session-only/latest-wins vehicle parameter loading, single-prompt network
 connections, independent multi-link Connection List support and composite upstream/date/commit
 versioning, plus the fail-closed official Copter/Rover leader/follower Formation and
-ArduPlane/Copter/Rover Follow Path workflows.
+ArduPlane/Copter/Rover Follow Path workflows, the official Copter WaypointLeader state machine and
+immediate complete-list parameter clearing across device switches.
 Its APT version is
-`1:1.3.83+20260822.r186.90880d2`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r186` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r190.5df75a4`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r190` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
