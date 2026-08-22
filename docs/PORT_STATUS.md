@@ -379,7 +379,7 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Automated tests: 706 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
-- The `.deb` target was rebuilt from the current 703-test source on 2026-08-22. Package metadata,
+- The `.deb` target was rebuilt from the current 706-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 396 packaged-file checksums match after extraction, including the
   byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -393,10 +393,11 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.c28ebbb_amd64.deb`
-(53,877,718 bytes; SHA-256
-`1904ffd471e3e005d10add7db9bdf17693869a556f7f624f109205242d2b18fa`), built from the current
-703-test source including target-safe official DroneCAN parameter/firmware, MicroDrone, DEVICE_OP
+`out/packages/missionplanner-avalonia_1.3.83-20260822.cbdaff8_amd64.deb`
+(53,882,700 bytes; SHA-256
+`70fde657d337e8eae14bb15fb7e9da1aff0c36b5c75826ecdec500ba99386dd8`), built from the current
+706-test source including direct serial SLCAN, target-safe official DroneCAN parameter/firmware,
+MicroDrone, DEVICE_OP
 and ArduPilot Default Settings workflows,
 camera feedback/overlap/gimbal overlays, managed SHP/DXF/GeoPackage
 planner import, local GeoTIFF/DTED elevation sources,
@@ -408,8 +409,8 @@ Flight Data splitter, session-only/latest-wins vehicle parameter loading, single
 connections, independent multi-link Connection List support and composite upstream/date/commit
 versioning.
 Its APT version is
-`1:1.3.83+20260822.r159.c28ebbb`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r159` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r162.cbdaff8`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r162` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
