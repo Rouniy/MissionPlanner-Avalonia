@@ -492,10 +492,10 @@ native-platform acceptance testing.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.5df75a4_amd64.deb`
-(53,981,956 bytes; SHA-256
-`b97d48718ac1ae129b3b4bd52697730db5bbe7d28788b65dea99bbc87e35680e`), built from the current
-842-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, the integrated
+`out/packages/missionplanner-avalonia_1.3.83-20260822.626f93b_amd64.deb`
+(54,018,482 bytes; SHA-256
+`5eb8f458497a6e0e1fdf82f1f209ab308c01d9b8a6e61bc87da7f9d1351269c2`), built from the current
+864-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, the integrated
 Grid v2 boundary editor,
 interactive MAVLink
 camera/gimbal video control and all official
@@ -513,10 +513,12 @@ Flight Data splitter, session-only/latest-wins vehicle parameter loading, single
 connections, independent multi-link Connection List support and composite upstream/date/commit
 versioning, plus the fail-closed official Copter/Rover leader/follower Formation and
 ArduPlane/Copter/Rover Follow Path workflows, the official Copter WaypointLeader state machine and
-immediate complete-list parameter clearing across device switches.
+the official FollowLeader and Sequence layout/step workflows, immediate complete-list parameter
+clearing across device switches, and reject-by-default privacy warnings on location/parameter log
+exports identified during the current CodeQL triage.
 Its APT version is
-`1:1.3.83+20260822.r190.5df75a4`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r190` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r193.626f93b`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r193` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -611,3 +613,6 @@ the submodule: log4net 3.3.2, SharpCompress 0.48.0 and SkiaSharp/SkiaSharp nativ
 The SSH port uses SSH.NET 2026.0.0 and BouncyCastle.Cryptography 2.7.0 instead of upstream's
 vulnerable SSH.NET 2020.0.2 dependency. A current `dotnet list package --vulnerable
 --include-transitive` audit reports no vulnerable package in the Avalonia application graph.
+The seven current CodeQL findings and their code-level mitigations or reachability decisions are
+recorded in [`CODEQL_TRIAGE.md`](CODEQL_TRIAGE.md); no alert was dismissed merely to make the
+dashboard green.
