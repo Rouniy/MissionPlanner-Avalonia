@@ -18,7 +18,11 @@ namespace MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView;
 public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDisposable {
   private readonly SemaphoreSlim _operationGate = new(1, 1);
   private CancellationTokenSource? _firmwareArchiveCancel;
+  private CancellationTokenSource? _parameterRecoveryCancel;
+  private ParameterRecoveryTarget? _parameterRecoveryTarget;
+  private int _parameterRecoveryInvalidated;
   private RemoteLog? _remoteLog;
+  private bool _disposed;
 
   public ConfigDeveloperToolsViewModel() {
     Title = "Developer Tools";
@@ -48,6 +52,7 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
     Action("Download DataFlash Logs over SFTP", () => Views.SftpLogDownloadWindow.OpenWindow());
     Action("Download MAVFTP File", () => _ = DownloadMavFtpFileAsync());
     Action("Restore Parameters (Recovery)", () => _ = RestoreParametersAsync());
+    Action("Cancel Parameter Restore", CancelParameterRecovery);
     Action("Set QNH", () => _ = SetQnhAsync());
     Action("Adjust Barometer Altitude", () => _ = AdjustBarometerAltitudeAsync());
     Action("Force Accel Calibrated", () => _ = ForceCalibrationAsync(accelerometer: true));
@@ -57,6 +62,7 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
     Action("Reboot to DFU", () => _ = RebootToDfuAsync());
     Action("Start Remote DataFlash Log", () => _ = StartRemoteLogAsync());
     Action("Stop Remote DataFlash Log", StopRemoteLog);
+    AppState.ConnectionChanged += OnConnectionChanged;
   }
 
   private async Task DecodePacketAsync() {
@@ -413,71 +419,123 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
   }
 
   private async Task RestoreParametersAsync() {
-    if (!RequireSafeVehicle("Parameter recovery")) {
-      return;
-    }
     var input = await PickFileAsync("Select recovery parameter file", "Parameter file", "*.param", "*.parm");
-    if (input == null || !await Dialogs.Confirm(
-            "Restore Parameters (Recovery)",
-            "This recovery path writes ENABLE parameters first, resets matching *_ID parameters to zero, " +
-            "and then writes all compatible values. Continue while the vehicle is disarmed?")) {
+    if (input == null) {
       return;
     }
 
-    AppendLog("Parameter recovery: loading and prefetching parameter names …");
+    ParameterRecoveryTarget? target = CaptureParameterRecoveryTarget();
+    if (target == null) {
+      AppendLog("Parameter recovery: connect and select a disarmed vehicle first.");
+      return;
+    }
+    if (!await Dialogs.Confirm(
+            "Restore Parameters (Recovery)",
+            "This recovery path writes ENABLE parameters first, resets matching *_ID parameters to zero, " +
+            $"and then writes all compatible values to {target.SystemId}:{target.ComponentId}. " +
+            "Continue while this exact vehicle remains selected and disarmed?")) {
+      return;
+    }
+    if (!IsParameterRecoveryTargetCurrent(target)) {
+      AppendLog("Parameter recovery: the selected modem or vehicle changed, disconnected, or became " +
+                "armed while the confirmation was open; nothing was written.");
+      return;
+    }
+
     if (!_operationGate.Wait(0)) {
       AppendLog("Another developer operation is already running.");
       return;
     }
+    using var cancellation = new CancellationTokenSource();
+    Volatile.Write(ref _parameterRecoveryInvalidated, 0);
+    _parameterRecoveryCancel = cancellation;
+    _parameterRecoveryTarget = target;
+    AppendLog($"Parameter recovery: loading and prefetching parameter names for " +
+              $"{target.SystemId}:{target.ComponentId} …");
     try {
-      var result = await Task.Run(() => RestoreParameters(input));
+      if (!IsParameterRecoveryTargetCurrent(target)) {
+        throw new ParameterRecoveryTargetChangedException();
+      }
+      var result = await Task.Run(
+          () => RestoreParameters(input, target, cancellation.Token), cancellation.Token);
       AppendLog($"Parameter recovery complete: {result.Set} set, {result.Unchanged} unchanged, " +
                 $"{result.Failed.Count} failed." +
                 (result.Failed.Count == 0 ? "" : " Failed: " + string.Join(", ", result.Failed)));
+    } catch (ParameterRecoveryTargetChangedException) {
+      AppendLog("Parameter recovery stopped: the active modem or vehicle changed, disconnected, or " +
+                "became armed. No further parameter writes were attempted.");
+    } catch (OperationCanceledException) when (cancellation.IsCancellationRequested) {
+      string reason = Volatile.Read(ref _parameterRecoveryInvalidated) != 0
+          ? "the active modem or vehicle changed, disconnected, or became armed"
+          : "cancellation was requested by the operator";
+      AppendLog($"Parameter recovery stopped: {reason}. No further parameter writes were attempted.");
     } catch (Exception ex) {
       AppendLog("Parameter recovery failed: " + ex.Message);
     } finally {
+      if (ReferenceEquals(_parameterRecoveryCancel, cancellation)) {
+        _parameterRecoveryCancel = null;
+        _parameterRecoveryTarget = null;
+      }
       _operationGate.Release();
     }
   }
 
-  private (int Set, int Unchanged, List<string> Failed) RestoreParameters(string path) {
+  private ParameterRecoveryResult RestoreParameters(
+      string path, ParameterRecoveryTarget target, CancellationToken cancellationToken) {
     var values = ParamFile.loadParamFile(path);
-    foreach (var item in values) {
-      _comPort.GetParam(_comPort.MAV.sysid, _comPort.MAV.compid, item.Key, requireresponce: false);
-    }
-    foreach (var item in values.Where(item => item.Key.Contains("ENABLE", StringComparison.OrdinalIgnoreCase))) {
-      try {
-        _comPort.setParam(_comPort.MAV.sysid, _comPort.MAV.compid, item.Key, item.Value, true);
-      } catch {
-        // The complete pass below records failures and reports them to the user.
-      }
-    }
+    return ParameterRecoveryWorkflow.Run(
+        values,
+        target,
+        IsParameterRecoveryTargetCurrent,
+        (captured, name, requireResponse) => captured.Link.GetParam(
+            captured.SystemId, captured.ComponentId, name, requireresponce: requireResponse),
+        (captured, name, value) => captured.Link.setParam(
+            captured.SystemId, captured.ComponentId, name, value, true),
+        static (captured, name) => captured.State.param.ContainsKey(name)
+            ? captured.State.param[name].Value
+            : null,
+        cancellationToken);
+  }
 
-    int set = 0;
-    int unchanged = 0;
-    var failed = new List<string>();
-    foreach (var item in values) {
-      try {
-        if (_comPort.MAV.param.ContainsKey(item.Key)
-            && Math.Abs(_comPort.MAV.param[item.Key].Value - item.Value) < 1e-9) {
-          unchanged++;
-          continue;
-        }
-        _comPort.GetParam(_comPort.MAV.sysid, _comPort.MAV.compid, item.Key);
-        if (item.Key.EndsWith("_ID", StringComparison.OrdinalIgnoreCase)) {
-          _comPort.setParam(_comPort.MAV.sysid, _comPort.MAV.compid, item.Key, 0, true);
-        }
-        if (_comPort.setParam(_comPort.MAV.sysid, _comPort.MAV.compid, item.Key, item.Value, true)) {
-          set++;
-        } else {
-          failed.Add(item.Key);
-        }
-      } catch {
-        failed.Add(item.Key);
-      }
+  private static ParameterRecoveryTarget? CaptureParameterRecoveryTarget() {
+    MAVLinkInterface link = AppState.comPort;
+    MAVState state = link.MAV;
+    return link.BaseStream?.IsOpen == true && !state.cs.armed
+        ? new ParameterRecoveryTarget(link, state, state.sysid, state.compid)
+        : null;
+  }
+
+  private static bool IsParameterRecoveryTargetCurrent(ParameterRecoveryTarget target) {
+    MAVLinkInterface activeLink = AppState.comPort;
+    return activeLink.BaseStream?.IsOpen == true
+        && !target.State.cs.armed
+        && ParameterRecoveryWorkflow.TargetsMatch(target, activeLink);
+  }
+
+  private void CancelParameterRecovery() {
+    CancellationTokenSource? cancellation = _parameterRecoveryCancel;
+    if (cancellation == null) {
+      AppendLog("Parameter recovery: no restore is running.");
+      return;
     }
-    return (set, unchanged, failed);
+    try {
+      cancellation.Cancel();
+      AppendLog("Parameter recovery: cancellation requested …");
+    } catch (ObjectDisposedException) {
+      AppendLog("Parameter recovery: the restore has already stopped.");
+    }
+  }
+
+  private void OnConnectionChanged() {
+    ParameterRecoveryTarget? target = _parameterRecoveryTarget;
+    if (_disposed || target == null || IsParameterRecoveryTargetCurrent(target)) {
+      return;
+    }
+    Interlocked.Exchange(ref _parameterRecoveryInvalidated, 1);
+    try {
+      _parameterRecoveryCancel?.Cancel();
+    } catch (ObjectDisposedException) {
+    }
   }
 
   private async Task SetQnhAsync() {
@@ -746,6 +804,20 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
   }
 
   public void Dispose() {
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
+    AppState.ConnectionChanged -= OnConnectionChanged;
+
+    CancellationTokenSource? recovery = _parameterRecoveryCancel;
+    _parameterRecoveryCancel = null;
+    _parameterRecoveryTarget = null;
+    try {
+      recovery?.Cancel();
+    } catch (ObjectDisposedException) {
+    }
+
     CancellationTokenSource? archive = _firmwareArchiveCancel;
     _firmwareArchiveCancel = null;
     try {
