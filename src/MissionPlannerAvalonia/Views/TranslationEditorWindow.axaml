@@ -1,0 +1,113 @@
+<Window
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  xmlns:services="using:MissionPlannerAvalonia.Services"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  mc:Ignorable="d"
+  d:DesignWidth="1400"
+  d:DesignHeight="820"
+  x:Class="MissionPlannerAvalonia.Views.TranslationEditorWindow"
+  x:DataType="vm:TranslationEditorViewModel"
+  Title="Mission Planner Translation / RESX Editor"
+  Width="1400"
+  Height="820"
+  MinWidth="940"
+  MinHeight="600"
+  WindowStartupLocation="CenterOwner"
+  Background="{DynamicResource MpControlBg}">
+  <Grid Margin="14" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto" RowSpacing="9">
+    <StackPanel Grid.Row="0" Spacing="3">
+      <TextBlock Classes="pagetitle" Text="Mission Planner Translation / RESX Editor" />
+      <TextBlock
+        Text="Native port of the official ResEdit developer tool. It reads neutral .resx strings and an existing target culture, then exports only translated values as MissionPlanner-compatible culture resources. Generated translation, bin, obj and repository metadata directories are excluded from source scans."
+        TextWrapping="Wrap"
+        Foreground="#C7C7C7" />
+    </StackPanel>
+
+    <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto,Auto,320,Auto" ColumnSpacing="8">
+      <TextBlock Grid.Column="0" Text="Source tree" VerticalAlignment="Center" />
+      <TextBox Grid.Column="1" Text="{Binding SourceRoot}" IsReadOnly="True"
+               Watermark="MissionPlanner source directory containing neutral .resx files" />
+      <Button Grid.Column="2" Content="Browse…" Command="{Binding BrowseSourceCommand}"
+              IsEnabled="{Binding !IsBusy}" />
+      <TextBlock Grid.Column="3" Text="Target culture" VerticalAlignment="Center" />
+      <ComboBox Grid.Column="4" ItemsSource="{Binding Cultures}" SelectedItem="{Binding SelectedCulture}"
+                IsEnabled="{Binding !IsBusy}" MaxDropDownHeight="500">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="services:TranslationCulture">
+            <TextBlock Text="{Binding Label}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+      <Button Grid.Column="5" Content="Load" Command="{Binding LoadCommand}"
+              IsEnabled="{Binding !IsBusy}" />
+    </Grid>
+
+    <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="10">
+      <TextBlock Grid.Column="0" Text="Search" VerticalAlignment="Center" />
+      <TextBox Grid.Column="1" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+               Watermark="File, resource key, English text or translation" />
+      <CheckBox Grid.Column="2" Content="Needs translation" IsChecked="{Binding MissingOnly}"
+                VerticalAlignment="Center" />
+      <CheckBox Grid.Column="3" Content="Will export" IsChecked="{Binding ExportOnly}"
+                VerticalAlignment="Center" />
+      <Button Grid.Column="4" Content="Revert edits" Command="{Binding RevertAllCommand}"
+              IsEnabled="{Binding !IsBusy}" />
+    </Grid>
+
+    <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,Auto,Auto,*" ColumnSpacing="18">
+      <TextBlock Text="{Binding ResourceFileCount, StringFormat='Resource files: {0:N0}'}" />
+      <TextBlock Grid.Column="1" Text="{Binding TotalCount, StringFormat='Strings: {0:N0}'}" />
+      <TextBlock Grid.Column="2" Text="{Binding MissingCount, StringFormat='Missing: {0:N0}'}"
+                 Foreground="#FFCE8A" />
+      <TextBlock Grid.Column="3" Text="{Binding TranslatedCount, StringFormat='Will export: {0:N0}'}"
+                 Foreground="#8FD18F" />
+      <TextBlock Grid.Column="4" Text="{Binding VisibleCount, StringFormat='Visible: {0:N0}'}"
+                 HorizontalAlignment="Right" />
+    </Grid>
+
+    <Border Grid.Row="4" BorderBrush="#666" BorderThickness="1">
+      <DataGrid x:Name="TranslationGrid" ItemsSource="{Binding Rows}" AutoGenerateColumns="False"
+                GridLinesVisibility="Horizontal" CanUserResizeColumns="True"
+                CanUserSortColumns="True" SelectionMode="Single" IsReadOnly="False">
+        <DataGrid.Columns>
+          <DataGridTextColumn Header="File" Binding="{Binding RelativePath}" IsReadOnly="True" Width="250" />
+          <DataGridTextColumn Header="Internal key" Binding="{Binding Key}" IsReadOnly="True" Width="230" />
+          <DataGridTextColumn Header="English / neutral" Binding="{Binding SourceText}"
+                              IsReadOnly="True" Width="2*" />
+          <DataGridTextColumn Header="Other language" Binding="{Binding Translation, Mode=TwoWay}"
+                              Width="2*" />
+          <DataGridCheckBoxColumn Header="Existing" Binding="{Binding HasExistingTranslation}"
+                                  IsReadOnly="True" Width="72" />
+        </DataGrid.Columns>
+      </DataGrid>
+    </Border>
+
+    <Grid Grid.Row="5" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+      <TextBlock Grid.Column="0" Text="Export directory" VerticalAlignment="Center" />
+      <TextBox Grid.Column="1" Text="{Binding OutputRoot}" IsReadOnly="True"
+               Watermark="Localized .resx tree plus output.html" />
+      <Button Grid.Column="2" Content="Choose…" Command="{Binding BrowseOutputCommand}"
+              IsEnabled="{Binding !IsBusy}" />
+    </Grid>
+
+    <Grid Grid.Row="6" RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto"
+          ColumnSpacing="8" RowSpacing="6">
+      <ProgressBar Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="6" IsIndeterminate="{Binding IsBusy}"
+                   IsVisible="{Binding IsBusy}" Height="8" />
+      <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding Status}" TextWrapping="Wrap"
+                 VerticalAlignment="Center" Foreground="#9CDCFE" />
+      <Button Grid.Row="1" Grid.Column="1" Content="Import output.html…"
+              Command="{Binding ImportResumeCommand}" IsEnabled="{Binding !IsBusy}" />
+      <Button Grid.Row="1" Grid.Column="2" Content="Copy CSV"
+              Command="{Binding CopyCsvCommand}" IsEnabled="{Binding !IsBusy}" />
+      <Button Grid.Row="1" Grid.Column="3" Content="Cancel"
+              Command="{Binding CancelCommand}" IsEnabled="{Binding IsBusy}" />
+      <Button Grid.Row="1" Grid.Column="4" Content="Export RESX"
+              Command="{Binding SaveCommand}" IsEnabled="{Binding !IsBusy}" />
+      <Button Grid.Row="1" Grid.Column="5" Content="Close" Click="OnClose" />
+    </Grid>
+  </Grid>
+</Window>
