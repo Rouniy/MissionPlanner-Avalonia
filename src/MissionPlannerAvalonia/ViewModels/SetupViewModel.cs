@@ -115,7 +115,7 @@ public class SetupViewModel : BackstageViewModel {
     Add("FFT Setup", () => new ConfigFFTViewModel(), sub: true, requiresConnection: true,
         visibleWhen: When(profile => profile.displayFFTSetup));
 
-    Add("Antenna Tracker (Maestro)", () => new ConfigAntennaTrackerViewModel(), sub: true,
+    Add("Antenna Tracker (Serial)", () => new ConfigAntennaTrackerViewModel(), sub: true,
         visibleWhen: When(profile => profile.displayAntennaTracker));
     Add("Antenna Tracker (Live)", () => new AntennaTrackerUIViewModel(), sub: true,
         visibleWhen: When(profile => profile.displayAntennaTracker));

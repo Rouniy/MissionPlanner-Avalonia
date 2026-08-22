@@ -61,10 +61,10 @@
               <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding PanCenter}" IsEnabled="{Binding ControlsEnabled}" />
 
               <TextBlock Grid.Row="3" Grid.Column="0" Classes="fieldlbl" Text="Speed" VerticalAlignment="Center" />
-              <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding PanSpeed}" IsEnabled="{Binding ControlsEnabled}" />
+              <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding PanSpeed}" IsEnabled="{Binding SpeedAccelEnabled}" />
 
               <TextBlock Grid.Row="4" Grid.Column="0" Classes="fieldlbl" Text="Acceleration" VerticalAlignment="Center" />
-              <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding PanAccel}" IsEnabled="{Binding ControlsEnabled}" />
+              <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding PanAccel}" IsEnabled="{Binding SpeedAccelEnabled}" />
             </Grid>
 
             <StackPanel Spacing="2">
@@ -98,10 +98,10 @@
               <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding TiltCenter}" IsEnabled="{Binding ControlsEnabled}" />
 
               <TextBlock Grid.Row="3" Grid.Column="0" Classes="fieldlbl" Text="Speed" VerticalAlignment="Center" />
-              <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding TiltSpeed}" IsEnabled="{Binding ControlsEnabled}" />
+              <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding TiltSpeed}" IsEnabled="{Binding SpeedAccelEnabled}" />
 
               <TextBlock Grid.Row="4" Grid.Column="0" Classes="fieldlbl" Text="Acceleration" VerticalAlignment="Center" />
-              <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding TiltAccel}" IsEnabled="{Binding ControlsEnabled}" />
+              <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding TiltAccel}" IsEnabled="{Binding SpeedAccelEnabled}" />
             </Grid>
 
             <StackPanel Spacing="2">

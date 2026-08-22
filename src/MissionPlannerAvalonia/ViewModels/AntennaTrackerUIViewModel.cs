@@ -10,19 +10,23 @@ using CommunityToolkit.Mvvm.Input;
 using MissionPlanner;
 using MissionPlanner.Comms;
 using MissionPlanner.Utilities;
+using MissionPlannerAvalonia.Services;
 
 namespace MissionPlannerAvalonia.ViewModels;
 
-public partial class AntennaTrackerUIViewModel : ViewModelBase, IDisposable {
+public partial class AntennaTrackerUIViewModel : ViewModelBase,
+    IActivationAware, IDeactivationAware, IDisposable {
   private const string _keyPrefix = "Tracker_";
 
-  private readonly MAVLinkInterface _comPort = AppState.comPort;
+  private readonly Func<MAVLinkInterface> _activeComPort;
+  private readonly Func<string[]> _serialPortNames;
+  private readonly Func<string, int, ICommsSerial> _serialPortFactory;
 
-  private ITrackerOutput? _tracker;
+  private IAntennaTrackerOutput? _tracker;
   private CancellationTokenSource? _loopCts;
 
   public ObservableCollection<string> Interfaces { get; } =
-      new() { "Maestro", "ArduTracker", "DegreeTracker" };
+      new(AntennaTrackerOutputFactory.InterfaceNames);
 
   public ObservableCollection<string> Ports { get; } = new();
 
@@ -127,8 +131,25 @@ public partial class AntennaTrackerUIViewModel : ViewModelBase, IDisposable {
 
   public bool IsRunning => _loopCts is { IsCancellationRequested: false };
 
-  public AntennaTrackerUIViewModel() {
+  public AntennaTrackerUIViewModel()
+      : this(
+          () => AppState.comPort,
+          SerialPort.GetPortNames,
+          (port, baud) => new SerialPort { PortName = port, BaudRate = baud }) {
+  }
+
+  internal AntennaTrackerUIViewModel(
+      Func<MAVLinkInterface> activeComPort,
+      Func<string[]> serialPortNames,
+      Func<string, int, ICommsSerial> serialPortFactory) {
+    _activeComPort = activeComPort ?? throw new ArgumentNullException(nameof(activeComPort));
+    _serialPortNames = serialPortNames ?? throw new ArgumentNullException(nameof(serialPortNames));
+    _serialPortFactory =
+        serialPortFactory ?? throw new ArgumentNullException(nameof(serialPortFactory));
     LoadSettings();
+    if (!Interfaces.Contains(SelectedInterface)) {
+      SelectedInterface = AntennaTrackerOutputFactory.Maestro;
+    }
     RefreshPorts();
     UpdatePanTrimRange();
     UpdateTiltTrimRange();
@@ -146,7 +167,7 @@ public partial class AntennaTrackerUIViewModel : ViewModelBase, IDisposable {
 
   private void RefreshPorts() {
     Ports.Clear();
-    foreach (var p in SerialPort.GetPortNames().Distinct()) {
+    foreach (var p in _serialPortNames().Distinct()) {
       Ports.Add(p);
     }
 
@@ -157,14 +178,15 @@ public partial class AntennaTrackerUIViewModel : ViewModelBase, IDisposable {
 
   partial void OnSelectedInterfaceChanged(string value) => UpdateSpeedAccelEnabled();
 
-  private void UpdateSpeedAccelEnabled() => SpeedAccelEnabled = SelectedInterface == "Maestro";
+  private void UpdateSpeedAccelEnabled() =>
+      SpeedAccelEnabled = ControlsEnabled &&
+          SelectedInterface == AntennaTrackerOutputFactory.Maestro;
 
   partial void OnPanRangeChanged(string value) => UpdatePanTrimRange();
 
   partial void OnTiltRangeChanged(string value) => UpdateTiltTrimRange();
 
   private void UpdatePanTrimRange() {
-
     PanTrimMin = -180;
     PanTrimMax = 180;
   }
@@ -184,6 +206,18 @@ public partial class AntennaTrackerUIViewModel : ViewModelBase, IDisposable {
   partial void OnTiltTrimChanged(double value) {
     if (_tracker != null) {
       _tracker.TrimTilt = value;
+    }
+  }
+
+  partial void OnPanReverseChanged(bool value) {
+    if (_tracker != null) {
+      _tracker.PanReverse = value;
+    }
+  }
+
+  partial void OnTiltReverseChanged(bool value) {
+    if (_tracker != null) {
+      _tracker.TiltReverse = value;
     }
   }
 
@@ -217,9 +251,10 @@ public partial class AntennaTrackerUIViewModel : ViewModelBase, IDisposable {
 
     if (IsRunning) {
       StopLoop();
-      _tracker?.Close();
+      _tracker?.Dispose();
       _tracker = null;
       ControlsEnabled = true;
+      UpdateSpeedAccelEnabled();
       ConnectText = "Connect";
       Status = "Disconnected.";
       return;
@@ -230,29 +265,32 @@ public partial class AntennaTrackerUIViewModel : ViewModelBase, IDisposable {
       return;
     }
 
-    ITrackerOutput driver = SelectedInterface switch {
-      "ArduTracker" => new ArduTrackerDriver(),
-      "DegreeTracker" => new DegreeTrackerDriver(),
-      _ => new MaestroDriver(),
-    };
-
+    ICommsSerial serial;
     try {
-      driver.ComPort = new SerialPort {
-        PortName = SelectedPort,
-        BaudRate = ParseInt(SelectedBaud, 9600),
-      };
+      int baud = ParseRequiredInt(SelectedBaud, "baud rate", minimum: 1);
+      serial = _serialPortFactory(SelectedPort, baud) ??
+          throw new InvalidOperationException("Serial port factory returned no port.");
     } catch (Exception ex) {
       Status = "Error connecting: " + ex.Message;
       return;
     }
 
+    IAntennaTrackerOutput driver;
     try {
-      int panRange = ParseInt(PanRange, 360);
+      driver = AntennaTrackerOutputFactory.Create(SelectedInterface, serial);
+    } catch (Exception ex) {
+      serial.Dispose();
+      Status = "Error selecting tracker interface: " + ex.Message;
+      return;
+    }
+
+    try {
+      int panRange = ParseRequiredInt(PanRange, "pan range", minimum: 1);
       driver.PanStartRange = panRange / 2 * -1;
       driver.PanEndRange = panRange / 2;
       driver.TrimPan = PanTrim;
 
-      int tiltRange = ParseInt(TiltRange, 90);
+      int tiltRange = ParseRequiredInt(TiltRange, "tilt range", minimum: 1);
       driver.TiltStartRange = tiltRange / 2 * -1;
       driver.TiltEndRange = tiltRange / 2;
       driver.TrimTilt = TiltTrim;
@@ -260,27 +298,39 @@ public partial class AntennaTrackerUIViewModel : ViewModelBase, IDisposable {
       driver.PanReverse = PanReverse;
       driver.TiltReverse = TiltReverse;
 
-      driver.PanPWMRange = ParseInt(PanPwmRange, 1000);
-      driver.TiltPWMRange = ParseInt(TiltPwmRange, 1000);
+      driver.PanPWMRange = ParseRequiredInt(PanPwmRange, "pan PWM range", minimum: 1);
+      driver.TiltPWMRange = ParseRequiredInt(TiltPwmRange, "tilt PWM range", minimum: 1);
 
-      driver.PanPWMCenter = ParseInt(PanCenter, 1500);
-      driver.TiltPWMCenter = ParseInt(TiltCenter, 1500);
+      driver.PanPWMCenter = ParseRequiredInt(PanCenter, "pan PWM center", minimum: 1);
+      driver.TiltPWMCenter = ParseRequiredInt(TiltCenter, "tilt PWM center", minimum: 1);
 
-      driver.PanSpeed = ParseInt(PanSpeed, 100);
-      driver.PanAccel = ParseInt(PanAccel, 5);
-      driver.TiltSpeed = ParseInt(TiltSpeed, 100);
-      driver.TiltAccel = ParseInt(TiltAccel, 5);
+      driver.PanSpeed = ParseRequiredInt(PanSpeed, "pan speed", minimum: 0);
+      driver.PanAccel = ParseRequiredInt(PanAccel, "pan acceleration", minimum: 0);
+      driver.TiltSpeed = ParseRequiredInt(TiltSpeed, "tilt speed", minimum: 0);
+      driver.TiltAccel = ParseRequiredInt(TiltAccel, "tilt acceleration", minimum: 0);
     } catch (Exception ex) {
       Status = "Invalid number entered: " + ex.Message;
+      driver.Dispose();
       return;
     }
 
     if (!driver.Init(out var err)) {
       Status = err;
+      driver.Dispose();
       return;
     }
 
-    driver.Setup();
+    try {
+      if (!driver.Setup()) {
+        Status = "Tracker setup failed.";
+        driver.Dispose();
+        return;
+      }
+    } catch (Exception ex) {
+      Status = "Tracker setup failed: " + ex.Message;
+      driver.Dispose();
+      return;
+    }
 
     PanCenter = driver.PanPWMCenter.ToString(CultureInfo.InvariantCulture);
     TiltCenter = driver.TiltPWMCenter.ToString(CultureInfo.InvariantCulture);
@@ -289,12 +339,13 @@ public partial class AntennaTrackerUIViewModel : ViewModelBase, IDisposable {
       driver.PanAndTilt(0, 0);
     } catch (Exception ex) {
       Status = "Failed to set initial pan and tilt: " + ex.Message;
-      driver.Close();
+      driver.Dispose();
       return;
     }
 
     _tracker = driver;
     ControlsEnabled = false;
+    UpdateSpeedAccelEnabled();
     ConnectText = "Disconnect";
     Status = "Connected (" + SelectedInterface + ").";
     StartLoop();
@@ -320,7 +371,7 @@ public partial class AntennaTrackerUIViewModel : ViewModelBase, IDisposable {
       return;
     }
 
-    float snr = _comPort.MAV.cs.localsnrdb;
+    float snr = _activeComPort().MAV.cs.localsnrdb;
     if (snr == 0) {
       Status = "No valid SiK radio detected.";
       return;
@@ -353,7 +404,7 @@ public partial class AntennaTrackerUIViewModel : ViewModelBase, IDisposable {
       SetPan(n);
       Thread.Sleep(2000);
 
-      float snr = _comPort.MAV.cs.localsnrdb;
+      float snr = _activeComPort().MAV.cs.localsnrdb;
       if (snr > lastsnr) {
         best = n;
         lastsnr = snr;
@@ -372,23 +423,24 @@ public partial class AntennaTrackerUIViewModel : ViewModelBase, IDisposable {
     _ = Task.Run(() => {
       while (!token.IsCancellationRequested) {
         try {
+          MAVLinkInterface comPort = _activeComPort();
+          double vehicleAzimuth = comPort.MAV.cs.AZToMAV;
+          double vehicleElevation = comPort.MAV.cs.ELToMAV;
           double az;
           double el;
           if (ManualMode) {
             az = ManualAzimuth;
             el = ManualElevation;
           } else {
-
-            az = _comPort.MAV.cs.AZToMAV;
-            el = _comPort.MAV.cs.ELToMAV;
+            az = vehicleAzimuth;
+            el = vehicleElevation;
           }
 
           _tracker?.PanAndTilt(az, el);
 
           Dispatcher.UIThread.Post(() => {
-            VehicleAzimuth = _comPort.MAV.cs.AZToMAV.ToString("0.0", CultureInfo.InvariantCulture);
-            VehicleElevation =
-                _comPort.MAV.cs.ELToMAV.ToString("0.0", CultureInfo.InvariantCulture);
+            VehicleAzimuth = vehicleAzimuth.ToString("0.0", CultureInfo.InvariantCulture);
+            VehicleElevation = vehicleElevation.ToString("0.0", CultureInfo.InvariantCulture);
             CommandedAzimuth = az.ToString("0.0", CultureInfo.InvariantCulture);
             CommandedElevation = el.ToString("0.0", CultureInfo.InvariantCulture);
           });
@@ -473,261 +525,20 @@ public partial class AntennaTrackerUIViewModel : ViewModelBase, IDisposable {
       int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v
                                                                                           : fallback;
 
+  private static int ParseRequiredInt(string value, string field, int minimum) {
+    if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed)) {
+      throw new FormatException(field + " must be an integer.");
+    }
+    if (parsed < minimum) {
+      throw new ArgumentOutOfRangeException(field, parsed, field + " is below the safe minimum.");
+    }
+    return parsed;
+  }
+
   public void Dispose() {
     SaveSettings();
     StopLoop();
-    _tracker?.Close();
+    _tracker?.Dispose();
     _tracker = null;
-  }
-
-  private interface ITrackerOutput {
-    SerialPort ComPort { get; set; }
-    double TrimPan { get; set; }
-    double TrimTilt { get; set; }
-    int PanStartRange { get; set; }
-    int TiltStartRange { get; set; }
-    int PanEndRange { get; set; }
-    int TiltEndRange { get; set; }
-    int PanPWMRange { get; set; }
-    int TiltPWMRange { get; set; }
-    int PanPWMCenter { get; set; }
-    int TiltPWMCenter { get; set; }
-    int PanSpeed { get; set; }
-    int TiltSpeed { get; set; }
-    int PanAccel { get; set; }
-    int TiltAccel { get; set; }
-    bool PanReverse { get; set; }
-    bool TiltReverse { get; set; }
-    bool Init(out string error);
-    bool Setup();
-    bool PanAndTilt(double pan, double tilt);
-    void Close();
-  }
-
-  private abstract class TrackerBase : ITrackerOutput {
-    protected int _panReverse = 1;
-    protected int _tiltReverse = 1;
-
-    public SerialPort ComPort { get; set; } = null!;
-    public double TrimPan { get; set; }
-    public double TrimTilt { get; set; }
-    public int PanStartRange { get; set; }
-    public int TiltStartRange { get; set; }
-    public int PanEndRange { get; set; }
-    public int TiltEndRange { get; set; }
-    public int PanPWMRange { get; set; }
-    public int TiltPWMRange { get; set; }
-    public int PanPWMCenter { get; set; }
-    public int TiltPWMCenter { get; set; }
-    public int PanSpeed { get; set; }
-    public int TiltSpeed { get; set; }
-    public int PanAccel { get; set; }
-    public int TiltAccel { get; set; }
-
-    public abstract bool PanReverse { get; set; }
-    public abstract bool TiltReverse { get; set; }
-
-    public virtual bool Init(out string error) {
-      error = "";
-      try {
-        ComPort.Open();
-      } catch (Exception ex) {
-        error = "Error connecting: " + ex.Message;
-        return false;
-      }
-
-      return true;
-    }
-
-    public virtual bool Setup() => true;
-
-    public abstract bool PanAndTilt(double pan, double tilt);
-
-    public void Close() {
-      try {
-        ComPort?.Close();
-      } catch {
-      }
-    }
-
-    protected static double Wrap180(double input) {
-      if (input > 180) {
-        return input - 360;
-      }
-
-      if (input < -180) {
-        return input + 360;
-      }
-
-      return input;
-    }
-
-    protected static short Constrain(double input, double min, double max) {
-      if (input < min) {
-        return (short)min;
-      }
-
-      if (input > max) {
-        return (short)max;
-      }
-
-      return (short)input;
-    }
-  }
-
-  private sealed class MaestroDriver : TrackerBase {
-    private const byte _setTarget = 0x84;
-    private const byte _setSpeed = 0x87;
-    private const byte _setAccel = 0x89;
-    private const byte _panAddress = 0;
-    private const byte _tiltAddress = 1;
-
-    public override bool PanReverse {
-      get => _panReverse == -1;
-      set => _panReverse = value ? -1 : 1;
-    }
-
-    public override bool TiltReverse {
-      get => _tiltReverse == -1;
-      set => _tiltReverse = value ? -1 : 1;
-    }
-
-    public override bool Init(out string error) {
-      error = "";
-      if (PanStartRange - PanEndRange == 0) {
-        error = "Invalid pan range.";
-        return false;
-      }
-
-      if (TiltStartRange - TiltEndRange == 0) {
-        error = "Invalid tilt range.";
-        return false;
-      }
-
-      return base.Init(out error);
-    }
-
-    public override bool Setup() {
-      SendCompactCommand(_setSpeed, _panAddress, PanSpeed);
-      SendCompactCommand(_setSpeed, _tiltAddress, TiltSpeed);
-      SendCompactCommand(_setAccel, _panAddress, PanAccel);
-      SendCompactCommand(_setAccel, _tiltAddress, TiltAccel);
-      return true;
-    }
-
-    private bool Pan(double angle) {
-      double angleRange = Math.Abs(PanStartRange - PanEndRange);
-      double pulseWidth =
-          PanPWMRange / angleRange * Wrap180(angle - TrimPan) * _panReverse + PanPWMCenter;
-      short target =
-          Constrain(pulseWidth, PanPWMCenter - PanPWMRange / 2.0, PanPWMCenter + PanPWMRange / 2.0);
-      target *= 4;
-      SendCompactCommand(_setTarget, _panAddress, target);
-      return true;
-    }
-
-    private bool Tilt(double angle) {
-      double angleRange = Math.Abs(TiltStartRange - TiltEndRange);
-      double pulseWidth =
-          TiltPWMRange / angleRange * (angle - TrimTilt) * _tiltReverse + TiltPWMCenter;
-      short target = Constrain(pulseWidth, TiltPWMCenter - TiltPWMRange / 2.0,
-          TiltPWMCenter + TiltPWMRange / 2.0);
-      target *= 4;
-      SendCompactCommand(_setTarget, _tiltAddress, target);
-      return true;
-    }
-
-    public override bool PanAndTilt(double pan, double tilt) {
-      if (Math.Abs(TiltStartRange - TiltEndRange) > 120) {
-        double target = Wrap180(pan - TrimPan);
-        if (Math.Abs(target) > 90) {
-          return Tilt(180 - tilt) && Pan(target);
-        }
-
-        return Tilt(tilt) && Pan(pan);
-      }
-
-      return Tilt(tilt) && Pan(pan);
-    }
-
-    private void SendCompactCommand(byte cmd, byte addr, int data) {
-      byte[] buffer = { cmd, addr, (byte)(data & 0x7F), (byte)((data >> 7) & 0x7F) };
-      ComPort.DiscardInBuffer();
-      ComPort.Write(buffer, 0, buffer.Length);
-    }
-  }
-
-  private sealed class ArduTrackerDriver : TrackerBase {
-    private int _currentpan = 1500;
-    private int _currenttilt = 1500;
-
-    public override bool PanReverse {
-      get => _panReverse == 1;
-      set => _panReverse = value ? -1 : 1;
-    }
-
-    public override bool TiltReverse {
-      get => _tiltReverse == 1;
-      set => _tiltReverse = value ? -1 : 1;
-    }
-
-    public override bool Init(out string error) {
-      error = "";
-      if (PanStartRange - PanEndRange == 0) {
-        error = "Invalid pan range.";
-        return false;
-      }
-
-      if (TiltStartRange - TiltEndRange == 0) {
-        error = "Invalid tilt range.";
-        return false;
-      }
-
-      return base.Init(out error);
-    }
-
-    private void Pan(double angle) {
-      double range = Math.Abs(PanStartRange - PanEndRange);
-      short pointAt = Constrain(Wrap180(angle - TrimPan), PanStartRange, PanEndRange);
-      _currentpan = (int)(pointAt / range * 2.0 * (PanPWMRange / 2) * _panReverse + PanPWMCenter);
-    }
-
-    private void Tilt(double angle) {
-      double range = Math.Abs(TiltStartRange - TiltEndRange);
-      short pointAt = Constrain(angle - TrimTilt, TiltStartRange, TiltEndRange);
-      _currenttilt =
-          (int)(pointAt / range * 2.0 * (TiltPWMRange / 2) * _tiltReverse + TiltPWMCenter);
-    }
-
-    public override bool PanAndTilt(double pan, double tilt) {
-      Tilt(tilt);
-      Pan(pan);
-      ComPort.Write(string.Format(CultureInfo.InvariantCulture, "!!!PAN:{0:0000},TLT:{1:0000}\n",
-          _currentpan, _currenttilt));
-      return true;
-    }
-  }
-
-  private sealed class DegreeTrackerDriver : TrackerBase {
-    private int _currentpan = 1500;
-    private int _currenttilt = 1500;
-
-    public override bool PanReverse {
-      get => _panReverse == 1;
-      set => _panReverse = value ? -1 : 1;
-    }
-
-    public override bool TiltReverse {
-      get => _tiltReverse == 1;
-      set => _tiltReverse = value ? -1 : 1;
-    }
-
-    public override bool PanAndTilt(double pan, double tilt) {
-      _currenttilt = (int)(tilt * 10);
-      _currentpan = (int)(pan * 10);
-      ComPort.Write(string.Format(CultureInfo.InvariantCulture, "!!!PAN:{0:0000},TLT:{1:0000}\n",
-          _currentpan, _currenttilt));
-      return true;
-    }
   }
 }
