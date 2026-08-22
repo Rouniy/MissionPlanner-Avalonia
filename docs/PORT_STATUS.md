@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 700 tests verified; the MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` passed lintian, checksum and Xvfb smoke checks; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 703 tests verified; the DroneCAN-session/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` passed lintian, checksum and Xvfb smoke checks; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -140,6 +140,12 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   accepted.
 - The integrated DroneCAN parameter page now has search, favourites, modified-only filtering and
   `.param` import/export; failed writes remain visibly dirty instead of being accepted locally.
+  Its MAVLink-CAN session, forwarding packets and every node parameter/firmware operation are bound
+  to the exact modem, system ID and component ID captured at Connect. Changing the active modem,
+  vehicle or selected DroneCAN node cancels or invalidates outstanding work; node/parameter/log UI
+  is cleared immediately and late callbacks cannot repopulate it, including switch-away-and-back
+  races. SLCAN initialization runs off the UI thread, and Disconnect remains available while an
+  unresponsive operation is winding down.
 - Full Parameter List includes the upstream-compatible, explicitly confirmed reset-to-default and
   reboot flow. Setup now also exposes the official Mission Planner `DefaultSettings` workflow as a
   dedicated page: it recursively catalogs `.param` profiles below ArduPilot `Tools/Frame_params`,
@@ -361,10 +367,10 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 700 passed, 0 failed.
+- Automated tests: 703 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
-- The `.deb` target was rebuilt from the current 700-test source on 2026-08-22. Package metadata,
+- The `.deb` target was rebuilt from the current 703-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 396 packaged-file checksums match after extraction, including the
   byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -378,11 +384,11 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.36fe428_amd64.deb`
-(53,873,134 bytes; SHA-256
-`765fe5dacba060d78a6b006661ef574febb8b9d0a42f14f6c47de36fc94745fc`), built from the current
-700-test source including target-safe official MicroDrone, DEVICE_OP and ArduPilot Default Settings
-workflows,
+`out/packages/missionplanner-avalonia_1.3.83-20260822.c28ebbb_amd64.deb`
+(53,877,718 bytes; SHA-256
+`1904ffd471e3e005d10add7db9bdf17693869a556f7f624f109205242d2b18fa`), built from the current
+703-test source including target-safe official DroneCAN parameter/firmware, MicroDrone, DEVICE_OP
+and ArduPilot Default Settings workflows,
 camera feedback/overlap/gimbal overlays, managed SHP/DXF/GeoPackage
 planner import, local GeoTIFF/DTED elevation sources,
 styled KML/KMZ vector/GroundOverlay layers, Flight Data overlay copying, corrected translucent-red
@@ -393,8 +399,8 @@ Flight Data splitter, session-only/latest-wins vehicle parameter loading, single
 connections, independent multi-link Connection List support and composite upstream/date/commit
 versioning.
 Its APT version is
-`1:1.3.83+20260822.r156.36fe428`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r156` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r159.c28ebbb`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r159` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
