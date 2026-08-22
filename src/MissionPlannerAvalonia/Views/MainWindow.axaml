@@ -147,7 +147,9 @@
             <MenuItem Header="RF Propagation Settings     Ctrl+W" Click="OnPropagationSettings" />
             <MenuItem Header="Swarm Formation (Beta)" Click="OnFormationControl" />
             <MenuItem Header="Swarm Follow Path (Beta)" Click="OnFollowPathControl" />
+            <MenuItem Header="Swarm Follow Leader (Beta)" Click="OnFollowLeaderControl" />
             <MenuItem Header="Swarm Waypoint Leader (Beta)" Click="OnWaypointLeaderControl" />
+            <MenuItem Header="Swarm Sequence Layout Editor (Beta)" Click="OnSequenceControl" />
             <Separator />
             <MenuItem Header="Link Statistics" Click="OnLinkStats" />
             <MenuItem Header="Connection Options" Click="OnConnectionOptions" />

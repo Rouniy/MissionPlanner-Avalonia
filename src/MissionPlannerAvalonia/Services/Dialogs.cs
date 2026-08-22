@@ -18,6 +18,10 @@ namespace MissionPlannerAvalonia.Services;
 
 public static class Dialogs {
   private const string _bg = "#262728";
+  internal const string SensitiveExportWarning =
+      "Exported vehicle data can contain precise GPS coordinates, vehicle identifiers, missions, " +
+      "network details and sensitive parameter values. Save the file only to a trusted location " +
+      "and review it before sharing. Cancel is the default action.";
 
   public static Window? Owner =>
       (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.MainWindow;

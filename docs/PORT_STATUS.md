@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 842 tests verified; the portable-plugin-host/HUD-recording/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link/Formation/FollowPath/WaypointLeader `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 864 tests verified; the portable-plugin-host/HUD-recording/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link/Formation/FollowPath/WaypointLeader/FollowLeader/Sequence `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -170,6 +170,17 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   a batch; modem replacement, stale telemetry or a mission edit therefore fails closed. The
   upstream 0.1 m path expansion is represented by exact compact segments and interpolation, and
   landing-altitude targets are immutable rather than accidentally accumulating on timer ticks.
+- Tools > Swarm Follow Leader ports the official 10 Hz ground-trail controller. One exact ground
+  vehicle is observed, while an exact Copter air master flies one separation ahead and up to 21
+  explicitly ordered Copter followers occupy the current/recorded trail. It preserves the official
+  air/follower velocity factors and near-waypoint turn correction, but adds complete-batch stale
+  telemetry, link-replacement and GPS-jump rejection before emitting another setpoint.
+- Tools > Swarm Sequence Layout Editor loads and saves the official `Layouts`/`Steps` JSON shape,
+  edits east/north/relative-altitude offsets on a draggable native grid, orders steps and maps every
+  layout sysid to an exact modem/system/component identity. Run Step preserves the official captured
+  origin and zero-velocity position-target behaviour; reset and the official 2 m GUIDED/arm/takeoff
+  action are exposed with reject-by-default confirmations. Upstream `DelayStart`/`DelayEnd` values
+  round-trip but are not executed because the official controller does not execute them either.
 - Parameter lists are deliberately session-only: neither the port nor the compiled upstream
   `MAVState` writes a reusable vehicle-parameter cache. Disconnecting, beginning a new connection or
   selecting another MAVLink system or modem clears both the previous and newly selected
@@ -459,12 +470,12 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 806 passed, 0 failed.
+- Automated tests: 864 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target was rebuilt from the current 806-test source on 2026-08-22. Package metadata,
+- The `.deb` target is rebuilt from the current 864-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 397 packaged-file checksums match after extraction, including the
   portable plugin API and byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -481,10 +492,10 @@ native-platform acceptance testing.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.5df75a4_amd64.deb`
-(53,981,956 bytes; SHA-256
-`b97d48718ac1ae129b3b4bd52697730db5bbe7d28788b65dea99bbc87e35680e`), built from the current
-842-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, the integrated
+`out/packages/missionplanner-avalonia_1.3.83-20260822.626f93b_amd64.deb`
+(54,018,482 bytes; SHA-256
+`5eb8f458497a6e0e1fdf82f1f209ab308c01d9b8a6e61bc87da7f9d1351269c2`), built from the current
+864-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, the integrated
 Grid v2 boundary editor,
 interactive MAVLink
 camera/gimbal video control and all official
@@ -502,10 +513,12 @@ Flight Data splitter, session-only/latest-wins vehicle parameter loading, single
 connections, independent multi-link Connection List support and composite upstream/date/commit
 versioning, plus the fail-closed official Copter/Rover leader/follower Formation and
 ArduPlane/Copter/Rover Follow Path workflows, the official Copter WaypointLeader state machine and
-immediate complete-list parameter clearing across device switches.
+the official FollowLeader and Sequence layout/step workflows, immediate complete-list parameter
+clearing across device switches, and reject-by-default privacy warnings on location/parameter log
+exports identified during the current CodeQL triage.
 Its APT version is
-`1:1.3.83+20260822.r190.5df75a4`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r190` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r193.626f93b`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r193` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -547,7 +560,7 @@ not remove required Windows-native files from `win-x64` builds.
 | --- | --- | --- |
 | Legacy Mission Planner plugin compatibility | All | Portable DLL discovery, dependency loading, `Init`/`Loaded`/`Loop`/`Exit`, enable/disable UI, current MAVLink/settings access, Flight Data actions and HUD overlays are native and operational. Existing DLLs compiled against Mission Planner's WinForms executable are not binary-compatible; their UI must be adapted to Avalonia and rebuilt. Loose `.cs` runtime compilation is intentionally not treated as DLL compatibility. |
 | Optional native GDAL/OGR map drivers | All | GeoPackage feature layers, SHP and DXF are available through managed cross-platform readers. The generic native OGR/GDAL driver path for additional formats remains absent. |
-| Swarm / formation flight | All | The official Copter/Rover leader/follower Formation controller, interactive native grid and bulk flight actions are ported with multi-link identity and fail-closed telemetry checks. The official ArduPlane/Copter/Rover FollowPath trail controller is also ported with exact follower order, interpolated newest-first trail positions and fail-closed multi-link checks. The official WaypointLeader Copter workflow is ported with distinct ground/air masters, ordered multi-link followers, compact mission profile, collision override and its complete takeoff/follow/return/separated-RTL state machine. The separate experimental ArduPlane attitude/PID Formation branch and FollowLeader/Sequence swarm modes remain to be ported and tested. |
+| Swarm / formation flight | All | The official Copter/Rover Formation, Plane/Copter/Rover FollowPath, Copter WaypointLeader, ground/Copter FollowLeader and JSON Sequence layout/step workflows are ported with native editors, exact multi-link identity and fail-closed telemetry checks. The separate experimental ArduPlane attitude/PID Formation branch remains to be ported and tested. |
 | Signed beta application updates | All | Stable signed updates work. The Beta Updates control is disabled until this project publishes and signs a separate beta manifest/channel. |
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
@@ -600,3 +613,6 @@ the submodule: log4net 3.3.2, SharpCompress 0.48.0 and SkiaSharp/SkiaSharp nativ
 The SSH port uses SSH.NET 2026.0.0 and BouncyCastle.Cryptography 2.7.0 instead of upstream's
 vulnerable SSH.NET 2020.0.2 dependency. A current `dotnet list package --vulnerable
 --include-transitive` audit reports no vulnerable package in the Avalonia application graph.
+The seven current CodeQL findings and their code-level mitigations or reachability decisions are
+recorded in [`CODEQL_TRIAGE.md`](CODEQL_TRIAGE.md); no alert was dismissed merely to make the
+dashboard green.

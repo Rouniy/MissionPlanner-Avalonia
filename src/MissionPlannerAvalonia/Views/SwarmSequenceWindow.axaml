@@ -1,0 +1,165 @@
+<Window
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  xmlns:controls="using:MissionPlannerAvalonia.Controls"
+  x:Class="MissionPlannerAvalonia.Views.SwarmSequenceWindow"
+  x:DataType="vm:SwarmSequenceViewModel"
+  Title="Swarm Sequence Layout Editor (Beta)"
+  Width="1380"
+  Height="820"
+  MinWidth="1080"
+  MinHeight="680"
+  WindowStartupLocation="CenterOwner"
+  Background="{DynamicResource MpControlBg}">
+  <Grid Margin="14" RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="10">
+    <Border Grid.Row="0" Background="#5A2B20" BorderBrush="#FF9B66" BorderThickness="1"
+            CornerRadius="4" Padding="10">
+      <TextBlock Foreground="#FFD4B8" TextWrapping="Wrap"
+                 Text="BETA / USE AT OWN RISK — port of the official Mission Planner Sequence Layout Editor. JSON layouts and ordered steps are editable and compatible with upstream. Run Step sends one position target to each explicitly assigned ArduCopter; duplicate sysids on different modems are never guessed. DelayStart/DelayEnd are preserved in files but, exactly as upstream, are not consumed by Run Step." />
+    </Border>
+
+    <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,Auto,270,Auto,90,Auto,Auto,Auto,Auto,*"
+          ColumnSpacing="7">
+      <Button Content="Load" Click="OnLoad" />
+      <Button Grid.Column="1" Content="Save" Click="OnSave" />
+      <TextBlock Grid.Column="2" Text="Layout" VerticalAlignment="Center" />
+      <ComboBox Grid.Column="3" ItemsSource="{Binding Layouts}"
+                SelectedItem="{Binding SelectedLayout, Mode=TwoWay}">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="vm:SequenceLayoutItem">
+            <TextBlock Text="{Binding Id}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+      <TextBlock Grid.Column="4" Text="Vehicles" VerticalAlignment="Center" />
+      <NumericUpDown Grid.Column="5" Value="{Binding DroneCount, Mode=TwoWay}"
+                     Minimum="1" Maximum="255" Increment="1" FormatString="0" />
+      <Button Grid.Column="6" Content="New Layout" Command="{Binding NewLayoutCommand}" />
+      <Button Grid.Column="7" Content="Add Step" Command="{Binding AddStepCommand}" />
+      <Button Grid.Column="8" Content="Refresh Vehicles" Command="{Binding RefreshCommand}" />
+      <Button Grid.Column="9" Content="Background Image" Click="OnBackgroundImage" />
+      <StackPanel Grid.Column="10" Orientation="Horizontal" Spacing="5"
+                  HorizontalAlignment="Right">
+        <TextBlock Text="{Binding StepDisplay}" VerticalAlignment="Center"
+                   Foreground="{DynamicResource MpAccentBrush}" />
+        <TextBlock Text="·" VerticalAlignment="Center" />
+        <TextBlock Text="{Binding OriginDisplay}" VerticalAlignment="Center" />
+      </StackPanel>
+    </Grid>
+
+    <Grid Grid.Row="2" ColumnDefinitions="3*,2*" ColumnSpacing="10">
+      <Grid RowDefinitions="3*,Auto,2*" RowSpacing="7">
+        <Border BorderBrush="{DynamicResource MpBorderBrush}" BorderThickness="1"
+                CornerRadius="4">
+          <controls:SequenceLayoutControl x:Name="SequenceLayoutGrid"
+                                          Items="{Binding SelectedLayout.Offsets}" />
+        </Border>
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="5">
+          <TextBlock Text="Image:" VerticalAlignment="Center" />
+          <Button Content="←" Click="OnImageLeft" />
+          <Button Content="→" Click="OnImageRight" />
+          <Button Content="↑" Click="OnImageUp" />
+          <Button Content="↓" Click="OnImageDown" />
+          <Button Content="W+" Click="OnImageWider" />
+          <Button Content="W−" Click="OnImageNarrower" />
+          <Button Content="H+" Click="OnImageTaller" />
+          <Button Content="H−" Click="OnImageShorter" />
+          <Button Content="Step 0.1" Click="OnImageFineStep" />
+          <Button Content="Step 1" Click="OnImageNormalStep" />
+          <Button Content="Clear" Click="OnImageClear" />
+        </StackPanel>
+        <DataGrid x:Name="SequenceOffsetGrid" Grid.Row="2"
+                  ItemsSource="{Binding SelectedLayout.Offsets}"
+                  AutoGenerateColumns="False" GridLinesVisibility="Horizontal"
+                  CanUserReorderColumns="False">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="System ID" Binding="{Binding SystemId}"
+                                IsReadOnly="True" Width="90" />
+            <DataGridTextColumn Header="East X m" Binding="{Binding X, Mode=TwoWay}"
+                                Width="*" />
+            <DataGridTextColumn Header="North Y m" Binding="{Binding Y, Mode=TwoWay}"
+                                Width="*" />
+            <DataGridTextColumn Header="Relative altitude Z m" Binding="{Binding Z, Mode=TwoWay}"
+                                Width="*" />
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+
+      <Grid Grid.Column="1" RowDefinitions="Auto,2*,Auto,3*" RowSpacing="7">
+        <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="5">
+          <TextBlock Text="Ordered sequence steps" FontWeight="SemiBold"
+                     VerticalAlignment="Center" />
+          <Button Grid.Column="1" Content="↑" Command="{Binding MoveStepUpCommand}" />
+          <Button Grid.Column="2" Content="↓" Command="{Binding MoveStepDownCommand}" />
+          <Button Grid.Column="3" Content="Remove" Command="{Binding RemoveStepCommand}" />
+        </Grid>
+        <ListBox Grid.Row="1" ItemsSource="{Binding Steps}"
+                 SelectedItem="{Binding SelectedStep, Mode=TwoWay}">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:SequenceStepItem">
+              <TextBlock Text="{Binding LayoutId}" />
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+        <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+          <TextBlock Text="Exact modem assignments" FontWeight="SemiBold"
+                     VerticalAlignment="Center" />
+          <TextBlock Grid.Column="1" Text="Anchor" VerticalAlignment="Center" />
+          <ComboBox Grid.Column="2" Width="245" ItemsSource="{Binding VehicleOptions}"
+                    SelectedItem="{Binding SelectedAnchor, Mode=TwoWay}">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:SequenceVehicleOption">
+                <TextBlock Text="{Binding Label}" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+        </Grid>
+        <DataGrid x:Name="SequenceAssignmentGrid" Grid.Row="3"
+                  ItemsSource="{Binding Assignments}"
+                  AutoGenerateColumns="False" GridLinesVisibility="Horizontal"
+                  CanUserReorderColumns="False">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="Layout Sys" Binding="{Binding SystemId}"
+                                IsReadOnly="True" Width="85" />
+            <DataGridTemplateColumn Header="Exact live vehicle" Width="260">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate x:DataType="vm:SequenceAssignmentItem">
+                  <ComboBox ItemsSource="{Binding Options}"
+                            SelectedItem="{Binding SelectedVehicle, Mode=TwoWay}"
+                            HorizontalAlignment="Stretch">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:SequenceVehicleOption">
+                        <TextBlock Text="{Binding Label}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+            <DataGridTextColumn Header="Last target" Binding="{Binding Target}"
+                                IsReadOnly="True" Width="*" />
+          </DataGrid.Columns>
+        </DataGrid>
+      </Grid>
+    </Grid>
+
+    <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="8"
+          IsEnabled="{Binding !Busy}">
+      <Button x:Name="SequenceRunStepButton" Content="Run Step"
+              Command="{Binding RunStepCommand}" MinWidth="120" />
+      <Button Grid.Column="1" Content="Reset Sequence" Command="{Binding ResetStepCommand}" />
+      <Button Grid.Column="2" Content="Takeoff Assigned (2 m)"
+              Command="{Binding TakeoffAssignedCommand}" />
+      <TextBlock Grid.Column="3" HorizontalAlignment="Right" VerticalAlignment="Center"
+                 Text="Run Step does not change mode; use Takeoff or prepare GUIDED explicitly."
+                 TextWrapping="Wrap" />
+    </Grid>
+
+    <Grid Grid.Row="4" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+      <TextBlock Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center"
+                 Foreground="{DynamicResource MpAccentBrush}" />
+      <Button Grid.Column="1" Content="Close" Click="OnClose" MinWidth="90" />
+    </Grid>
+  </Grid>
+</Window>

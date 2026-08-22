@@ -32,8 +32,9 @@ jobs:
         with:
           languages: csharp
           build-mode: manual
+          config-file: ./.github/codeql/codeql-config.yml
 
-      # Manual build mode: CodeQL traces this compile (only our app, not the pinned submodule libs).
+      # Manual build mode traces the app plus the pinned libraries compiled through project refs.
       - name: Build
         run: dotnet build src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj -c Release -m:1
 

@@ -5,6 +5,16 @@ namespace MissionPlannerAvalonia.Tests;
 
 public class TlogExportServiceTests {
   [Fact]
+  public void SensitiveExportWarningNamesLocationAndParameterRisks() {
+    Assert.Contains("GPS coordinates", Dialogs.SensitiveExportWarning,
+        StringComparison.OrdinalIgnoreCase);
+    Assert.Contains("parameter values", Dialogs.SensitiveExportWarning,
+        StringComparison.OrdinalIgnoreCase);
+    Assert.Contains("Cancel is the default", Dialogs.SensitiveExportWarning,
+        StringComparison.OrdinalIgnoreCase);
+  }
+
+  [Fact]
   public void ExtractParameters_uses_ArduPilot_float_wire_encoding_and_latest_value() {
     var packets = new[] {
       Packet(MAVLink.MAVLINK_MSG_ID.HEARTBEAT,
