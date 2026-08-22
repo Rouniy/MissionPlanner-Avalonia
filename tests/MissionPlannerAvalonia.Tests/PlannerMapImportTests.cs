@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using Avalonia.Headless.XUnit;
 using DotSpatial.Projections;
@@ -7,6 +8,7 @@ using Mapsui.Styles;
 using MissionPlannerAvalonia.Controls;
 using MissionPlannerAvalonia.Services;
 using MissionPlannerAvalonia.ViewModels;
+using MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView;
 using netDxf;
 using netDxf.Entities;
 using NetTopologySuite.Features;
@@ -164,6 +166,104 @@ public sealed class PlannerMapImportTests {
       Assert.Equal(40, result.Points[0].Lat);
       Assert.Equal(30, result.Points[0].Lng);
     });
+  }
+
+  [Fact]
+  public void Shapefile_poly_export_matches_official_file_layout_and_feature_order() {
+    WithDirectory(directory => {
+      string path = Path.Combine(directory, "polygons.shp");
+      var factory = new GeometryFactory();
+      Feature First(double offset, int id) => new(
+          factory.CreatePolygon([
+            new Coordinate(30 + offset, 40 + offset),
+            new Coordinate(31 + offset, 40 + offset),
+            new Coordinate(31 + offset, 41 + offset),
+            new Coordinate(30 + offset, 40 + offset),
+          ]),
+          new AttributesTable { { "id", id } });
+      WriteFeatures(path, [First(0, 1), First(10, 2)]);
+
+      ShapefilePolyExportResult result = ShapefileImportService.ExportPolyFiles(path);
+
+      Assert.Equal(2, result.Files.Count);
+      Assert.Equal(8, result.PointCount);
+      Assert.Null(result.ProjectionName);
+      Assert.Equal(Path.Combine(directory, "poly-1.poly"), result.Files[0]);
+      Assert.Equal(Path.Combine(directory, "poly-2.poly"), result.Files[1]);
+      string[] first = File.ReadAllLines(result.Files[0]);
+      string[] second = File.ReadAllLines(result.Files[1]);
+      Assert.Equal("#Shap to Poly - Mission Planner", first[0]);
+      Assert.Equal("#Shap to Poly - Mission Planner", second[0]);
+      Assert.Equal(5, first.Length);
+      Assert.Equal(5, second.Length);
+      Assert.Equal(first[1], first[^1]);
+      Assert.Equal(second[1], second[^1]);
+      Assert.True(new HashSet<string> { "40\t30", "40\t31", "41\t31" }
+          .SetEquals(first.Skip(1).Take(3)));
+      Assert.True(new HashSet<string> { "50\t40", "50\t41", "51\t41" }
+          .SetEquals(second.Skip(1).Take(3)));
+      Assert.Empty(Directory.EnumerateFiles(directory, "*.tmp"));
+    });
+  }
+
+  [Fact]
+  public void Shapefile_poly_export_reprojects_case_insensitive_prj_and_uses_invariant_text() {
+    WithDirectory(directory => {
+      const double expectedLng = 15.2;
+      const double expectedLat = 47.1;
+      ProjectionInfo wgs84 = KnownCoordinateSystems.Geographic.World.WGS1984;
+      ProjectionInfo utm = KnownCoordinateSystems.Projected.UtmWgs1984.WGS1984UTMZone33N;
+      double[] xy = { expectedLng, expectedLat };
+      double[] z = { 0d };
+      Reproject.ReprojectPoints(xy, z, wgs84, utm, 0, 1);
+      string path = Path.Combine(directory, "projected.shp");
+      var point = new Feature(
+          new NetTopologySuite.Geometries.Point(new Coordinate(xy[0], xy[1])),
+          new AttributesTable { { "id", 1 } });
+      WriteFeatures(path, [point], utm.ToEsriString());
+      RenameExtension(path, ".prj", ".PRJ");
+      CultureInfo previous = CultureInfo.CurrentCulture;
+      try {
+        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+
+        ShapefilePolyExportResult result = ShapefileImportService.ExportPolyFiles(path);
+
+        Assert.NotNull(result.ProjectionName);
+        string coordinate = File.ReadAllLines(Assert.Single(result.Files))[1];
+        Assert.DoesNotContain(',', coordinate);
+        string[] values = coordinate.Split('\t');
+        Assert.Equal(expectedLat,
+            double.Parse(values[0], CultureInfo.InvariantCulture), 5);
+        Assert.Equal(expectedLng,
+            double.Parse(values[1], CultureInfo.InvariantCulture), 5);
+      } finally {
+        CultureInfo.CurrentCulture = previous;
+      }
+    });
+  }
+
+  [Fact]
+  public void Shapefile_poly_export_atomically_replaces_existing_output() {
+    WithDirectory(directory => {
+      string path = Path.Combine(directory, "replace.shp");
+      WriteFeatures(path, [PointFeature(30, 40, 0, ("id", 1))]);
+      string output = Path.Combine(directory, "poly-1.poly");
+      File.WriteAllText(output, "stale");
+
+      ShapefilePolyExportResult result = ShapefileImportService.ExportPolyFiles(path);
+
+      Assert.Equal(output, Assert.Single(result.Files));
+      Assert.Equal("40\t30", File.ReadAllLines(output)[1]);
+      Assert.Empty(Directory.EnumerateFiles(directory, "*.tmp"));
+    });
+  }
+
+  [AvaloniaFact]
+  public void Developer_tools_exposes_official_shapefile_to_poly_workflow() {
+    using var tools = new ConfigDeveloperToolsViewModel();
+
+    Assert.Contains(tools.Actions,
+        action => action.Label == "Convert Shapefile to POLY");
   }
 
   [Fact]

@@ -33,6 +33,7 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
     Action("Split DataFlash Log", () => _ = SplitDataFlashAsync());
     Action("Create DashWare CSV", () => _ = CreateDashWareAsync());
     Action("Extract GPS Corrections", () => _ = ExtractGpsCorrectionsAsync());
+    Action("Convert Shapefile to POLY", () => _ = ConvertShapefileToPolyAsync());
     Action("Translation / RESX Editor", () => Views.TranslationEditorWindow.OpenWindow());
     Action("OSD Video — Telemetry Overlay", () => Views.OsdVideoOverlayWindow.OpenWindow());
     Action("Offline Magnetometer Calibration (MagFit)", () => Views.OfflineMagFitWindow.OpenWindow());
@@ -185,6 +186,46 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
 
     await RunFileToolAsync("GPS correction extraction", () => ExtractGpsCorrections(input, output),
         $"Correction bytes written to {output}");
+  }
+
+  private async Task ConvertShapefileToPolyAsync() {
+    string? input = await PickFileAsync(
+        "Select shapefile to convert", "ESRI Shapefile", "*.shp", "*.SHP");
+    if (input == null) {
+      return;
+    }
+    string directory = Path.GetDirectoryName(Path.GetFullPath(input)) ?? ".";
+    if (!await Dialogs.ConfirmDangerous(
+            "Convert Shapefile to POLY",
+            "Create one poly-N.poly file per non-empty SHP feature next to the selected " +
+            $"shapefile?\n\nOutput directory: {directory}\n\n" +
+            "Existing files with the same names will be replaced atomically.",
+            "Convert and replace")) {
+      return;
+    }
+    if (!_operationGate.Wait(0)) {
+      AppendLog("Shapefile to POLY: another developer operation is already running.");
+      return;
+    }
+
+    AppendLog("Shapefile to POLY: converting " + input + " …");
+    try {
+      ShapefilePolyExportResult result = await Task.Run(() =>
+          ShapefileImportService.ExportPolyFiles(input));
+      if (result.Files.Count == 0) {
+        AppendLog("Shapefile to POLY: no non-empty geometry with valid WGS84 coordinates found.");
+        return;
+      }
+      string projection = result.ProjectionName == null
+          ? "coordinates treated as WGS84"
+          : $"reprojected from {result.ProjectionName}";
+      AppendLog($"Shapefile to POLY: wrote {result.Files.Count} file(s), " +
+                $"{result.PointCount} point(s), {projection}. First output: {result.Files[0]}");
+    } catch (Exception ex) {
+      AppendLog("Shapefile to POLY failed: " + ex.Message);
+    } finally {
+      _operationGate.Release();
+    }
   }
 
   internal static int ExtractGpsCorrections(string input, string output) {

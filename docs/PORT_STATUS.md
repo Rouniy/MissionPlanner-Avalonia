@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 962 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 966 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
@@ -342,6 +342,11 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   selected provider cache, validates coordinates and decodes every image before replacing an
   existing tile. Provider caches remain isolated; invalid paths, corrupt/oversized images and
   duplicates are counted without entering the cache, and a long import is cancellable.
+- Developer Tools ports the official hidden `Shp to Poly` workflow. It writes the same
+  `poly-1.poly`, `poly-2.poly`, … files next to the selected shapefile, preserves SHP feature and
+  coordinate order, retains closing vertices and emits invariant `latitude<TAB>longitude` text.
+  Case-insensitive `.prj` sidecars are reprojected to WGS84 through the existing managed reader;
+  replacement is explicit and atomic instead of silently truncating an existing output.
 - The hidden official `OpenGLtest2` developer workflow is now a native 3D Terrain View reachable
   from Tools and Developer Tools. A cancellable SRTM mesh is draped with the selected map imagery
   through the same online/cache policy, while a bounded 64-tile atlas prevents an extreme range or
@@ -560,19 +565,22 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 962 passed, 0 failed, including Settings concurrency/null-reset stress,
+- Automated tests: 966 passed, 0 failed, including Settings concurrency/null-reset stress,
   WMS/WMTS capabilities and tile addressing, raw/Socket.IO WebSocket protocol, fragmentation,
   reconnect and bounded-close integration, real
   loopback-UDP Moving Base input, blocking serial cancellation, exact multi-modem target isolation
   and reject-by-default command/rally starts, plus live HUD/Quick undock and close-to-redock behavior.
   Map-cache tests cover the official row/column order, path/range rejection, real JPEG/PNG decoding,
   duplicate handling, replacement in BruTile's persistent cache and the bound Avalonia controls.
+  SHP-to-POLY tests cover official multi-feature naming/layout, closed rings, WGS84 reprojection,
+  locale-independent coordinates, atomic replacement and the visible Developer Tools action.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop; the packaged Ctrl+X action opens
-  the bound Map Tile Cache import UI while the title reports the exact upstream/date/commit version.
+  the bound Map Tile Cache import UI and Ctrl+F shows the native SHP-to-POLY action while the title
+  reports the exact upstream/date/commit version.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 962-test source on 2026-08-22. Package metadata,
+- The `.deb` target is rebuilt from the current 966-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 401 packaged-file checksums match after extraction, including the
   portable plugin API, BLE dependency licenses and byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -591,10 +599,10 @@ native-platform acceptance testing.
   scans; no Nordic UART modem was in range for a traffic test.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.b773be2_amd64.deb`
-(54,225,544 bytes; SHA-256
-`2bfec21514479fcad40133d6acc00cd39063559cc6354b3deabec69bedaad0c1`), built from commit
-`b773be2` and the current 962-test source including the portable plugin host, HUD-to-MJPEG/AVI
+`out/packages/missionplanner-avalonia_1.3.83-20260822.35132d0_amd64.deb`
+(54,232,002 bytes; SHA-256
+`f65ec6eecfb840448e2967588ebbc9db79d5ed6203d1ac9a2b421e7b77d89fe7`), built from commit
+`35132d0` and the current 966-test source including the portable plugin host, HUD-to-MJPEG/AVI
 recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
@@ -605,7 +613,7 @@ pydronecan multicast CAN1/CAN2, direct serial SLCAN, target-safe official DroneC
 parameter/firmware, MicroDrone, DEVICE_OP
 and ArduPilot Default Settings workflows,
 camera feedback/overlap/gimbal overlays, managed SHP/DXF/GeoPackage
-planner import, local GeoTIFF/DTED elevation sources,
+planner import, the official SHP-to-POLY developer conversion, local GeoTIFF/DTED elevation sources,
 styled KML/KMZ vector/GroundOverlay layers, Flight Data overlay copying, corrected translucent-red
 airport disks, Rally Points actions, switchable Planner docking, the interactive verified-host-key
 SSH terminal, secure SFTP DataFlash download/delete workflow, the recursive flight Log Index with
@@ -629,8 +637,8 @@ exports identified during the current CodeQL triage, plus concurrent global-sett
 serialized settings-file writes, and a cancellable bounded WebSocket transport with explicit
 raw-WebSocket/Socket.IO protocol separation and reconnect lifecycle ownership.
 Its APT version is
-`1:1.3.83+20260822.r241.b773be2`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r241` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r246.35132d0`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r246` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -681,7 +689,7 @@ Mission Planner functional-parity gap.
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
 | BLE transport | macOS; Linux/Windows hardware acceptance | Linux uses the port-native managed BlueZ/D-Bus Nordic UART transport and no longer needs a SimpleBLE `.so`; adapter discovery is verified, while end-to-end traffic still needs a Nordic UART modem. Upstream's Windows SimpleBLE path remains hardware-unverified. macOS still needs a CoreBluetooth or maintained native integration. |
-| Developer utility handler audit | All | The safe portable subset of `temp.cs`, including the Translation / RESX Editor and live 3D terrain/imagery view, is native. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration, PX4Flow live image assembly and local map-tile import are also port-native. Remaining upstream handlers are reviewed individually: already exposed, obsolete and unsafe handlers are classified instead of being presented as missing user functionality. |
+| Developer utility handler audit | All | The safe portable subset of `temp.cs`, including the Translation / RESX Editor and live 3D terrain/imagery view, is native. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration, PX4Flow live image assembly, local map-tile import and SHP-to-POLY conversion are also port-native. Remaining upstream handlers are reviewed individually: already exposed, obsolete and unsafe handlers are classified instead of being presented as missing user functionality. |
 
 ## Optional runtime experiment
 
