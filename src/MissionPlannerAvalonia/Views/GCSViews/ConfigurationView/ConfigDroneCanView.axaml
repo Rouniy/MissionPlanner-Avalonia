@@ -15,29 +15,62 @@
   <Grid RowDefinitions="Auto,Auto,Auto,Auto,2*,Auto,Auto,Auto,Auto,2*,2*" Margin="16">
     <TextBlock Grid.Row="0" Classes="pagetitle" Text="DroneCAN / UAVCAN" />
 
-    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,8,0,8">
-      <ComboBox
-        x:Name="DroneCanInterfaceSelector"
-        ItemsSource="{Binding BusOptions}"
-        SelectedIndex="{Binding SelectedBusIndex}"
-        IsEnabled="{Binding CanChangeInterface}"
-        Width="160"
-        MinHeight="28"
-      />
-      <Button x:Name="DroneCanConnectButton" Content="{Binding ConnectLabel}"
-              Command="{Binding ToggleConnectCommand}"
-              IsEnabled="{Binding CanToggleConnection}" />
-      <Button Content="Refresh" Command="{Binding RefreshCommand}" />
-      <Button Content="Filter" Command="{Binding FilterCommand}" />
-      <Button Content="Stats" Command="{Binding StatsCommand}" />
-      <Button Name="BusInspectorBtn" Content="Bus Inspector" />
-      <CheckBox Content="Exit SLCAN on leave?" IsChecked="{Binding ExitSlcanOnLeave}" />
-      <CheckBox Content="Log" IsChecked="{Binding LogToFile}" />
+    <StackPanel Grid.Row="1" Spacing="6" Margin="0,8,0,8">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <ComboBox
+          x:Name="DroneCanInterfaceSelector"
+          ItemsSource="{Binding BusOptions}"
+          SelectedIndex="{Binding SelectedBusIndex}"
+          IsEnabled="{Binding CanChangeInterface}"
+          Width="160"
+          MinHeight="28"
+        />
+        <Button x:Name="DroneCanConnectButton" Content="{Binding ConnectLabel}"
+                Command="{Binding ToggleConnectCommand}"
+                IsEnabled="{Binding CanToggleConnection}" />
+        <Button Content="Refresh" Command="{Binding RefreshCommand}" />
+        <Button Content="Filter" Command="{Binding FilterCommand}"
+                IsEnabled="{Binding CanFilterFrames}" />
+        <Button Content="Stats" Command="{Binding StatsCommand}" />
+        <Button Name="BusInspectorBtn" Content="Bus Inspector" />
+        <CheckBox Content="Exit SLCAN on leave?" IsChecked="{Binding ExitSlcanOnLeave}" />
+        <CheckBox Content="Log" IsChecked="{Binding LogToFile}" />
+      </StackPanel>
+
+      <StackPanel
+        x:Name="DirectSlcanOptions"
+        Orientation="Horizontal"
+        Spacing="8"
+        IsVisible="{Binding ShowDirectSerialOptions}"
+      >
+        <TextBlock Classes="fieldlbl" Text="SLCAN serial port" VerticalAlignment="Center" />
+        <ComboBox
+          x:Name="DirectSlcanPortSelector"
+          ItemsSource="{Binding SerialPorts}"
+          SelectedItem="{Binding SelectedSerialPort}"
+          IsEnabled="{Binding CanEditDirectSerial}"
+          MinWidth="280"
+        />
+        <TextBlock Classes="fieldlbl" Text="Host baud" VerticalAlignment="Center" />
+        <ComboBox
+          x:Name="DirectSlcanBaudSelector"
+          ItemsSource="{Binding SerialBaudOptions}"
+          SelectedItem="{Binding SelectedSerialBaud}"
+          IsEnabled="{Binding CanEditDirectSerial}"
+          Width="120"
+        />
+        <Button Content="Rescan ports" Command="{Binding RefreshSerialPortsCommand}"
+                IsEnabled="{Binding CanEditDirectSerial}" />
+        <Button x:Name="PrepareAutopilotSlcanButton"
+                Content="Prepare autopilot SLCAN"
+                Command="{Binding PrepareAutopilotSlcanCommand}"
+                IsEnabled="{Binding CanChangeInterface}" />
+      </StackPanel>
     </StackPanel>
 
     <TextBlock
       Grid.Row="2"
-      Text="After enabling SLCAN you can no longer connect via MAVLink. Leave this screen and wait 2 seconds before connecting again."
+      Text="Direct SLCAN owns the selected serial port and does not require a MAVLink connection. If that port currently carries MAVLink, first enable SLCAN on the autopilot/adapter and disconnect the MAVLink link; Mission Planner will refuse to open the same device twice."
       Classes="fieldlbl"
       TextWrapping="Wrap"
       Margin="0,0,0,4"

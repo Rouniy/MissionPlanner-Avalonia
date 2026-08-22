@@ -24,15 +24,21 @@ namespace MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView;
 
 public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   private const string _favoritesKey = "dronecan_fav_params";
+  private const string _slcanPortKey = "dronecan_slcan_port";
+  private const string _slcanBaudKey = "dronecan_slcan_baud";
   private readonly Func<DroneCanSessionTarget?> _activeTarget;
+  private readonly Func<string[]> _serialPortNames;
+  private readonly Func<string, int, ICommsSerial> _serialPortFactory;
   private readonly bool _subscribedToAppState;
   private DroneCAN.DroneCAN? _can;
   private CommsInjection? _port;
+  private ICommsSerial? _directPort;
   private MAVLinkInterface? _subscribedLink;
   private DroneCanSessionTarget? _observedTarget;
   private DroneCanSessionTarget? _sessionTarget;
   private CancellationTokenSource? _operationCancellation;
   private bool _mavlinkCanRun;
+  private bool _sessionRequiresVehicleTarget;
   private volatile bool _targetInvalidated;
   private long _targetRevision;
   private long _nodeRevision;
@@ -46,10 +52,19 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
   internal ConfigDroneCanViewModel(
       Func<DroneCanSessionTarget?> activeTarget,
-      bool subscribeToAppState = false) {
+      bool subscribeToAppState = false,
+      Func<string[]>? serialPortNames = null,
+      Func<string, int, ICommsSerial>? serialPortFactory = null) {
     _activeTarget = activeTarget;
+    _serialPortNames = serialPortNames ?? SerialPort.GetPortNames;
+    _serialPortFactory = serialPortFactory ?? ((port, baud) => new SerialPort {
+      PortName = port,
+      BaudRate = baud,
+    });
     _subscribedToAppState = subscribeToAppState;
     _observedTarget = CaptureActiveTarget();
+    LoadDirectSlcanSettings();
+    RefreshSerialPorts();
     if (_subscribedToAppState) {
       AppState.ConnectionChanged += OnConnectionChanged;
     }
@@ -63,10 +78,23 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
   public ObservableCollection<DroneCanLog> DebugLog { get; } = new();
 
+  public ObservableCollection<string> SerialPorts { get; } = new();
+
   public string[] BusOptions { get; } = { "MAVLink-CAN1", "MAVLink-CAN2", "SLCAN" };
+
+  public int[] SerialBaudOptions { get; } = {
+    1200, 2400, 4800, 9600, 19200, 38400, 57600, 111100, 115200, 230400,
+    460800, 500000, 625000, 921600, 1000000, 1500000,
+  };
 
   [ObservableProperty]
   private int _selectedBusIndex;
+
+  [ObservableProperty]
+  private string? _selectedSerialPort;
+
+  [ObservableProperty]
+  private int _selectedSerialBaud = 115200;
 
   [ObservableProperty]
   private bool _exitSlcanOnLeave = true;
@@ -112,19 +140,42 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
   partial void OnShowModifiedParametersOnlyChanged(bool value) => ApplyParameterFilter();
 
+  partial void OnSelectedBusIndexChanged(int value) {
+    OnPropertyChanged(nameof(ShowDirectSerialOptions));
+    OnPropertyChanged(nameof(CanEditDirectSerial));
+  }
+
+  partial void OnSelectedSerialPortChanged(string? value) {
+    if (!string.IsNullOrWhiteSpace(value)) {
+      Settings.Instance[_slcanPortKey] = value;
+    }
+  }
+
+  partial void OnSelectedSerialBaudChanged(int value) {
+    if (value > 0) {
+      Settings.Instance[_slcanBaudKey] = value.ToString(CultureInfo.InvariantCulture);
+    }
+  }
+
   public string ConnectLabel => IsConnected ? "Disconnect" : "Connect";
   public bool CanChangeInterface => !IsConnected && !IsBusy;
   public bool CanToggleConnection => IsConnected || !IsBusy;
+  public bool ShowDirectSerialOptions => SelectedBusIndex == 2;
+  public bool CanEditDirectSerial => ShowDirectSerialOptions && CanChangeInterface;
+  public bool CanFilterFrames => IsConnected && _sessionRequiresVehicleTarget;
 
   partial void OnIsConnectedChanged(bool value) {
     OnPropertyChanged(nameof(ConnectLabel));
     OnPropertyChanged(nameof(CanChangeInterface));
     OnPropertyChanged(nameof(CanToggleConnection));
+    OnPropertyChanged(nameof(CanEditDirectSerial));
+    OnPropertyChanged(nameof(CanFilterFrames));
   }
 
   partial void OnIsBusyChanged(bool value) {
     OnPropertyChanged(nameof(CanChangeInterface));
     OnPropertyChanged(nameof(CanToggleConnection));
+    OnPropertyChanged(nameof(CanEditDirectSerial));
   }
 
   partial void OnLogToFileChanged(bool value) {
@@ -153,6 +204,241 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     return Path.Combine(dir, DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss") + ".can");
   }
 
+  private void LoadDirectSlcanSettings() {
+    try {
+      SelectedSerialPort = Settings.Instance[_slcanPortKey];
+      SelectedSerialBaud = Settings.Instance.GetInt32(_slcanBaudKey, 115200);
+      if (SelectedSerialBaud <= 0) {
+        SelectedSerialBaud = 115200;
+      }
+    } catch {
+      SelectedSerialBaud = 115200;
+    }
+  }
+
+  [RelayCommand]
+  private void RefreshSerialPorts() {
+    string? selected = SelectedSerialPort;
+    string[] discovered;
+    try {
+      discovered = _serialPortNames();
+    } catch {
+      discovered = [];
+    }
+
+    SerialPorts.Clear();
+    foreach (string port in discovered
+                 .Where(port => !string.IsNullOrWhiteSpace(port))
+                 .Distinct(OperatingSystem.IsWindows()
+                     ? StringComparer.OrdinalIgnoreCase
+                     : StringComparer.Ordinal)
+                 .OrderBy(port => port, StringComparer.OrdinalIgnoreCase)) {
+      SerialPorts.Add(port);
+    }
+
+    // Preserve a configured removable adapter while it is unplugged. Connect still reports the
+    // native open error, but the operator does not have to re-enter a stable /dev/serial/by-id path.
+    if (!string.IsNullOrWhiteSpace(selected) && !SerialPorts.Contains(selected)) {
+      SerialPorts.Insert(0, selected);
+    }
+    SelectedSerialPort = !string.IsNullOrWhiteSpace(selected)
+        ? selected
+        : SerialPorts.FirstOrDefault();
+  }
+
+  private void StartDirectSlcan() {
+    string? portName = SelectedSerialPort?.Trim();
+    int baud = SelectedSerialBaud;
+    if (string.IsNullOrWhiteSpace(portName)) {
+      Status = "Select the serial port of the SLCAN adapter first.";
+      return;
+    }
+    if (baud <= 0) {
+      Status = "Select a valid positive serial baud rate for the SLCAN adapter.";
+      return;
+    }
+
+    string? conflictingEndpoint = FindOpenConnectionUsingPort(portName);
+    if (conflictingEndpoint != null) {
+      Status = $"{portName} is still used by MAVLink connection {conflictingEndpoint}. "
+          + "Disconnect that link after switching the autopilot/adapter to SLCAN, then connect here.";
+      return;
+    }
+
+    ICommsSerial directPort;
+    try {
+      directPort = _serialPortFactory(portName, baud);
+    } catch (Exception ex) {
+      Status = "Unable to create the SLCAN serial transport: " + ex.Message;
+      return;
+    }
+
+    _observedTarget = CaptureActiveTarget();
+    _sessionTarget = null;
+    _sessionRequiresVehicleTarget = false;
+    _targetInvalidated = false;
+    long revision = Interlocked.Increment(ref _targetRevision);
+    _mavlinkCanRun = true;
+    _directPort = directPort;
+    _can = new DroneCAN.DroneCAN { SourceNode = 127 };
+    IsConnected = true;
+    IsBusy = true;
+    Status = $"Opening direct SLCAN adapter {portName} at {baud} baud…";
+
+    StartCanProtocol(
+        _can, directPort, null, revision,
+        $"Listening for DroneCAN nodes on direct SLCAN adapter {portName} at {baud} baud.",
+        openTransport: true);
+  }
+
+  [RelayCommand]
+  private async Task PrepareAutopilotSlcan() {
+    if (IsConnected || IsBusy) {
+      Status = "Disconnect the current DroneCAN session before preparing an autopilot SLCAN port.";
+      return;
+    }
+
+    DroneCanSessionTarget? target = CaptureActiveTarget();
+    if (target == null) {
+      Status = "Connect to the autopilot over MAVLink before preparing its SLCAN port.";
+      return;
+    }
+    if (target.Link.MAV.cs.armed) {
+      Status = "SLCAN preparation is blocked while the selected vehicle is armed.";
+      return;
+    }
+
+    long revision = Volatile.Read(ref _targetRevision);
+    bool confirmed = await Services.Dialogs.Confirm(
+        "Prepare ArduPilot SLCAN",
+        "This writes the official Mission Planner CAN1 SLCAN settings to the selected "
+            + $"vehicle {target.SystemId}:{target.ComponentId}. Its current MAVLink serial/USB "
+            + "connection may stop responding after the SLCAN timeout. Continue?");
+    if (!confirmed) {
+      return;
+    }
+    if (!ShouldAcceptSessionResult(
+            false, revision, Volatile.Read(ref _targetRevision), target, CaptureActiveTarget())) {
+      Status = TargetChangedMessage;
+      return;
+    }
+
+    IsBusy = true;
+    Status = "Writing ArduPilot CAN1 SLCAN settings…";
+    try {
+      SlcanPreparationResult result = await Task.Run(() => PrepareAutopilotSlcan(target));
+      if (!ShouldAcceptSessionResult(
+              false, revision, Volatile.Read(ref _targetRevision), target, CaptureActiveTarget())) {
+        return;
+      }
+      Status = result.Message;
+      if (result.Success && string.IsNullOrWhiteSpace(SelectedSerialPort)) {
+        string? activePort = target.Link.BaseStream?.PortName;
+        if (!string.IsNullOrWhiteSpace(activePort)) {
+          if (!SerialPorts.Contains(activePort)) {
+            SerialPorts.Insert(0, activePort);
+          }
+          SelectedSerialPort = activePort;
+          if (target.Link.BaseStream!.BaudRate > 0) {
+            SelectedSerialBaud = target.Link.BaseStream.BaudRate;
+          }
+        }
+      }
+    } catch (Exception ex) {
+      if (ShouldAcceptSessionResult(
+              false, revision, Volatile.Read(ref _targetRevision), target, CaptureActiveTarget())) {
+        Status = "Unable to prepare SLCAN: " + ex.Message;
+      }
+    } finally {
+      if (revision == Volatile.Read(ref _targetRevision)) {
+        IsBusy = false;
+      }
+    }
+  }
+
+  private static SlcanPreparationResult PrepareAutopilotSlcan(
+      DroneCanSessionTarget target) {
+    MAVLink.MAVLinkParam? cport = target.Link.MAVlist[
+        target.SystemId, target.ComponentId].param["CAN_SLCAN_CPORT"];
+    if (cport == null) {
+      return new SlcanPreparationResult(false,
+          "CAN_SLCAN_CPORT is not available on the selected firmware/vehicle.");
+    }
+
+    bool hadDisabledCport = Math.Abs((double)cport.Value) < double.Epsilon;
+    if (!target.Link.setParam(
+            target.SystemId, target.ComponentId, "CAN_SLCAN_CPORT", 1, true)) {
+      return new SlcanPreparationResult(false, "Writing CAN_SLCAN_CPORT failed.");
+    }
+    if (hadDisabledCport) {
+      return new SlcanPreparationResult(true,
+          "CAN_SLCAN_CPORT was enabled. Reboot the autopilot, reconnect over MAVLink, "
+              + "then run Prepare autopilot SLCAN again to finish the remaining settings.");
+    }
+
+    string[] required = ["CAN_SLCAN_TIMOUT", "CAN_P1_DRIVER"];
+    foreach (string name in required) {
+      if (target.Link.MAVlist[target.SystemId, target.ComponentId].param[name] == null) {
+        return new SlcanPreparationResult(false,
+            $"{name} is not available on the selected firmware/vehicle.");
+      }
+    }
+    if (!target.Link.setParam(
+            target.SystemId, target.ComponentId, "CAN_SLCAN_TIMOUT", 2, true)) {
+      return new SlcanPreparationResult(false, "Writing CAN_SLCAN_TIMOUT failed.");
+    }
+    if (!target.Link.setParam(
+            target.SystemId, target.ComponentId, "CAN_P1_DRIVER", 1, true)) {
+      return new SlcanPreparationResult(false, "Writing CAN_P1_DRIVER failed.");
+    }
+
+    // Current ArduPilot exposes this parameter when an SLCAN serial number can be selected. The
+    // official Mission Planner path writes zero (USB); older targets without it remain usable.
+    if (target.Link.MAVlist[target.SystemId, target.ComponentId]
+            .param["CAN_SLCAN_SERNUM"] != null &&
+        !target.Link.setParam(
+            target.SystemId, target.ComponentId, "CAN_SLCAN_SERNUM", 0, true)) {
+      return new SlcanPreparationResult(false, "Writing CAN_SLCAN_SERNUM failed.");
+    }
+
+    return new SlcanPreparationResult(true,
+        "ArduPilot CAN1 SLCAN is prepared with the official two-second timeout. "
+            + "Disconnect MAVLink, wait at least two seconds, select its serial port above and Connect.");
+  }
+
+  private string? FindOpenConnectionUsingPort(string selectedPort) {
+    try {
+      return AppState.Connections.Snapshot()
+          .Where(connection => connection.IsOpen)
+          .FirstOrDefault(connection => PortsIdentifySameDevice(
+              selectedPort, connection.Link.BaseStream?.PortName))?.Endpoint;
+    } catch {
+      return null;
+    }
+  }
+
+  internal static bool PortsIdentifySameDevice(string? first, string? second) {
+    if (string.IsNullOrWhiteSpace(first) || string.IsNullOrWhiteSpace(second)) {
+      return false;
+    }
+    string left = ResolveSerialDevice(first.Trim());
+    string right = ResolveSerialDevice(second.Trim());
+    return string.Equals(left, right, OperatingSystem.IsWindows()
+        ? StringComparison.OrdinalIgnoreCase
+        : StringComparison.Ordinal);
+  }
+
+  private static string ResolveSerialDevice(string path) {
+    try {
+      if (Path.IsPathFullyQualified(path)) {
+        return File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName
+            ?? Path.GetFullPath(path);
+      }
+    } catch {
+    }
+    return path;
+  }
+
   [RelayCommand]
   private void ToggleConnect() {
     if (_disposed) {
@@ -166,22 +452,22 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       return;
     }
 
+    ClearVehicleState();
     if (SelectedBusIndex == 2) {
-      Status = "SLCAN-direct not yet supported — use MAVLink-CAN1/CAN2.";
+      StartDirectSlcan();
       return;
     }
 
     DroneCanSessionTarget? target = CaptureActiveTarget();
     if (target == null) {
       Status = "Not connected — open the MAVLink link first.";
-      ClearVehicleState();
       return;
     }
 
-    ClearVehicleState();
     byte bus = (byte)(SelectedBusIndex == 1 ? 2 : 1);
     _observedTarget = target;
     _sessionTarget = target;
+    _sessionRequiresVehicleTarget = true;
     _targetInvalidated = false;
     long revision = Interlocked.Increment(ref _targetRevision);
     IsConnected = true;
@@ -192,6 +478,10 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private void Filter() {
+    if (IsConnected && !_sessionRequiresVehicleTarget) {
+      Status = "Frame filtering is available for MAVLink-CAN1/CAN2; direct SLCAN uses the adapter's stream.";
+      return;
+    }
     var can = _can;
     DroneCanSessionTarget? target = _sessionTarget;
     long revision = Volatile.Read(ref _targetRevision);
@@ -820,6 +1110,20 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       return true;
     }, target.SystemId, target.ComponentId, true);
 
+    StartCanProtocol(
+        can, port, target, revision,
+        $"Listening for nodes on MAVLink CAN{bus} from "
+            + $"{target.SystemId}:{target.ComponentId} on the selected modem…",
+        openTransport: false);
+  }
+
+  private void StartCanProtocol(
+      DroneCAN.DroneCAN can,
+      ICommsSerial transport,
+      DroneCanSessionTarget? target,
+      long revision,
+      string connectedStatus,
+      bool openTransport) {
     can.NodeAdded += (id, msg) => {
       PostForSession(can, target, revision, () => {
         if (Nodes.Any(n => n.Id == id)) {
@@ -897,25 +1201,37 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
     _ = Task.Run(() => {
       try {
-        can.StartSLCAN(port.BaseStream);
+        if (openTransport && !transport.IsOpen) {
+          transport.Open();
+        }
+        if (!IsCanSessionCurrent(can, target, revision)) {
+          try {
+            transport.Close();
+          } catch {
+          }
+          return;
+        }
+        can.StartSLCAN(transport.BaseStream);
         if (!IsCanSessionCurrent(can, target, revision)) {
           return;
         }
         can.SetupFileServer();
         can.SetupDynamicNodeAllocator();
-        PostForSession(can, target, revision, () =>
-            Status = $"Listening for nodes on MAVLink CAN{bus} from "
-                + $"{target.SystemId}:{target.ComponentId} on the selected modem…");
+        PostForSession(can, target, revision, () => {
+          IsBusy = false;
+          Status = connectedStatus;
+        });
       } catch (Exception ex) {
         PostForSession(can, target, revision,
-            () => Disconnect("CAN start failed: " + ex.Message));
+            () => Disconnect((openTransport ? "SLCAN start failed: " : "CAN start failed: ")
+                + ex.Message));
       }
     });
   }
 
   private void PostForSession(
       DroneCAN.DroneCAN can,
-      DroneCanSessionTarget target,
+      DroneCanSessionTarget? target,
       long revision,
       Action action) {
     Dispatcher.UIThread.Post(() => {
@@ -965,13 +1281,16 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
     DroneCAN.DroneCAN? can = _can;
     CommsInjection? port = _port;
+    ICommsSerial? directPort = _directPort;
     MAVLinkInterface? subscribedLink = _subscribedLink;
     int subscription = _subId;
     _can = null;
     _port = null;
+    _directPort = null;
     _subscribedLink = null;
     _subId = -1;
     _sessionTarget = null;
+    _sessionRequiresVehicleTarget = false;
 
     if (subscription != -1 && subscribedLink != null) {
       try {
@@ -987,6 +1306,17 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
     try {
       port?.Close();
+    } catch {
+    }
+
+    // If Exit SLCAN is off, Stop(false) deliberately leaves the adapter in SLCAN mode. We still
+    // release our host serial handle so another process or a later Mission Planner session can use it.
+    try {
+      directPort?.Close();
+    } catch {
+    }
+    try {
+      (directPort as IDisposable)?.Dispose();
     } catch {
     }
 
@@ -1015,7 +1345,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     DroneCanNode? node = SelectedNode;
     DroneCanSessionTarget? target = _sessionTarget;
     long revision = Volatile.Read(ref _targetRevision);
-    if (can == null || node == null || target == null ||
+    if (can == null || node == null ||
         !IsCanSessionCurrent(can, target, revision)) {
       NodeStatus = _targetInvalidated ? TargetChangedMessage :
           "Connect and select a node first.";
@@ -1041,14 +1371,8 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       !operation.Cancellation.IsCancellationRequested &&
       ReferenceEquals(Volatile.Read(ref _operationCancellation), operation.Cancellation) &&
       ReferenceEquals(_can, operation.Can) && _mavlinkCanRun &&
-      ShouldAcceptNodeBoundResult(
-          _targetInvalidated,
-          operation.Revision,
-          Volatile.Read(ref _targetRevision),
-          operation.Target,
-          CaptureActiveTarget(),
-          operation.NodeRevision,
-          Volatile.Read(ref _nodeRevision));
+      IsSessionCurrent(operation.Target, operation.Revision) &&
+      operation.NodeRevision == Volatile.Read(ref _nodeRevision);
 
   private void CompleteOperation(DroneCanOperation operation) {
     bool current = ReferenceEquals(
@@ -1077,7 +1401,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   private bool HasCurrentCanSession() {
     DroneCAN.DroneCAN? can = _can;
     DroneCanSessionTarget? target = _sessionTarget;
-    return IsConnected && can != null && target != null &&
+    return IsConnected && can != null &&
         IsCanSessionCurrent(can, target, Volatile.Read(ref _targetRevision));
   }
 
@@ -1085,33 +1409,32 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     DroneCanSessionTarget? target = _sessionTarget;
     DroneCanNode? node = SelectedNode;
     long revision = Volatile.Read(ref _targetRevision);
-    return target != null && node != null && HasCurrentCanSession()
+    return node != null && HasCurrentCanSession() && _can != null
         ? new DroneCanSelection(
-            target, revision, node.Id, Volatile.Read(ref _nodeRevision))
+            _can, target, revision, node.Id, Volatile.Read(ref _nodeRevision))
         : null;
   }
 
   private bool IsSelectionCurrent(DroneCanSelection selection) =>
-      ShouldAcceptNodeBoundResult(
-          _targetInvalidated,
-          selection.Revision,
-          Volatile.Read(ref _targetRevision),
-          selection.Target,
-          CaptureActiveTarget(),
-          selection.NodeRevision,
-          Volatile.Read(ref _nodeRevision)) &&
-      TargetsMatch(_sessionTarget, selection.Target);
+      ReferenceEquals(_can, selection.Can) &&
+      IsSessionCurrent(selection.Target, selection.Revision) &&
+      selection.NodeRevision == Volatile.Read(ref _nodeRevision);
 
   private bool IsCanSessionCurrent(
       DroneCAN.DroneCAN can,
-      DroneCanSessionTarget target,
+      DroneCanSessionTarget? target,
       long revision) =>
       ReferenceEquals(_can, can) && IsSessionCurrent(target, revision);
 
-  private bool IsSessionCurrent(DroneCanSessionTarget target, long revision) =>
-      !_disposed && _mavlinkCanRun && !_targetInvalidated &&
-      revision == Volatile.Read(ref _targetRevision) &&
-      TargetsMatch(_sessionTarget, target) && TargetsMatch(CaptureActiveTarget(), target);
+  private bool IsSessionCurrent(DroneCanSessionTarget? target, long revision) {
+    if (_disposed || !_mavlinkCanRun || _targetInvalidated ||
+        revision != Volatile.Read(ref _targetRevision) ||
+        !TargetsMatch(_sessionTarget, target)) {
+      return false;
+    }
+    return !_sessionRequiresVehicleTarget ||
+        (target != null && TargetsMatch(CaptureActiveTarget(), target));
+  }
 
   internal static bool TargetsMatch(
       DroneCanSessionTarget? expected, DroneCanSessionTarget? current) => expected == current;
@@ -1156,6 +1479,10 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     }
 
     _observedTarget = current;
+    if (IsConnected && !_sessionRequiresVehicleTarget) {
+      // A direct SLCAN adapter is independent of whichever MAVLink modem/vehicle is selected.
+      return;
+    }
     _targetInvalidated = true;
     Interlocked.Increment(ref _targetRevision);
     _mavlinkCanRun = false;
@@ -1199,15 +1526,18 @@ internal sealed record DroneCanOperation(
     DroneCAN.DroneCAN Can,
     byte NodeId,
     long NodeRevision,
-    DroneCanSessionTarget Target,
+    DroneCanSessionTarget? Target,
     long Revision,
     CancellationTokenSource Cancellation);
 
 internal sealed record DroneCanSelection(
-    DroneCanSessionTarget Target,
+    DroneCAN.DroneCAN Can,
+    DroneCanSessionTarget? Target,
     long Revision,
     byte NodeId,
     long NodeRevision);
+
+internal sealed record SlcanPreparationResult(bool Success, string Message);
 
 public partial class DroneCanNode : ObservableObject {
   [ObservableProperty]
