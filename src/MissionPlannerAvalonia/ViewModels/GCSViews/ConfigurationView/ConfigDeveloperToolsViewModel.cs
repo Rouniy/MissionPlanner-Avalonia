@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
@@ -16,6 +17,7 @@ namespace MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView;
 
 public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDisposable {
   private readonly SemaphoreSlim _operationGate = new(1, 1);
+  private CancellationTokenSource? _firmwareArchiveCancel;
   private RemoteLog? _remoteLog;
 
   public ConfigDeveloperToolsViewModel() {
@@ -30,6 +32,8 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
     Action("3D Terrain View", () => Views.Terrain3DWindow.OpenWindow());
     Action("MicroDrone Downlink", () => Views.MicrodroneDownlinkWindow.OpenWindow());
     Action("MAVLink Serial TCP Bridge", () => Views.MavlinkSerialTcpBridgeWindow.OpenWindow());
+    Action("Download Firmware Archive", () => _ = DownloadFirmwareArchiveAsync());
+    Action("Cancel Firmware Archive", CancelFirmwareArchive);
     Action("Probe MAVLink Camera", () => _ = ProbeCameraAsync());
     Action("Embed Defaults in APJ", () => _ = EmbedDefaultsAsync());
     Action("Split DataFlash Log", () => _ = SplitDataFlashAsync());
@@ -115,6 +119,104 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
     } catch (Exception ex) {
       AppendLog("Camera probe failed: " + ex.Message);
     }
+  }
+
+  private async Task DownloadFirmwareArchiveAsync() {
+    var owner = Dialogs.Owner;
+    if (owner?.StorageProvider == null) {
+      AppendLog("Firmware archive: no window is available for selecting an output directory.");
+      return;
+    }
+    IReadOnlyList<IStorageFolder> folders = await owner.StorageProvider.OpenFolderPickerAsync(
+        new FolderPickerOpenOptions {
+          Title = "Select parent directory for the firmware archive",
+          AllowMultiple = false,
+        });
+    string? parent = folders.FirstOrDefault()?.TryGetLocalPath();
+    if (parent == null) {
+      return;
+    }
+
+    string destination = NextFirmwareArchiveDirectory(parent, DateTime.UtcNow);
+    if (!await Dialogs.ConfirmDangerous(
+            "Download Firmware Archive",
+            "Download every firmware binary referenced by Mission Planner's official "
+            + "firmware2.xml? This can transfer a large amount of data and may take a long time. "
+            + "The legacy manifest currently contains unsigned HTTP firmware URLs. The downloader "
+            + "tries HTTPS first and records SHA-256 for every saved file, but may fall back to HTTP "
+            + "for legacy hosts; these digests detect later changes but do not authenticate the source. "
+            + "A new directory is published only after all download attempts finish; cancellation "
+            + "removes the staging directory. Unavailable legacy files are reported and "
+            + $"left as network URLs in the local manifest.\n\nDestination: {destination}",
+            "Download all firmware")) {
+      return;
+    }
+    if (!_operationGate.Wait(0)) {
+      AppendLog("Firmware archive: another developer operation is already running.");
+      return;
+    }
+
+    var cancellation = new CancellationTokenSource();
+    _firmwareArchiveCancel = cancellation;
+    int lastReported = 0;
+    var progress = new Progress<FirmwareArchiveProgress>(item => {
+      int interval = Math.Max(1, item.Total / 20);
+      if (item.Completed == 1 || item.Completed == item.Total
+          || item.Completed - lastReported >= interval) {
+        lastReported = item.Completed;
+        AppendLog($"Firmware archive: {item.Completed}/{item.Total} — {item.Item}");
+      }
+    });
+
+    AppendLog("Firmware archive: reading the official firmware2.xml mirrors …");
+    try {
+      using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+      http.DefaultRequestHeaders.UserAgent.ParseAdd("MissionPlannerAvalonia/FirmwareArchive");
+      var service = new FirmwareArchiveService(http);
+      FirmwareArchiveResult result = await service.DownloadAsync(
+          FirmwareArchiveService.OfficialManifestUris,
+          destination,
+          progress,
+          cancellation.Token);
+      string state = result.FailedFiles == 0 ? "complete" : "published with unavailable files";
+      AppendLog($"Firmware archive {state}: {result.FileCount} downloaded, "
+                + $"{result.FailedFiles} unavailable, {result.BytesDownloaded:N0} bytes, "
+                + $"manifest {result.ManifestSource}. Output: {result.Directory}");
+    } catch (OperationCanceledException) when (cancellation.IsCancellationRequested) {
+      AppendLog("Firmware archive: cancelled; the incomplete staging directory was removed.");
+    } catch (Exception ex) {
+      AppendLog("Firmware archive failed: " + ex.Message);
+    } finally {
+      if (ReferenceEquals(_firmwareArchiveCancel, cancellation)) {
+        _firmwareArchiveCancel = null;
+      }
+      cancellation.Dispose();
+      _operationGate.Release();
+    }
+  }
+
+  private void CancelFirmwareArchive() {
+    CancellationTokenSource? cancellation = _firmwareArchiveCancel;
+    if (cancellation == null) {
+      AppendLog("Firmware archive: no download is running.");
+      return;
+    }
+    cancellation.Cancel();
+    AppendLog("Firmware archive: cancellation requested …");
+  }
+
+  internal static string NextFirmwareArchiveDirectory(string parent, DateTime utcNow) {
+    string root = Path.GetFullPath(parent);
+    string stem = "MissionPlanner-Firmware-Archive-" + utcNow.ToUniversalTime()
+        .ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+    for (int suffix = 1; suffix <= 1000; suffix++) {
+      string name = suffix == 1 ? stem : stem + "-" + suffix.ToString(CultureInfo.InvariantCulture);
+      string candidate = Path.Combine(root, name);
+      if (!Directory.Exists(candidate) && !File.Exists(candidate)) {
+        return candidate;
+      }
+    }
+    throw new IOException("Unable to allocate a new firmware archive directory name.");
   }
 
   private async Task EmbedDefaultsAsync() {
@@ -644,6 +746,13 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
   }
 
   public void Dispose() {
+    CancellationTokenSource? archive = _firmwareArchiveCancel;
+    _firmwareArchiveCancel = null;
+    try {
+      archive?.Cancel();
+    } catch (ObjectDisposedException) {
+    }
+
     var logger = _remoteLog;
     _remoteLog = null;
     if (logger == null) {

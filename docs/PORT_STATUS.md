@@ -1,7 +1,7 @@
 # Cross-platform port status
 
 The project targets Windows, macOS and Linux. The current synchronization was locally verified on
-Linux Mint 22.3 (Ubuntu 24.04 base), x86-64, X11 on 2026-08-22. Self-contained Windows x64 and
+Linux Mint 22.3 (Ubuntu 24.04 base), x86-64, X11 on 2026-08-23. Self-contained Windows x64 and
 macOS x64 outputs were also cross-published and inspected on Linux. Windows and macOS remain
 first-class release targets and still require runtime acceptance on their native runners.
 
@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 985 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 996 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
@@ -69,6 +69,14 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   link. A modem/vehicle/component change, physical link loss, arming or discovery of another system
   stops the listener and releases the exclusive UART without waiting for a TCP client. The same
   release happens between sequential clients and on explicit stop.
+- Developer Tools ports the official hidden `rip all fw` workflow as Download Firmware Archive.
+  It reads `firmware2.xml` through two HTTPS manifest mirrors, deduplicates its firmware references
+  and downloads at most four files concurrently. Because the current official manifest still
+  contains legacy unsigned HTTP references and stale third-party files, each HTTP URL is tried over
+  HTTPS first and falls back only after a network/HTTP failure and an explicit operator warning.
+  The archive records SHA-256 for every saved file, bounds manifest and firmware sizes, retains
+  unavailable URLs in the local manifest with a report, supports immediate cancellation and only
+  publishes a new directory after all attempts finish. Existing directories are never overwritten.
 - The official hidden ResEdit workflow is a native Translation / RESX Editor in Developer Tools.
   It scans the selected Mission Planner source tree for the same `Strings.resx`, `.Text`, `.ToolTip`,
   `HeaderText` and `ToolTipText` string set, combines neutral text with an exact selected culture and
@@ -578,7 +586,7 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 985 passed, 0 failed, including Settings concurrency/null-reset stress,
+- Automated tests: 996 passed, 0 failed, including Settings concurrency/null-reset stress,
   WMS/WMTS capabilities and tile addressing, raw/Socket.IO WebSocket protocol, fragmentation,
   reconnect and bounded-close integration, real
   loopback-UDP Moving Base input, blocking serial cancellation, exact multi-modem target isolation
@@ -592,15 +600,18 @@ native-platform acceptance testing.
   MAVLink serial-bridge tests use a real loopback TCP socket for bidirectional and multi-chunk byte
   transfer, then verify bounded explicit stop, target-loss shutdown, UART release between clients,
   exact link/vehicle/component identity and single-system enforcement.
+  Firmware-archive tests cover mirror fallback, exact-URL deduplication, bounded parallelism,
+  HTTPS-first legacy handling, partial availability, hashes, XML/path hardening, size limits,
+  non-overwrite behavior, cancellation cleanup and atomic publication.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop; the packaged Ctrl+X action opens
   the bound Map Tile Cache import UI and Ctrl+F shows the native SHP-to-POLY, Adjust Barometer
-  Altitude and MAVLink Serial TCP Bridge actions while the title reports the exact
+  Altitude, MAVLink Serial TCP Bridge and Download Firmware Archive actions while the title reports the exact
   upstream/date/commit version. The packaged serial-bridge window was opened from that action and
   its safe defaults were visually verified.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 985-test source on 2026-08-23. Package metadata,
+- The `.deb` target is rebuilt from the current 996-test source on 2026-08-23. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 401 packaged-file checksums match after extraction, including the
   portable plugin API, BLE dependency licenses and byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -619,10 +630,10 @@ native-platform acceptance testing.
   scans; no Nordic UART modem was in range for a traffic test.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260823.c713ce5_amd64.deb`
-(54,244,774 bytes; SHA-256
-`9e762ecd99c1f3bdccca94275edef94817be01b652e21180c450a8c098fd3b19`), built from commit
-`c713ce5` and the current 985-test source including the portable plugin host, HUD-to-MJPEG/AVI
+`out/packages/missionplanner-avalonia_1.3.83-20260823.6119e03_amd64.deb`
+(54,263,400 bytes; SHA-256
+`daf9f232be0bf9f732b2b0153a325fcd9afd2f917fb203ea0844bf7d4034e345`), built from commit
+`6119e03` and the current 996-test source including the portable plugin host, HUD-to-MJPEG/AVI
 recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
@@ -636,6 +647,7 @@ camera feedback/overlap/gimbal overlays, managed SHP/DXF/GeoPackage
 planner import, the official SHP-to-POLY developer conversion, local GeoTIFF/DTED elevation sources,
 target-safe official barometric-altitude pressure adjustment,
 the target-safe official MAVLink `SERIAL_CONTROL` TCP bridge,
+the cancellable atomic official firmware-archive workflow with HTTPS-first legacy handling and hashes,
 styled KML/KMZ vector/GroundOverlay layers, Flight Data overlay copying, corrected translucent-red
 airport disks, Rally Points actions, switchable Planner docking, the interactive verified-host-key
 SSH terminal, secure SFTP DataFlash download/delete workflow, the recursive flight Log Index with
@@ -659,8 +671,8 @@ exports identified during the current CodeQL triage, plus concurrent global-sett
 serialized settings-file writes, and a cancellable bounded WebSocket transport with explicit
 raw-WebSocket/Socket.IO protocol separation and reconnect lifecycle ownership.
 Its APT version is
-`1:1.3.83+20260823.r252.c713ce5`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r252` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260823.r255.6119e03`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r255` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -711,7 +723,7 @@ Mission Planner functional-parity gap.
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
 | BLE transport | macOS; Linux/Windows hardware acceptance | Linux uses the port-native managed BlueZ/D-Bus Nordic UART transport and no longer needs a SimpleBLE `.so`; adapter discovery is verified, while end-to-end traffic still needs a Nordic UART modem. Upstream's Windows SimpleBLE path remains hardware-unverified. macOS still needs a CoreBluetooth or maintained native integration. |
-| Developer utility handler audit | All | The safe portable subset of `temp.cs`, including the Translation / RESX Editor and live 3D terrain/imagery view, is native. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration, PX4Flow live image assembly, local map-tile import, SHP-to-POLY conversion, target-safe barometric-altitude adjustment and the MAVLink serial-to-TCP bridge are also port-native. Remaining upstream handlers are reviewed individually: already exposed, obsolete and unsafe handlers are classified instead of being presented as missing user functionality. |
+| Developer utility handler audit | All | The safe portable subset of `temp.cs`, including the Translation / RESX Editor and live 3D terrain/imagery view, is native. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration, PX4Flow live image assembly, local map-tile import, SHP-to-POLY conversion, target-safe barometric-altitude adjustment, the MAVLink serial-to-TCP bridge and the firmware-archive workflow are also port-native. Remaining upstream handlers are reviewed individually: already exposed, obsolete and unsafe handlers are classified instead of being presented as missing user functionality. |
 
 ## Optional runtime experiment
 
