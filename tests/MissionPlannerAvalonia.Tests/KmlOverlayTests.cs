@@ -54,6 +54,17 @@ public sealed class KmlOverlayTests {
   }
 
   [Fact]
+  public async Task Kml_parsing_is_safe_when_imports_run_in_parallel() {
+    Task<int>[] imports = Enumerable.Range(0, 128)
+        .Select(_ => Task.Run(() => Parse(_styledKml).Routes.Count))
+        .ToArray();
+
+    int[] routeCounts = await Task.WhenAll(imports);
+
+    Assert.All(routeCounts, count => Assert.Equal(5, count));
+  }
+
+  [Fact]
   public void Kml_overlay_matches_upstream_direct_and_inline_style_fallbacks() {
     ImportedMapOverlay overlay = Parse(_styledKml);
 

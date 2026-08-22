@@ -143,6 +143,7 @@
             <MenuItem Header="Cursor-on-Target / TAK Output" Click="OnCotOutput" />
             <MenuItem Header="DataFlash Spectrogram     Ctrl+L" Click="OnSpectrogram" />
             <MenuItem Header="Map Tile Cache     Ctrl+X" Click="OnMapCache" />
+            <MenuItem Header="3D Terrain View" Click="OnTerrain3D" />
             <MenuItem Header="MAVLink Device Operations     Ctrl+J" Click="OnDeviceOperations" />
             <MenuItem Header="RF Propagation Settings     Ctrl+W" Click="OnPropagationSettings" />
             <MenuItem Header="Swarm Formation (Beta)" Click="OnFormationControl" />

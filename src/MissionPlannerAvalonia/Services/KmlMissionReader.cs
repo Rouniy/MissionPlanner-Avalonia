@@ -17,6 +17,10 @@ internal sealed record KmlMissionContent(
     IReadOnlyList<KmlMissionPoint> Overlay);
 
 internal static class KmlMissionReader {
+  // SharpKml's vendored TypeBrowser cache is a process-wide Dictionary without locking.
+  // Keep imports serialized so simultaneous UI/test imports cannot corrupt its lazy cache.
+  private static readonly object _sharpKmlLock = new();
+
   internal static KmlMissionContent Read(string path) => ReadPath(path, Parse);
 
   internal static ImportedMapOverlay ReadOverlay(string path) {
@@ -53,7 +57,7 @@ internal static class KmlMissionReader {
   }
 
   internal static KmlMissionContent Parse(Stream stream) {
-    KmlFile kml = KmlFile.Load(stream);
+    KmlFile kml = LoadKml(stream);
     var route = new List<KmlMissionPoint>();
     var pois = new List<PoiPoint>();
     var overlay = new List<KmlMissionPoint>();
@@ -92,7 +96,7 @@ internal static class KmlMissionReader {
   private static ImportedMapOverlay ParseOverlay(
       Stream stream,
       Func<string, byte[]?> readResource) {
-    KmlFile kml = KmlFile.Load(stream);
+    KmlFile kml = LoadKml(stream);
     var routes = new List<ImportedOverlayRoute>();
     var markers = new List<ImportedOverlayMarker>();
     var rasters = new List<ImportedOverlayRaster>();
@@ -105,6 +109,12 @@ internal static class KmlMissionReader {
       AddFeature(feature, null, routes, markers, rasters, readResource);
     }
     return new ImportedMapOverlay(routes, markers, rasters);
+  }
+
+  private static KmlFile LoadKml(Stream stream) {
+    lock (_sharpKmlLock) {
+      return KmlFile.Load(stream);
+    }
   }
 
   private static void AddFeature(
