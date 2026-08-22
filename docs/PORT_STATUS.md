@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 759 tests verified; the portable-plugin-host/HUD-recording/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 779 tests verified; the portable-plugin-host/HUD-recording/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link/Formation `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -432,12 +432,12 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 759 passed, 0 failed.
+- Automated tests: 779 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target was rebuilt from the current 759-test source on 2026-08-22. Package metadata,
+- The `.deb` target was rebuilt from the current 779-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 397 packaged-file checksums match after extraction, including the
   portable plugin API and byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -454,10 +454,10 @@ native-platform acceptance testing.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.7964472_amd64.deb`
-(53,946,840 bytes; SHA-256
-`c0a2be2db6df53c8b22e9d75d34d444ca9477994eec72859eb9b2b3e345fd234`), built from the current
-759-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, the integrated
+`out/packages/missionplanner-avalonia_1.3.83-20260822.2679cd3_amd64.deb`
+(53,943,438 bytes; SHA-256
+`d08c4a659ffd066fcc230cf081e1e8c7c8fe888eaad068a9a444d746bde32f70`), built from the current
+779-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, the integrated
 Grid v2 boundary editor,
 interactive MAVLink
 camera/gimbal video control and all official
@@ -473,10 +473,10 @@ SSH terminal, secure SFTP DataFlash download/delete workflow, the recursive flig
 map thumbnails, offline sphere/ellipsoid MagFit, live Traditional Heli visualization, the movable
 Flight Data splitter, session-only/latest-wins vehicle parameter loading, single-prompt network
 connections, independent multi-link Connection List support and composite upstream/date/commit
-versioning.
+versioning, plus the fail-closed official Copter/Rover leader/follower Formation workflow.
 Its APT version is
-`1:1.3.83+20260822.r180.7964472`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r180` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r183.2679cd3`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r183` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
