@@ -301,7 +301,10 @@ public sealed class SwarmFollowPathTests {
     var trail = new FollowPathTrail();
     trail.Record(PointAt(0, 100));
     trail.Record(PointAt(10, 110));
-    using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+    // Hosted CI can heavily throttle timer continuations while the full upstream graph is loaded.
+    // The callback still ends the test after exactly three 5 Hz iterations; this is only a guard
+    // against a broken loop, not the expected duration of the test.
+    using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
     var sink = new RecordingSink {
       AfterTarget = count => {
         if (count == 3) {
