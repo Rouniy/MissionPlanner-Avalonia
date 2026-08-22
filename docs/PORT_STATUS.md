@@ -613,6 +613,7 @@ the submodule: log4net 3.3.2, SharpCompress 0.48.0 and SkiaSharp/SkiaSharp nativ
 The SSH port uses SSH.NET 2026.0.0 and BouncyCastle.Cryptography 2.7.0 instead of upstream's
 vulnerable SSH.NET 2020.0.2 dependency. A current `dotnet list package --vulnerable
 --include-transitive` audit reports no vulnerable package in the Avalonia application graph.
-The seven current CodeQL findings and their code-level mitigations or reachability decisions are
-recorded in [`CODEQL_TRIAGE.md`](CODEQL_TRIAGE.md); no alert was dismissed merely to make the
-dashboard green.
+The seven CodeQL findings reviewed in this synchronization and their code-level mitigations or
+reachability decisions are recorded in [`CODEQL_TRIAGE.md`](CODEQL_TRIAGE.md). Two unused-web-sample
+alerts closed through precise analysis scoping; the other five remain visible and no alert was
+dismissed merely to make the dashboard green.
