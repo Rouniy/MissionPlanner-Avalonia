@@ -484,6 +484,25 @@ public partial class GridUIViewModel : ViewModelBase {
     Recalc(fitPreview: false);
   }
 
+  internal void ReplaceBoundary(IReadOnlyList<PointLatLngAlt> boundary) {
+    ArgumentNullException.ThrowIfNull(boundary);
+    var replacement = boundary
+        .Where(point => double.IsFinite(point.Lat) && double.IsFinite(point.Lng))
+        .Select(point => new PointLatLngAlt(point) {
+          Lat = Math.Clamp(point.Lat, -90, 90),
+          Lng = Math.Clamp(point.Lng, -180, 180),
+        })
+        .ToList();
+    if (replacement.Count < 3) {
+      return;
+    }
+
+    _polygon = replacement;
+    StartPointNumber = Math.Clamp(StartPointNumber, 1, _polygon.Count);
+    OnPropertyChanged(nameof(BoundaryPointCount));
+    Recalc(fitPreview: false);
+  }
+
   internal SurveyGridPreviewState GetPreviewState() {
     double horizontalFov = 0;
     double verticalFov = 0;

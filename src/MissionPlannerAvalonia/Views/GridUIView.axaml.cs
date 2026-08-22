@@ -1,7 +1,9 @@
+using System;
 using System.Linq;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using MissionPlannerAvalonia.Controls;
 using MissionPlannerAvalonia.ViewModels;
 
 namespace MissionPlannerAvalonia.Views;
@@ -22,6 +24,25 @@ public partial class GridUIView : UserControl {
   private GridUIViewModel? Vm => DataContext as GridUIViewModel;
 
   private void OnFitPreview(object? sender, RoutedEventArgs e) => PreviewMap.ZoomToPreview();
+
+  private void OnBoundaryEditMode(object? sender, RoutedEventArgs e) {
+    if (sender is not RadioButton { IsChecked: true, Tag: string value } ||
+        !Enum.TryParse(value, out SurveyBoundaryEditMode mode)) {
+      return;
+    }
+    PreviewMap.EditMode = mode;
+    if (Vm != null) {
+      Vm.Status = mode switch {
+        SurveyBoundaryEditMode.Pan => "Drag a numbered vertex to edit the survey boundary.",
+        SurveyBoundaryEditMode.DrawRectangle =>
+            "Drag on the map to replace the boundary with a rectangle.",
+        SurveyBoundaryEditMode.ShiftEdge =>
+            "Drag to move the nearest boundary edge perpendicular to itself.",
+        SurveyBoundaryEditMode.MoveBoundary => "Drag to move the complete survey boundary.",
+        _ => Vm.Status,
+      };
+    }
+  }
 
   private async void OnLoadSamplePhoto(object? sender, RoutedEventArgs e) {
     var top = TopLevel.GetTopLevel(this);

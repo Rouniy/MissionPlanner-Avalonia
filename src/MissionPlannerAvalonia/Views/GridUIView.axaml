@@ -20,6 +20,20 @@
       <Grid>
         <controls:SurveyGridPreviewMap x:Name="PreviewMap" />
 
+        <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8"
+                Padding="8,5" CornerRadius="4" Background="#D0202224">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <RadioButton GroupName="boundaryEdit" Content="Pan / vertices" Tag="Pan"
+                         IsChecked="True" Click="OnBoundaryEditMode" />
+            <RadioButton GroupName="boundaryEdit" Content="Rectangle" Tag="DrawRectangle"
+                         Click="OnBoundaryEditMode" />
+            <RadioButton GroupName="boundaryEdit" Content="Shift edge" Tag="ShiftEdge"
+                         Click="OnBoundaryEditMode" />
+            <RadioButton GroupName="boundaryEdit" Content="Move boundary" Tag="MoveBoundary"
+                         Click="OnBoundaryEditMode" />
+          </StackPanel>
+        </Border>
+
         <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
                 Padding="8,5" CornerRadius="4" Background="#D0202224">
           <StackPanel Orientation="Horizontal" Spacing="10">
