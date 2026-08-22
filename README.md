@@ -21,6 +21,8 @@ APT correctly upgrades installations that used the port's older `2026.8.0` CalVe
 
 See [port status](docs/PORT_STATUS.md) for the Windows/macOS/Linux support matrix, upstream
 synchronization details, and the explicit list of missing or intentionally disabled functionality.
+The native [portable plugin host](docs/PLUGINS.md) documents the official-style plugin lifecycle,
+installation paths, Avalonia extension API and legacy WinForms compatibility boundary.
 
 ## Platform targets
 
@@ -137,6 +139,11 @@ native convention on every supported platform:
 SRTM terrain, SITL binaries, parameter definitions, log metadata and updater downloads are caches.
 Existing files from legacy `Mission Planner` folders are copied on first use without deleting the
 old copy.
+
+Portable plugin DLLs live under the user-data `plugins` directory and can be managed from
+**Tools > Plugin Manager** (`Ctrl+P`). They run as trusted in-process code with full application
+access; install only plugins you trust. See [portable plugins](docs/PLUGINS.md) for the API and
+platform paths.
 
 ## Development
 

@@ -1,0 +1,60 @@
+<Window
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  x:Class="MissionPlannerAvalonia.Views.PluginManagerWindow"
+  x:DataType="vm:PluginManagerViewModel"
+  Title="Plugin Manager"
+  Width="1000"
+  Height="600"
+  MinWidth="760"
+  MinHeight="440"
+  WindowStartupLocation="CenterOwner"
+  Background="{DynamicResource MpControlBg}">
+  <Grid Margin="14" RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="10">
+    <StackPanel Grid.Row="0" Spacing="4">
+      <TextBlock Text="Mission Planner Plugins" FontSize="20" />
+      <TextBlock
+        Text="DLL plugins use the official Init → Loaded → Loop → Exit lifecycle through a native Avalonia host. Legacy WinForms UI plugins must be adapted and rebuilt. Only install plugins you trust: plugin code has full user access."
+        TextWrapping="Wrap" Foreground="#FFCE8A" />
+    </StackPanel>
+
+    <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+      <TextBlock Text="User plugin directory" VerticalAlignment="Center" />
+      <TextBox Grid.Column="1" Text="{Binding PluginDirectory}" IsReadOnly="True" />
+      <Button Grid.Column="2" Content="Open Folder" Command="{Binding OpenFolderCommand}" />
+    </Grid>
+
+    <DataGrid x:Name="PluginGrid" Grid.Row="2" ItemsSource="{Binding Entries}"
+              AutoGenerateColumns="False" GridLinesVisibility="Horizontal">
+      <DataGrid.Columns>
+        <DataGridCheckBoxColumn Header="Enabled" Binding="{Binding Enabled, Mode=TwoWay}"
+                                Width="70" />
+        <DataGridTextColumn Header="State" Binding="{Binding StateText}" IsReadOnly="True"
+                            Width="150" />
+        <DataGridTextColumn Header="Name" Binding="{Binding Name}" IsReadOnly="True"
+                            Width="150" />
+        <DataGridTextColumn Header="Version" Binding="{Binding Version}" IsReadOnly="True"
+                            Width="80" />
+        <DataGridTextColumn Header="Author" Binding="{Binding Author}" IsReadOnly="True"
+                            Width="130" />
+        <DataGridTextColumn Header="DLL" Binding="{Binding FileName}" IsReadOnly="True"
+                            Width="180" />
+        <DataGridTextColumn Header="Diagnostic" Binding="{Binding Error}" IsReadOnly="True"
+                            Width="*" />
+      </DataGrid.Columns>
+    </DataGrid>
+
+    <TextBlock x:Name="RestartWarning" Grid.Row="3"
+               Text="Restart Mission Planner to finish applying enable/disable changes."
+               IsVisible="{Binding RestartRequired}" Foreground="#FFCE8A" />
+
+    <Grid Grid.Row="4" ColumnDefinitions="Auto,Auto,Auto,*,Auto" ColumnSpacing="8">
+      <Button Content="Refresh / Load New" Command="{Binding RefreshCommand}" />
+      <Button Grid.Column="1" Content="Save Choices" Command="{Binding SaveCommand}" />
+      <TextBlock Grid.Column="3" Text="{Binding Status}" TextWrapping="Wrap"
+                 VerticalAlignment="Center" Foreground="{DynamicResource MpAccentBrush}" />
+      <Button Grid.Column="4" Content="Close" Click="OnClose" />
+    </Grid>
+  </Grid>
+</Window>

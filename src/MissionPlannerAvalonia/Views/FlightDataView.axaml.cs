@@ -31,6 +31,7 @@ public partial class FlightDataView : UserControl {
     _hud = this.FindControl<HudControl>("Hud");
     if (_hud != null) {
       _hud.IndicatorClicked += OnHudIndicatorClicked;
+      _hud.CustomPaint += OnPluginHudPaint;
     }
     _recordHudMenuItem = this.FindControl<MenuItem>("RecordHudMenuItem");
     _stopHudRecordingMenuItem = this.FindControl<MenuItem>("StopHudRecordingMenuItem");
@@ -78,6 +79,11 @@ public partial class FlightDataView : UserControl {
   }
 
   private bool _displayViewSubscribed;
+
+  private static void OnPluginHudPaint(HudControl hud, Avalonia.Media.DrawingContext context) {
+    double scaling = TopLevel.GetTopLevel(hud)?.RenderScaling ?? 1;
+    PluginService.DrawHud(context, hud.Bounds, scaling);
+  }
 
   private void OnDisplayViewChanged(object? sender, EventArgs e) {
     Avalonia.Threading.Dispatcher.UIThread.Post(() => {

@@ -33,6 +33,9 @@ public static class AppPaths {
   public static string SrtmCacheRoot => Path.Combine(CacheRoot, "srtm");
   public static string MapTileCacheRoot => Path.Combine(CacheRoot, "map-tiles");
   public static string UpdateCacheRoot => Path.Combine(CacheRoot, "update");
+  public static string PluginRoot => Path.Combine(DataRoot, "plugins");
+  public static string PluginDataRoot => Path.Combine(DataRoot, "plugin-data");
+  public static string PluginLogPath => Path.Combine(StateRoot, "logs", "plugins.log");
 
   public static bool IsPackageManaged {
     get {
@@ -139,7 +142,9 @@ public static class AppPaths {
         SrtmCacheRoot,
         MapTileCacheRoot,
         UpdateCacheRoot,
-    }) {
+        PluginRoot,
+        PluginDataRoot,
+      }) {
       Directory.CreateDirectory(path);
     }
   }
