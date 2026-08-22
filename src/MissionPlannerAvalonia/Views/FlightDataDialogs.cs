@@ -76,6 +76,12 @@ public class MessagesWindow : Window {
   }
 }
 
+internal enum GimbalVideoPresentation {
+  FullSized,
+  Mini,
+  PopOut,
+}
+
 public class VideoPopupWindow : Window {
   public VideoControl Video { get; }
   private readonly GimbalVideoOverlay _overlay;

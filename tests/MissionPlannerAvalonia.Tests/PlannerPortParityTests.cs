@@ -348,6 +348,91 @@ public class PlannerPortParityTests {
     }
   }
 
+  [AvaloniaFact]
+  [Obsolete]
+  public void Flight_data_gimbal_video_layouts_move_one_live_panel_without_recreation() {
+    var view = new FlightDataView();
+    var panel = new Border();
+    var popup = new Window();
+    var fullHost = Assert.IsType<ContentControl>(
+        view.FindControl<ContentControl>("GimbalVideoFullHost"));
+    var miniLayout = Assert.IsType<AvaloniaGrid>(
+        view.FindControl<AvaloniaGrid>("GimbalVideoMiniLayout"));
+    var miniHost = Assert.IsType<ContentControl>(
+        view.FindControl<ContentControl>("GimbalVideoMiniHost"));
+    var miniMapHost = Assert.IsType<ContentControl>(
+        view.FindControl<ContentControl>("GimbalMiniMapHost"));
+    var map = Assert.IsType<MapView>(view.FindControl<MapView>("FdMap"));
+    var mapLayout = Assert.IsType<AvaloniaGrid>(
+        view.FindControl<AvaloniaGrid>("MapVideoLayout"));
+    try {
+      view.PlaceGimbalVideoPanel(
+          panel, GimbalVideoPresentation.FullSized, popup, showWindow: false);
+
+      Assert.Same(panel, fullHost.Content);
+      Assert.True(fullHost.IsVisible);
+      Assert.True(miniLayout.IsVisible);
+      Assert.Same(map, miniMapHost.Content);
+      Assert.True(miniMapHost.IsVisible);
+      Assert.Equal(GimbalVideoPresentation.FullSized, view.CurrentGimbalVideoPresentation);
+
+      view.PlaceGimbalVideoPanel(
+          panel, GimbalVideoPresentation.Mini, popup, showWindow: false);
+
+      Assert.Null(fullHost.Content);
+      Assert.False(fullHost.IsVisible);
+      Assert.Same(panel, miniHost.Content);
+      Assert.True(miniLayout.IsVisible);
+      Assert.Null(miniMapHost.Content);
+      Assert.Contains(map, mapLayout.Children);
+      Assert.Equal(GimbalVideoPresentation.Mini, view.CurrentGimbalVideoPresentation);
+
+      view.PlaceGimbalVideoPanel(
+          panel, GimbalVideoPresentation.PopOut, popup, showWindow: false);
+
+      Assert.Null(fullHost.Content);
+      Assert.Null(miniHost.Content);
+      Assert.False(miniLayout.IsVisible);
+      Assert.Null(miniMapHost.Content);
+      Assert.Contains(map, mapLayout.Children);
+      Assert.Same(panel, popup.Content);
+      Assert.Equal(GimbalVideoPresentation.PopOut, view.CurrentGimbalVideoPresentation);
+    } finally {
+      view.CloseGimbalVideo();
+    }
+
+    Assert.Null(fullHost.Content);
+    Assert.Null(miniHost.Content);
+    Assert.Null(miniMapHost.Content);
+    Assert.Contains(map, mapLayout.Children);
+    Assert.Null(view.CurrentGimbalVideoPresentation);
+  }
+
+  [AvaloniaFact]
+  [Obsolete]
+  public void Closing_popout_clears_the_gimbal_video_presentation() {
+    var view = new FlightDataView();
+    var owner = new Window { Content = view };
+    var panel = new Border();
+    var popup = new Window();
+    owner.Show();
+    try {
+      view.PlaceGimbalVideoPanel(
+          panel, GimbalVideoPresentation.PopOut, popup, showWindow: true);
+
+      Assert.True(popup.IsVisible);
+      Assert.Same(panel, popup.Content);
+      popup.Close();
+
+      Assert.Null(view.CurrentGimbalVideoPresentation);
+      Assert.Null(view.FindControl<ContentControl>("GimbalVideoFullHost")?.Content);
+      Assert.Null(view.FindControl<ContentControl>("GimbalVideoMiniHost")?.Content);
+    } finally {
+      view.CloseGimbalVideo();
+      owner.Close();
+    }
+  }
+
   [Theory]
   [InlineData("50S", -50)]
   [InlineData("11N", 11)]

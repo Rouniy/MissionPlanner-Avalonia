@@ -706,7 +706,7 @@
     />
 
     <Border Grid.Column="{Binding MapColumn}" Background="{DynamicResource MpBg}" ClipToBounds="True">
-      <Grid>
+      <Grid x:Name="MapVideoLayout">
         <ctl:MapView x:Name="FdMap" />
 
         <StackPanel Orientation="Horizontal" Spacing="8"
@@ -756,6 +756,21 @@
                 Margin="0,0,0,26" Background="#CC1B1B1B">
           <ctl:LivePlot x:Name="TuningPlot" DoubleTapped="OnTuningPickClick" />
         </Border>
+
+        <ContentControl x:Name="GimbalVideoFullHost" IsVisible="False"
+                        ZIndex="100" Background="Black" />
+
+        <Grid x:Name="GimbalVideoMiniLayout" IsVisible="False" ZIndex="101"
+              ColumnDefinitions="7*,3*" RowDefinitions="7*,3*">
+          <Border Grid.Row="1" Grid.Column="1" Margin="0,0,8,8"
+                  BorderBrush="{DynamicResource MpAccentBrush}" BorderThickness="2"
+                  Background="Black" MinWidth="240" MinHeight="180">
+            <Grid>
+              <ContentControl x:Name="GimbalVideoMiniHost" />
+              <ContentControl x:Name="GimbalMiniMapHost" IsVisible="False" />
+            </Grid>
+          </Border>
+        </Grid>
       </Grid>
     </Border>
   </Grid>
