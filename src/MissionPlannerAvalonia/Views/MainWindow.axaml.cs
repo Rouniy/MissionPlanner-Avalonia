@@ -203,4 +203,7 @@ public partial class MainWindow : Window {
 
   private void OnPropagationSettings(object? sender, RoutedEventArgs e) =>
       PropagationSettingsWindow.OpenWindow();
+
+  private void OnFormationControl(object? sender, RoutedEventArgs e) =>
+      FormationControlWindow.OpenWindow();
 }

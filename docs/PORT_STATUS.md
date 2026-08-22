@@ -135,6 +135,17 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   planner, parameter pages, joystick and traffic uplink. Flight Data keeps the active aircraft red
   and renders the other connected aircraft as grey heading-aware markers. Closing or losing the
   active line falls back to another live line without blocking on the old transport.
+- Tools > Swarm Formation restores the official leader/follower Formation workflow on top of that
+  multi-link runtime. It discovers every current MAVLink component without changing the globally
+  selected vehicle, permits only explicit Copter/Rover autopilot followers, requests 10 Hz leader
+  position/attitude telemetry and sends yaw-rotated global position plus leader-velocity targets at
+  10 Hz. The native Avalonia window includes a draggable zoomable X/Y grid, precise X/Y/Z table,
+  capture-from-current-position, leader rebasing, yaw/gimbal options, live mode/arm/GPS state and
+  reject-by-default Arm/Disarm/Takeoff/Land/GUIDED/AUTO actions for the exact checked follower set.
+  Link identity is part of every target: reusing the same sysid on another UDP modem cannot inherit
+  commands. A closed/replaced link, stale telemetry, missing leader/follower, edited running plan or
+  invalid/non-finite offset stops before another batch is sent. The upstream ArduPlane
+  attitude/PID branch remains visibly disabled pending a separately testable fixed-wing controller.
 - Parameter lists are deliberately session-only: neither the port nor the compiled upstream
   `MAVState` writes a reusable vehicle-parameter cache. Disconnecting, beginning a new connection or
   selecting another MAVLink system or modem clears the applicable values/types/count immediately
@@ -507,7 +518,7 @@ not remove required Windows-native files from `win-x64` builds.
 | --- | --- | --- |
 | Legacy Mission Planner plugin compatibility | All | Portable DLL discovery, dependency loading, `Init`/`Loaded`/`Loop`/`Exit`, enable/disable UI, current MAVLink/settings access, Flight Data actions and HUD overlays are native and operational. Existing DLLs compiled against Mission Planner's WinForms executable are not binary-compatible; their UI must be adapted to Avalonia and rebuilt. Loose `.cs` runtime compilation is intentionally not treated as DLL compatibility. |
 | Optional native GDAL/OGR map drivers | All | GeoPackage feature layers, SHP and DXF are available through managed cross-platform readers. The generic native OGR/GDAL driver path for additional formats remains absent. |
-| Swarm / formation flight | All | The upstream swarm controllers and UI are absent. The control logic is portable, but needs a new multi-vehicle foundation and Avalonia safety UI. |
+| Swarm / formation flight | All | The official Copter/Rover leader/follower Formation controller, interactive native grid and bulk flight actions are ported with multi-link identity and fail-closed telemetry checks. The separate experimental ArduPlane attitude/PID branch and FollowPath/FollowLeader/Sequence swarm modes remain to be ported and tested. |
 | Signed beta application updates | All | Stable signed updates work. The Beta Updates control is disabled until this project publishes and signs a separate beta manifest/channel. |
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
