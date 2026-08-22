@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MissionPlanner;
 using MissionPlanner.ArduPilot;
+using MissionPlanner.Utilities;
 
 namespace MissionPlannerAvalonia.Services;
 
@@ -57,7 +58,7 @@ internal sealed record FormationVehicleSource(
       !State.CANNode;
 
   internal bool SupportsFormation => IsAutopilot &&
-      State.cs.firmware is Firmwares.ArduCopter2 or Firmwares.ArduRover;
+      State.cs.firmware is Firmwares.ArduPlane or Firmwares.ArduCopter2 or Firmwares.ArduRover;
 
   internal bool SupportsFollowPath => IsAutopilot &&
       State.cs.firmware is Firmwares.ArduPlane or Firmwares.ArduCopter2 or Firmwares.ArduRover;
@@ -79,12 +80,28 @@ internal sealed record FormationPlan(
     FormationVehicleId Leader,
     IReadOnlyList<FormationFollower> Followers,
     bool AlignYaw,
-    bool AimGimbals);
+    bool AimGimbals,
+    bool EnablePlaneAttitude = false);
+
+internal readonly record struct PlaneFormationAttitude(
+    float[] Quaternion,
+    float Thrust,
+    double RollDegrees,
+    double PitchDegrees,
+    double YawErrorDegrees,
+    double SignedDistanceM);
 
 internal readonly record struct FormationTickResult(bool Continue, string Status) {
   internal static FormationTickResult Stop(string status) => new(false, status);
-  internal static FormationTickResult Sent(int count) =>
-      new(true, $"Formation active: setpoints sent to {count} follower(s).");
+  internal static FormationTickResult Sent(int positionCount, int attitudeCount) {
+    string detail = attitudeCount == 0
+        ? $"position setpoints sent to {positionCount} follower(s)"
+        : positionCount == 0
+            ? $"attitude/PID setpoints sent to {attitudeCount} Plane follower(s)"
+            : $"position setpoints sent to {positionCount} follower(s); attitude/PID " +
+              $"setpoints sent to {attitudeCount} Plane follower(s)";
+    return new FormationTickResult(true, "Formation active: " + detail + ".");
+  }
 }
 
 internal static class FormationGeometry {
@@ -169,12 +186,218 @@ internal static class FormationGeometry {
         Math.Sin(lat1) * Math.Cos(lat2) * Math.Cos(deltaLon));
     return (distance, bearing);
   }
+
+  internal static double Wrap180(double degrees) {
+    while (degrees > 180) {
+      degrees -= 360;
+    }
+    while (degrees < -180) {
+      degrees += 360;
+    }
+    return degrees;
+  }
+}
+
+/// <summary>
+/// Cross-platform implementation of MissionPlanner.Swarm.Formation's experimental ArduPlane
+/// branch. It retains the upstream 10 Hz filter/PID gains and approach geometry while emitting a
+/// protocol-valid attitude mask that ignores the unused zero body-rate fields.
+/// </summary>
+internal sealed class PlaneFormationController {
+  private const double DegreesToRadians = Math.PI / 180.0;
+  private const double RadiansToDegrees = 180.0 / Math.PI;
+  private const double GravityMps2 = 9.8;
+  private readonly Dictionary<FormationVehicleId, PlaneControllerState> _states = [];
+
+  internal bool TryCalculate(
+      FormationVehicleSource leader,
+      FormationVehicleSource follower,
+      FormationTarget target,
+      FormationOffset offset,
+      out PlaneFormationAttitude attitude,
+      out string error) {
+    attitude = default;
+    if (!FormationCommandRunner.HasPosition(follower.State) ||
+        !double.IsFinite(follower.State.cs.alt) ||
+        !double.IsFinite(follower.State.cs.yaw) ||
+        !double.IsFinite(follower.State.cs.groundspeed)) {
+      error = $"{follower.Label} position, attitude or groundspeed is unavailable.";
+      return false;
+    }
+
+    (double distance, double directBearingRadians) = FormationGeometry.DistanceAndBearing(
+        follower.State.cs.lat, follower.State.cs.lng, target.Latitude, target.Longitude);
+    if (!double.IsFinite(distance) || distance < 0) {
+      error = $"{follower.Label} distance to its target is invalid.";
+      return false;
+    }
+
+    double directBearingDegrees = directBearingRadians * RadiansToDegrees;
+    (double trailerLatitude, double trailerLongitude) = FormationGeometry.Project(
+        target.Latitude, target.Longitude,
+        (leader.State.cs.yaw + 180) * DegreesToRadians,
+        Math.Abs(distance) * 0.25);
+    (double leadLatitude, double leadLongitude) = FormationGeometry.Project(
+        target.Latitude, target.Longitude, leader.State.cs.yaw * DegreesToRadians,
+        10 + distance);
+
+    double targetBearingDegrees;
+    double signedDistance = distance;
+    if (distance < 100) {
+      targetBearingDegrees = BearingDegrees(
+          follower.State.cs.lat, follower.State.cs.lng, leadLatitude, leadLongitude);
+      if (Math.Abs(FormationGeometry.Wrap180(directBearingDegrees - targetBearingDegrees)) > 45) {
+        signedDistance = -signedDistance;
+      }
+    } else {
+      targetBearingDegrees = BearingDegrees(
+          follower.State.cs.lat, follower.State.cs.lng, trailerLatitude, trailerLongitude);
+    }
+    double yawError = FormationGeometry.Wrap180(
+        targetBearingDegrees - follower.State.cs.yaw);
+
+    PlaneControllerState state = GetState(follower.Id);
+    double altitudeError = target.Altitude - follower.State.cs.alt;
+    double pitch = state.Pitch.Update(altitudeError);
+
+    double navigationBearing = directBearingDegrees;
+    if (distance < 30) {
+      navigationBearing = BearingDegrees(
+          follower.State.cs.lat, follower.State.cs.lng, leadLatitude, leadLongitude);
+    } else if (distance > 100) {
+      navigationBearing = BearingDegrees(
+          follower.State.cs.lat, follower.State.cs.lng, trailerLatitude, trailerLongitude);
+    }
+    double bearingDelta = FormationGeometry.Wrap180(
+        navigationBearing - follower.State.cs.yaw);
+    double roll = BankFeedForward(
+        leader.State.cs, follower.State.cs, offset.X, distance, bearingDelta);
+    roll += Math.Clamp(bearingDelta, -20, 20);
+
+    if (distance > 40) {
+      state.Thrust.ResetIntegral();
+    }
+    double thrust = Math.Clamp(state.Thrust.Update(signedDistance), 0.1, 1);
+    if (!double.IsFinite(roll) || !double.IsFinite(pitch) || !double.IsFinite(yawError) ||
+        !double.IsFinite(thrust)) {
+      error = $"{follower.Label} attitude/PID output is not finite.";
+      return false;
+    }
+
+    Quaternion quaternion = Quaternion.from_euler312(
+        roll * DegreesToRadians, pitch * DegreesToRadians, yawError * DegreesToRadians);
+    float[] values = [(float)quaternion.q1, (float)quaternion.q2,
+      (float)quaternion.q3, (float)quaternion.q4];
+    if (values.Any(value => !float.IsFinite(value))) {
+      error = $"{follower.Label} attitude quaternion is not finite.";
+      return false;
+    }
+    attitude = new PlaneFormationAttitude(
+        values, (float)thrust, roll, pitch, yawError, signedDistance);
+    error = "";
+    return true;
+  }
+
+  private PlaneControllerState GetState(FormationVehicleId id) {
+    if (_states.TryGetValue(id, out PlaneControllerState? state)) {
+      return state;
+    }
+    state = new PlaneControllerState();
+    _states[id] = state;
+    return state;
+  }
+
+  private static double BearingDegrees(
+      double fromLatitude, double fromLongitude, double toLatitude, double toLongitude) =>
+      FormationGeometry.DistanceAndBearing(
+          fromLatitude, fromLongitude, toLatitude, toLongitude).Bearing * RadiansToDegrees;
+
+  private static double BankFeedForward(
+      CurrentState leader,
+      CurrentState follower,
+      double longitudinalOffset,
+      double distance,
+      double bearingDelta) {
+    if (Math.Abs(bearingDelta) >= 85) {
+      return 0;
+    }
+    double tangent = bearingDelta > 0 ? 90 : -90;
+    double insideAngle = Math.Abs(tangent - bearingDelta);
+    double centreAngle = 180 - insideAngle * 2;
+    double centreSine = Math.Sin(centreAngle * DegreesToRadians);
+    double geometryRadius = Math.Abs(centreSine) < 1e-9
+        ? double.PositiveInfinity
+        : Math.Abs(Math.Max(distance, 40) / centreSine *
+            Math.Sin(insideAngle * DegreesToRadians));
+    double leaderTurnRadius = CurrentState.fromDistDisplayUnit(leader.radius);
+    double followerTurnRadius = leaderTurnRadius - longitudinalOffset;
+    double blendedRadius = (geometryRadius + Math.Abs(followerTurnRadius)) / 2;
+    double bank = !double.IsFinite(blendedRadius) || blendedRadius < 1e-6
+        ? 0
+        : follower.groundspeed * follower.groundspeed / blendedRadius /
+          GravityMps2 * RadiansToDegrees;
+    return bearingDelta > 0 ? Math.Abs(bank) : -Math.Abs(bank);
+  }
+
+  private sealed class PlaneControllerState {
+    internal FormationPid Pitch { get; } = new(1, 0.03, 0.02, 10, 20, 0.1);
+    internal FormationPid Thrust { get; } = new(0.01, 0.001, 0, 0.5, 20, 0.1);
+  }
+}
+
+internal sealed class FormationPid {
+  private readonly double _kp;
+  private readonly double _ki;
+  private readonly double _kd;
+  private readonly double _integratorMaximum;
+  private readonly double _filterHz;
+  private readonly double _dt;
+  private bool _resetFilter = true;
+  private double _input;
+  private double _derivative;
+  private double _integrator;
+
+  internal FormationPid(
+      double kp, double ki, double kd, double integratorMaximum, double filterHz, double dt) {
+    _kp = kp;
+    _ki = ki;
+    _kd = kd;
+    _integratorMaximum = Math.Abs(integratorMaximum);
+    _filterHz = Math.Max(filterHz, 0.01);
+    _dt = dt;
+  }
+
+  internal double Update(double input) {
+    if (!double.IsFinite(input)) {
+      return double.NaN;
+    }
+    if (_resetFilter) {
+      _resetFilter = false;
+      _input = input;
+      _derivative = 0;
+    } else {
+      double rc = 1 / (Math.PI * 2 * _filterHz);
+      double change = _dt / (_dt + rc) * (input - _input);
+      _input += change;
+      _derivative = _dt > 0 ? change / _dt : 0;
+    }
+    if (Math.Abs(_ki) > double.Epsilon && _dt > 0) {
+      _integrator = Math.Clamp(_integrator + _input * _ki * _dt,
+          -_integratorMaximum, _integratorMaximum);
+    }
+    return _input * _kp + _integrator + _kd * _derivative;
+  }
+
+  internal void ResetIntegral() => _integrator = 0;
 }
 
 internal interface IFormationCommandSink {
   void RequestLeaderStreams(FormationVehicleSource leader);
+  void RequestPlaneStreams(FormationVehicleSource plane);
   void SendSetpoint(FormationVehicleSource follower, FormationTarget target,
       bool alignYaw, bool aimGimbal);
+  void SendPlaneAttitude(FormationVehicleSource follower, FormationTarget target,
+      PlaneFormationAttitude attitude);
   bool Arm(FormationVehicleSource vehicle, bool arm);
   void SetMode(FormationVehicleSource vehicle, string mode);
   bool Takeoff(FormationVehicleSource vehicle, double altitudeM);
@@ -184,12 +407,20 @@ internal sealed class MavlinkFormationCommandSink : IFormationCommandSink {
   private readonly Dictionary<FormationVehicleId, DateTime> _lastYawCommand = [];
 
   public void RequestLeaderStreams(FormationVehicleSource leader) {
-    leader.Id.Link.requestDatastream(MAVLink.MAV_DATA_STREAM.POSITION, 10,
-        leader.Id.SystemId, leader.Id.ComponentId);
-    leader.Id.Link.requestDatastream(MAVLink.MAV_DATA_STREAM.EXTRA1, 10,
-        leader.Id.SystemId, leader.Id.ComponentId);
-    leader.State.cs.rateposition = 10;
-    leader.State.cs.rateattitude = 10;
+    RequestPositionAndAttitudeStreams(leader);
+  }
+
+  public void RequestPlaneStreams(FormationVehicleSource plane) {
+    RequestPositionAndAttitudeStreams(plane);
+  }
+
+  private static void RequestPositionAndAttitudeStreams(FormationVehicleSource vehicle) {
+    vehicle.Id.Link.requestDatastream(MAVLink.MAV_DATA_STREAM.POSITION, 10,
+        vehicle.Id.SystemId, vehicle.Id.ComponentId);
+    vehicle.Id.Link.requestDatastream(MAVLink.MAV_DATA_STREAM.EXTRA1, 10,
+        vehicle.Id.SystemId, vehicle.Id.ComponentId);
+    vehicle.State.cs.rateposition = 10;
+    vehicle.State.cs.rateattitude = 10;
   }
 
   public void SendSetpoint(FormationVehicleSource follower, FormationTarget target,
@@ -223,6 +454,30 @@ internal sealed class MavlinkFormationCommandSink : IFormationCommandSink {
     }
   }
 
+  public void SendPlaneAttitude(FormationVehicleSource follower, FormationTarget target,
+      PlaneFormationAttitude attitude) {
+    follower.State.GuidedMode.x = (int)(target.Latitude * 1e7);
+    follower.State.GuidedMode.y = (int)(target.Longitude * 1e7);
+    follower.State.GuidedMode.z = (float)target.Altitude;
+    follower.Id.Link.sendPacket(CreatePlaneAttitudePacket(follower, attitude),
+        follower.Id.SystemId, follower.Id.ComponentId);
+  }
+
+  internal static MAVLink.mavlink_set_attitude_target_t CreatePlaneAttitudePacket(
+      FormationVehicleSource follower, PlaneFormationAttitude attitude) {
+    const byte ignoreBodyRates =
+        (byte)(MAVLink.ATTITUDE_TARGET_TYPEMASK.BODY_ROLL_RATE_IGNORE |
+               MAVLink.ATTITUDE_TARGET_TYPEMASK.BODY_PITCH_RATE_IGNORE |
+               MAVLink.ATTITUDE_TARGET_TYPEMASK.BODY_YAW_RATE_IGNORE);
+    return new MAVLink.mavlink_set_attitude_target_t {
+      target_system = follower.Id.SystemId,
+      target_component = follower.Id.ComponentId,
+      type_mask = ignoreBodyRates,
+      q = attitude.Quaternion,
+      thrust = attitude.Thrust,
+    };
+  }
+
   public bool Arm(FormationVehicleSource vehicle, bool arm) =>
       vehicle.Id.Link.doARM(vehicle.Id.SystemId, vehicle.Id.ComponentId, arm);
 
@@ -249,6 +504,7 @@ internal sealed class FormationCommandRunner {
   internal static readonly TimeSpan MaximumTelemetryAge = TimeSpan.FromSeconds(5);
   private readonly Func<IReadOnlyList<FormationVehicleSource>> _snapshot;
   private readonly IFormationCommandSink _sink;
+  private readonly PlaneFormationController _planeController = new();
 
   internal FormationCommandRunner(
       Func<IReadOnlyList<FormationVehicleSource>> snapshot,
@@ -282,7 +538,8 @@ internal sealed class FormationCommandRunner {
       return FormationTickResult.Stop("Formation stopped: no followers are selected.");
     }
 
-    var commands = new List<(FormationVehicleSource Follower, FormationTarget Target)>();
+    var commands = new List<(FormationVehicleSource Follower, FormationTarget Target,
+        PlaneFormationAttitude? PlaneAttitude)>();
     foreach ((FormationVehicleSource follower, FormationOffset offset) in followers) {
       if (!IsSafeOffset(offset)) {
         return FormationTickResult.Stop(
@@ -296,12 +553,35 @@ internal sealed class FormationCommandRunner {
         return FormationTickResult.Stop(
             $"Formation stopped: follower {follower.Label} target is not finite.");
       }
-      commands.Add((follower, target));
+      PlaneFormationAttitude? planeAttitude = null;
+      if (follower.State.cs.firmware == Firmwares.ArduPlane) {
+        if (!plan.EnablePlaneAttitude) {
+          return FormationTickResult.Stop(
+              $"Formation stopped: follower {follower.Label} is ArduPlane and the " +
+              "experimental attitude/PID controller is not enabled.");
+        }
+        if (!_planeController.TryCalculate(
+                leader, follower, target, offset, out PlaneFormationAttitude calculated,
+                out error)) {
+          return FormationTickResult.Stop("Formation stopped: " + error);
+        }
+        planeAttitude = calculated;
+      }
+      commands.Add((follower, target, planeAttitude));
     }
-    foreach ((FormationVehicleSource follower, FormationTarget target) in commands) {
-      _sink.SendSetpoint(follower, target, plan.AlignYaw, plan.AimGimbals);
+    int positionCount = 0;
+    int attitudeCount = 0;
+    foreach ((FormationVehicleSource follower, FormationTarget target,
+             PlaneFormationAttitude? planeAttitude) in commands) {
+      if (planeAttitude is { } attitude) {
+        _sink.SendPlaneAttitude(follower, target, attitude);
+        attitudeCount++;
+      } else {
+        _sink.SendSetpoint(follower, target, plan.AlignYaw, plan.AimGimbals);
+        positionCount++;
+      }
     }
-    return FormationTickResult.Sent(followers.Count);
+    return FormationTickResult.Sent(positionCount, attitudeCount);
   }
 
   internal async Task<string> RunAsync(
@@ -314,6 +594,15 @@ internal sealed class FormationCommandRunner {
       return "Formation could not start: leader " + error;
     }
     _sink.RequestLeaderStreams(leader);
+    if (plan.EnablePlaneAttitude) {
+      foreach (FormationFollower planned in plan.Followers) {
+        FormationVehicleSource? plane = initial.FirstOrDefault(source =>
+            source.Id == planned.Id && source.State.cs.firmware == Firmwares.ArduPlane);
+        if (plane != null) {
+          _sink.RequestPlaneStreams(plane);
+        }
+      }
+    }
 
     using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(100));
     while (!cancellationToken.IsCancellationRequested) {
@@ -348,11 +637,8 @@ internal sealed class FormationCommandRunner {
       return false;
     }
     if (!source.SupportsFormation) {
-      error = source.State.cs.firmware == Firmwares.ArduPlane
-          ? $"{source.Label} is ArduPlane; its upstream attitude/PID controller is not " +
-              "enabled in this position-target formation port."
-          : $"{source.Label} firmware {source.State.cs.firmware} is unsupported; " +
-              "only ArduCopter and ArduRover use this controller.";
+      error = $"{source.Label} firmware {source.State.cs.firmware} is unsupported; " +
+          "only ArduPlane, ArduCopter and ArduRover are supported.";
       return false;
     }
     error = "";
