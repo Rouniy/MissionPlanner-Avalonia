@@ -1,15 +1,23 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using Avalonia.Threading;
 using MissionPlanner.Utilities;
 using MissionPlannerAvalonia.Controls;
+using MissionPlannerAvalonia.Services;
 using MissionPlannerAvalonia.ViewModels;
 
 namespace MissionPlannerAvalonia.Views;
@@ -20,10 +28,17 @@ public partial class FlightDataView : UserControl {
     InitializeComponent();
     _flightDataLayout = this.FindControl<Avalonia.Controls.Grid>("FlightDataLayoutGrid");
     RestoreMainSplitterDistance();
-    var hud = this.FindControl<HudControl>("Hud");
-    if (hud != null) {
-      hud.IndicatorClicked += OnHudIndicatorClicked;
+    _hud = this.FindControl<HudControl>("Hud");
+    if (_hud != null) {
+      _hud.IndicatorClicked += OnHudIndicatorClicked;
     }
+    _recordHudMenuItem = this.FindControl<MenuItem>("RecordHudMenuItem");
+    _stopHudRecordingMenuItem = this.FindControl<MenuItem>("StopHudRecordingMenuItem");
+    _hudCaptureTimer = new DispatcherTimer {
+      Interval = TimeSpan.FromMilliseconds(1000.0 / HudFrameRecorder.DefaultFramesPerSecond),
+    };
+    _hudCaptureTimer.Tick += OnHudCaptureTick;
+    UpdateHudRecordingMenu(recording: false);
     _fdMap = this.FindControl<MapView>("FdMap");
     _tuningPlot = this.FindControl<LivePlot>("TuningPlot");
     if (_fdMap != null) {
@@ -57,6 +72,7 @@ public partial class FlightDataView : UserControl {
     DetachedFromVisualTree += (_, _) => {
       _displayViewSubscribed = false;
       Services.DisplayViewService.Changed -= OnDisplayViewChanged;
+      _ = StopHudRecordingAsync(showResult: false);
     };
     ApplyGaugeSettings();
   }
@@ -174,7 +190,153 @@ public partial class FlightDataView : UserControl {
   private readonly LivePlot? _tuningPlot;
   private readonly TabControl? _fdTabs;
   private readonly Avalonia.Controls.Grid? _flightDataLayout;
+  private readonly HudControl? _hud;
+  private readonly MenuItem? _recordHudMenuItem;
+  private readonly MenuItem? _stopHudRecordingMenuItem;
+  private readonly DispatcherTimer _hudCaptureTimer;
+  private HudFrameRecorder? _hudRecorder;
   private FlightDataViewModel? _mapVm;
+
+  private async void OnStartHudRecording(object? sender, RoutedEventArgs e) {
+    if (_hud == null) {
+      await Services.Dialogs.Alert("HUD Recording", "The HUD is not available.");
+      return;
+    }
+
+    await StopHudRecordingAsync(showResult: false);
+    try {
+      double scaling = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1;
+      PixelSize size = HudPixelSize(_hud, scaling);
+      string output = HudRecordingPath.Create(Settings.Instance.LogDir, DateTime.Now);
+      _hudRecorder = new HudFrameRecorder(
+          output, size.Width, size.Height, HudFrameRecorder.DefaultFramesPerSecond);
+      UpdateHudRecordingMenu(recording: true);
+      CaptureHudFrame();
+      _hudCaptureTimer.Start();
+      await Services.Dialogs.Alert(
+          "HUD Recording",
+          "HUD recording started. The AVI file is being saved in the log folder:\n\n" + output);
+    } catch (Exception ex) {
+      await StopHudRecordingAsync(showResult: false);
+      await Services.Dialogs.Alert("HUD Recording", "Could not start recording: " + ex.Message);
+    }
+  }
+
+  private async void OnStopHudRecording(object? sender, RoutedEventArgs e) {
+    await StopHudRecordingAsync(showResult: true);
+  }
+
+  private void OnHudCaptureTick(object? sender, EventArgs e) {
+    HudFrameRecorder? recorder = _hudRecorder;
+    if (recorder == null) {
+      _hudCaptureTimer.Stop();
+      return;
+    }
+    if (!recorder.IsActive) {
+      _ = StopHudRecordingAsync(showResult: true);
+      return;
+    }
+    if (!recorder.CanAcceptFrame) {
+      return;
+    }
+
+    try {
+      CaptureHudFrame();
+    } catch (Exception ex) {
+      _ = StopHudRecordingAfterCaptureErrorAsync(ex);
+    }
+  }
+
+  private void CaptureHudFrame() {
+    HudFrameRecorder? recorder = _hudRecorder;
+    if (recorder == null || _hud == null) {
+      return;
+    }
+
+    double scaling = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1;
+    PixelSize size = HudPixelSize(_hud, scaling);
+    var dpi = new Vector(96 * scaling, 96 * scaling);
+    using var target = new RenderTargetBitmap(size, dpi);
+    target.Render(_hud);
+
+    if (target.Format != PixelFormats.Bgra8888
+        && target.Format != PixelFormats.Rgba8888) {
+      using var encoded = new MemoryStream();
+      target.Save(encoded);
+      int imageLength = checked((int)encoded.Length);
+      byte[] image = ArrayPool<byte>.Shared.Rent(imageLength);
+      encoded.Position = 0;
+      encoded.ReadExactly(image.AsSpan(0, imageLength));
+      recorder.SubmitPooledEncodedFrame(image, imageLength, size.Width, size.Height);
+      return;
+    }
+    HudPixelLayout layout = target.Format == PixelFormats.Bgra8888
+        ? HudPixelLayout.Bgra8888
+        : HudPixelLayout.Rgba8888;
+
+    int stride = checked(size.Width * 4);
+    int byteCount = checked(stride * size.Height);
+    byte[] pixels = ArrayPool<byte>.Shared.Rent(byteCount);
+    try {
+      GCHandle pinned = GCHandle.Alloc(pixels, GCHandleType.Pinned);
+      try {
+        target.CopyPixels(new PixelRect(size), pinned.AddrOfPinnedObject(), byteCount, stride);
+      } finally {
+        pinned.Free();
+      }
+    } catch {
+      ArrayPool<byte>.Shared.Return(pixels);
+      throw;
+    }
+
+    // SubmitPooledFrame owns and returns the rented array, including when its queue is full.
+    recorder.SubmitPooledFrame(pixels, size.Width, size.Height, stride, layout);
+  }
+
+  private static PixelSize HudPixelSize(HudControl hud, double scaling = 1) {
+    if (!double.IsFinite(scaling) || scaling <= 0) {
+      scaling = 1;
+    }
+    int width = Math.Clamp((int)Math.Round(hud.Bounds.Width * scaling), 16, 8192);
+    int height = Math.Clamp((int)Math.Round(hud.Bounds.Height * scaling), 16, 8192);
+    return new PixelSize(width, height);
+  }
+
+  private async Task StopHudRecordingAfterCaptureErrorAsync(Exception captureError) {
+    HudRecordingResult? result = await StopHudRecordingAsync(showResult: false);
+    string detail = result?.Error?.Message ?? captureError.Message;
+    await Services.Dialogs.Alert("HUD Recording", "Recording stopped: " + detail);
+  }
+
+  private async Task<HudRecordingResult?> StopHudRecordingAsync(bool showResult) {
+    _hudCaptureTimer.Stop();
+    HudFrameRecorder? recorder = _hudRecorder;
+    _hudRecorder = null;
+    UpdateHudRecordingMenu(recording: false);
+    if (recorder == null) {
+      return null;
+    }
+
+    HudRecordingResult result = await recorder.StopAsync();
+    if (showResult) {
+      string message = result.Error == null
+          ? $"HUD recording saved ({result.WrittenFrames} frames):\n\n{result.Path}"
+          : $"HUD recording stopped with an error: {result.Error.Message}\n\n"
+              + $"The partial AVI is at:\n{result.Path}";
+      await Services.Dialogs.Alert("HUD Recording", message);
+    }
+    return result;
+  }
+
+  private void UpdateHudRecordingMenu(bool recording) {
+    if (_recordHudMenuItem != null) {
+      _recordHudMenuItem.Header = recording ? "Recording HUD…" : "Record HUD to AVI";
+      _recordHudMenuItem.IsEnabled = !recording;
+    }
+    if (_stopHudRecordingMenuItem != null) {
+      _stopHudRecordingMenuItem.IsEnabled = recording;
+    }
+  }
 
   private void OnMainSplitterDragCompleted(object? sender, VectorEventArgs e) {
     if (_flightDataLayout?.ColumnDefinitions.Count >= 3) {

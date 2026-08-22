@@ -86,6 +86,11 @@
                 <MenuItem Header="Stop Record" Command="{Binding StopVideoCommand}" />
                 <MenuItem Header="Snapshot…" Command="{Binding SnapshotVideoCommand}" />
                 <Separator />
+                <MenuItem x:Name="RecordHudMenuItem" Header="Record HUD to AVI"
+                          Click="OnStartHudRecording" />
+                <MenuItem x:Name="StopHudRecordingMenuItem" Header="Stop HUD Recording"
+                          Click="OnStopHudRecording" IsEnabled="False" />
+                <Separator />
                 <MenuItem Header="MAVLink Camera Stream…"
                           Command="{Binding SelectMavlinkVideoStreamCommand}" />
                 <MenuItem Header="Set MJPEG source" Command="{Binding SetVideoSourceCommand}"
