@@ -59,12 +59,8 @@ public partial class App : Application {
         AppState.JoystickControl.Dispose();
         AppState.Traffic.Dispose();
         Services.SitlLauncher.StopAll();
-        try {
-          if (AppState.comPort.BaseStream?.IsOpen == true) {
-            AppState.comPort.Close();
-          }
-        } catch {
-        }
+        // ConnectionViewModel has already detached transports and started best-effort cleanup.
+        // Never enter an OS driver Close synchronously while the desktop is exiting.
         try {
           MissionPlanner.Utilities.Settings.Instance.Save();
         } catch {

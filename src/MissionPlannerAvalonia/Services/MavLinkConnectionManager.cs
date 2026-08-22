@@ -227,22 +227,20 @@ internal static class ConnectionListService {
 
     MAVLinkInterface? link = null;
     ICommsSerial? stream = null;
+    var transportRelease = new MavLinkTransportRelease();
     try {
       stream = CreateStream(endpoint);
       link = new MAVLinkInterface { BaseStream = stream };
       ViewModels.ConnectionViewModel.ResetAllVehicleParameters(link);
       using CancellationTokenRegistration cancellation = cancellationToken.Register(() => {
-        try {
-          stream.Close();
-        } catch {
-        }
+        _ = transportRelease.Begin(link);
       });
       // Closing the transport is what interrupts upstream's synchronous heartbeat wait. Do not
       // rely on Task.Run cancellation alone: it cannot stop work that has already started.
       await Task.Run(() => {
         using IDisposable progressScope = MavLinkProgressContext.Use(cancellationToken);
         link.Open(getparams: false, skipconnectedcheck: true, showui: true);
-      })
+      }).WaitAsync(cancellationToken)
           .ConfigureAwait(false);
       cancellationToken.ThrowIfCancellationRequested();
       if (link.BaseStream?.IsOpen != true) {
@@ -360,12 +358,15 @@ internal static class ConnectionListService {
 }
 
 internal sealed class MavLinkConnection {
+  private int _logicallyClosed;
+
   internal MavLinkConnection(
       MAVLinkInterface link, string endpoint, bool primary, ConnectionListEndpoint? source) {
     Link = link;
     Endpoint = endpoint;
     IsPrimary = primary;
     Source = source;
+    _logicallyClosed = link.BaseStream?.IsOpen == true ? 0 : 1;
   }
 
   internal MAVLinkInterface Link { get; }
@@ -373,7 +374,12 @@ internal sealed class MavLinkConnection {
   internal bool IsPrimary { get; }
   internal ConnectionListEndpoint? Source { get; }
   internal MavLinkSecondaryRuntime? Runtime { get; set; }
-  internal bool IsOpen => Link.BaseStream?.IsOpen == true;
+  internal bool IsOpen => Volatile.Read(ref _logicallyClosed) == 0
+      && Link.BaseStream?.IsOpen == true;
+
+  internal void MarkOpened() => Volatile.Write(ref _logicallyClosed, 0);
+
+  internal void MarkClosed() => Volatile.Write(ref _logicallyClosed, 1);
 }
 
 /// <summary>
@@ -492,6 +498,7 @@ internal sealed class MavLinkConnectionManager : IDisposable {
       return false;
     }
 
+    connection.MarkClosed();
     MavLinkConnection? previous = null;
     MavLinkConnection? replacement = null;
     lock (_sync) {
@@ -513,13 +520,16 @@ internal sealed class MavLinkConnectionManager : IDisposable {
     if (connection.Runtime != null) {
       await connection.Runtime.StopAsync(close).ConfigureAwait(false);
     } else if (close) {
-      SafeClose(connection.Link);
+      // Custom/test registrations need the same guarantee as normal secondary runtimes: changing
+      // the active modem must not wait on a dead driver.
+      _ = Task.Run(() => SafeClose(connection.Link));
     }
     Changed?.Invoke();
     return true;
   }
 
   internal void NotifyClosed(MavLinkConnection connection) {
+    connection.MarkClosed();
     if (connection.IsPrimary) {
       MavLinkConnection? primaryReplacement = null;
       lock (_sync) {
@@ -548,8 +558,8 @@ internal sealed class MavLinkConnectionManager : IDisposable {
         activeChanged = true;
       }
     }
-    // The runtime calls this method from its own finally block, so do not ask it to await itself.
-    SafeClose(connection.Link);
+    // The runtime calls this method from its own finally block after starting non-blocking
+    // cleanup of its captured transport, so do not close or await that same reader here.
     if (activeChanged && replacement != null) {
       ActiveChanged?.Invoke(connection, replacement);
     }
@@ -572,10 +582,10 @@ internal sealed class MavLinkConnectionManager : IDisposable {
         if (connection.Runtime != null) {
           connection.Runtime.StopAsync(close: true).GetAwaiter().GetResult();
         } else {
-          SafeClose(connection.Link);
+          _ = Task.Run(() => SafeClose(connection.Link));
         }
       } catch {
-        SafeClose(connection.Link);
+        _ = Task.Run(() => SafeClose(connection.Link));
       }
     }
   }
@@ -602,6 +612,7 @@ internal sealed class MavLinkSecondaryRuntime {
   private readonly Action<MavLinkConnection> _closed;
   private readonly TimeSpan _silenceTimeout;
   private readonly CancellationTokenSource _shutdown = new();
+  private readonly MavLinkTransportRelease _transportRelease = new();
   private Task? _runner;
   private DateTime _connectedAtUtc = DateTime.UtcNow;
   private DateTime _lastHeartbeatUtc = DateTime.MinValue;
@@ -634,25 +645,35 @@ internal sealed class MavLinkSecondaryRuntime {
       _shutdown.Cancel();
     } catch (ObjectDisposedException) {
     }
-    if (close) {
-      try {
-        _connection.Link.Close();
-      } catch {
-      }
-    }
+    ConnectionListService.CloseTelemetryLogs(_connection.Link);
+    Task<bool>? release = close ? _transportRelease.Begin(_connection.Link) : null;
     if (_runner != null && Task.CurrentId != _runner.Id) {
       try {
-        await _runner.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        await _runner.WaitAsync(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false);
       } catch (OperationCanceledException) {
       } catch (TimeoutException) {
       }
     }
+    if (release != null) {
+      _ = DisposeWhenReleasedAsync(release, waitForRunner: true);
+    }
     _shutdown.Dispose();
-    if (close) {
+  }
+
+  private async Task DisposeWhenReleasedAsync(Task<bool> release, bool waitForRunner) {
+    try {
+      bool released = await release.ConfigureAwait(false);
+      if (waitForRunner && _runner != null) {
+        await _runner.ConfigureAwait(false);
+      }
+      if (!released) {
+        return;
+      }
       try {
         _connection.Link.Dispose();
       } catch {
       }
+    } catch {
     }
   }
 
@@ -708,10 +729,9 @@ internal sealed class MavLinkSecondaryRuntime {
     } finally {
       if (unexpectedlyClosed && !cancellationToken.IsCancellationRequested) {
         ViewModels.ConnectionViewModel.ResetAllVehicleParameters(_connection.Link);
-        try {
-          _connection.Link.Close();
-        } catch {
-        }
+        ConnectionListService.CloseTelemetryLogs(_connection.Link);
+        Task<bool> release = _transportRelease.Begin(_connection.Link);
+        _ = DisposeWhenReleasedAsync(release, waitForRunner: false);
         _closed(_connection);
       }
     }

@@ -25,7 +25,7 @@ public static class AppState {
 
   public static void RaiseConnectionChanged() => ConnectionChanged?.Invoke();
 
-  public static bool IsConnected => comPort.BaseStream?.IsOpen == true;
+  public static bool IsConnected => Connections.Active.IsOpen;
 
   // Written from comms threads via the CommsBase.Settings callback.
   public static ConcurrentDictionary<string, string> CommsSettings { get; } = new();

@@ -209,7 +209,7 @@ public partial class SimulationViewModel : ViewModelBase {
   private bool CanStartStop() => !IsBusy && SitlSupported;
 
   private async Task<bool> ConnectAsync() {
-    if (_comPort.BaseStream?.IsOpen == true) {
+    if (AppState.Connections.Primary.IsOpen) {
       OnLog("Another vehicle connection is already active; SITL was not made the primary link.");
       return false;
     }
@@ -225,7 +225,7 @@ public partial class SimulationViewModel : ViewModelBase {
   }
 
   private async Task DisconnectAsync() {
-    if (_comPort.BaseStream?.IsOpen == true) {
+    if (AppState.Connections.Primary.IsOpen) {
       await _connection.DisconnectAsync("SITL disconnected.");
     }
   }
