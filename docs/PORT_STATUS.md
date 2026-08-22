@@ -666,20 +666,28 @@ assemblies. The Linux publish target now filters all three. File-type inspection
 remaining Linux `.dll` is managed and every `.so` is ELF. The filter is Linux-conditional and does
 not remove required Windows-native files from `win-x64` builds.
 
-## Not implemented or currently non-working
+## Remaining cross-platform parity and release work
+
+This list contains six concrete open areas plus one ongoing handler-level audit of the hidden
+developer form. Completed workflows are documented above rather than being left in the gap table.
+NativeAOT is tracked separately as an optional runtime experiment and is not counted as a
+Mission Planner functional-parity gap.
 
 | Area | Affected targets | Current state and direction |
 | --- | --- | --- |
 | Legacy Mission Planner plugin compatibility | All | Portable DLL discovery, dependency loading, `Init`/`Loaded`/`Loop`/`Exit`, enable/disable UI, current MAVLink/settings access, Flight Data actions and HUD overlays are native and operational. Existing DLLs compiled against Mission Planner's WinForms executable are not binary-compatible; their UI must be adapted to Avalonia and rebuilt. Loose `.cs` runtime compilation is intentionally not treated as DLL compatibility. |
 | Optional native GDAL/OGR map drivers | All | GeoPackage feature layers, SHP and DXF are available through managed cross-platform readers. The generic native OGR/GDAL driver path for additional formats remains absent. |
-| Swarm / formation flight | All | The official Plane/Copter/Rover Formation (including the opt-in experimental ArduPlane attitude/PID branch), Plane/Copter/Rover FollowPath, Copter WaypointLeader, ground/Copter FollowLeader and JSON Sequence layout/step workflows are ported with native editors, exact multi-link identity and fail-closed telemetry checks. |
 | Signed beta application updates | All | Stable signed updates work. The Beta Updates control is disabled until this project publishes and signs a separate beta manifest/channel. |
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
 | BLE transport | macOS; Linux/Windows hardware acceptance | Linux uses the port-native managed BlueZ/D-Bus Nordic UART transport and no longer needs a SimpleBLE `.so`; adapter discovery is verified, while end-to-end traffic still needs a Nordic UART modem. Upstream's Windows SimpleBLE path remains hardware-unverified. macOS still needs a CoreBluetooth or maintained native integration. |
-| NativeAOT runtime | All | Linux links to a 66 MB ELF but fails in log4net `Assembly.GetCallingAssembly()`; MAVLink/XML/fastJSON also require dynamic code. Experimental only. |
-| Flight Data map extras | All | Mission/Home/current-WP, fence, rally, Guided target, POIs, camera feedback with latest footprints and opt-in overlap count, live terrain-projected gimbal target, ADS-B/AIS/OA_DB traffic, airports, RF propagation/elevation/distance overlays and mission-distance progress are ported. The current upstream `ProximityControl` launch in `FlightData` is commented out; the port already provides a live Proximity radar tab, so it is not counted as a missing map workflow. |
-| Developer utility parity | All | The safe portable subset of `temp.cs`, including the Translation / RESX Editor and live 3D terrain/imagery view, is native. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration and PX4Flow live image assembly are also port-native. |
+| Developer utility handler audit | All | The safe portable subset of `temp.cs`, including the Translation / RESX Editor and live 3D terrain/imagery view, is native. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration, PX4Flow live image assembly and local map-tile import are also port-native. Remaining upstream handlers are reviewed individually: already exposed, obsolete and unsafe handlers are classified instead of being presented as missing user functionality. |
+
+## Optional runtime experiment
+
+| Area | Current state |
+| --- | --- |
+| NativeAOT runtime | Linux links to a 66 MB ELF but fails in log4net `Assembly.GetCallingAssembly()`; MAVLink/XML/fastJSON also require dynamic code. Supported releases use self-contained CoreCLR, so NativeAOT is not counted as an upstream feature gap. |
 
 ## Intentionally disabled or replaced
 
