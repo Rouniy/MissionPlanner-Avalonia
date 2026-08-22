@@ -23,16 +23,47 @@ public partial class MovingBaseViewModel : ViewModelBase, IDisposable {
   internal const string UdpHost = "UDP Host";
   internal const string UdpClient = "UDP Client";
 
-  private readonly MAVLinkInterface _comPort = AppState.comPort;
   private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
+  private readonly Func<bool, NmeaVehicleTarget?> _activeTarget;
+  private readonly Action<NmeaVehicleTarget, PointLatLngAlt> _setBase;
+  private readonly Action<NmeaVehicleTarget, PointLatLngAlt> _updateRally;
+  private readonly Func<NmeaVehicleTarget, Task<bool>> _confirmRally;
+  private readonly bool _subscribedToAppState;
   private CancellationTokenSource? _cts;
   private ICommsSerial? _input;
   private TcpListener? _listener;
   private Task? _readerTask;
   private Task? _acceptTask;
+  private NmeaVehicleTarget? _boundTarget;
+  private volatile bool _targetInvalidated;
+  private int _stopScheduled;
   private bool _disposed;
 
-  public MovingBaseViewModel() {
+  public MovingBaseViewModel()
+      : this(
+          NmeaVehicleSession.CaptureActive,
+          static (target, location) => target.Link.MAV.cs.Base = location,
+          UpdateVehicleRallyPoint,
+          static target => Dialogs.ConfirmDangerous(
+              "Enable Moving Base Rally Updates",
+              $"Moving Base will overwrite Rally Point 0 on {NmeaVehicleSession.Describe(target)} "
+              + "every five seconds using the incoming GPS position. Verify the selected modem, "
+              + "rally altitude and recovery plan before continuing.",
+              "Enable Rally Updates"),
+          subscribeToAppState: true) {
+  }
+
+  internal MovingBaseViewModel(
+      Func<bool, NmeaVehicleTarget?> activeTarget,
+      Action<NmeaVehicleTarget, PointLatLngAlt> setBase,
+      Action<NmeaVehicleTarget, PointLatLngAlt> updateRally,
+      Func<NmeaVehicleTarget, Task<bool>> confirmRally,
+      bool subscribeToAppState = false) {
+    _activeTarget = activeTarget;
+    _setBase = setBase;
+    _updateRally = updateRally;
+    _confirmRally = confirmRally;
+    _subscribedToAppState = subscribeToAppState;
     RefreshInputs();
     var settings = Settings.Instance;
     SelectedBaud = LoadInt(settings, "MovingBaseBaud", 4800);
@@ -44,6 +75,10 @@ public partial class MovingBaseViewModel : ViewModelBase, IDisposable {
     string? savedInput = settings["MovingBaseInput"];
     if (!string.IsNullOrWhiteSpace(savedInput) && Inputs.Contains(savedInput)) {
       SelectedInput = savedInput;
+    }
+    RefreshTargetDescription();
+    if (_subscribedToAppState) {
+      AppState.ConnectionChanged += OnConnectionChanged;
     }
   }
 
@@ -85,7 +120,15 @@ public partial class MovingBaseViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private string _location = "No moving-base fix received.";
 
+  [ObservableProperty]
+  private string _targetDescription = "No vehicle selected.";
+
+  [ObservableProperty]
+  [NotifyPropertyChangedFor(nameof(CanEditSettings))]
+  private bool _busy;
+
   public bool IsRunning => _cts != null;
+  public bool CanEditSettings => !Busy && !IsRunning;
   public bool IsSerialInput => !IsNetworkInput(SelectedInput);
   public bool IsNetworkClient => SelectedInput is TcpClient or UdpClient;
   public string NetworkPortLabel => SelectedInput is TcpHost or UdpHost ? "Local port" : "Remote port";
@@ -115,18 +158,23 @@ public partial class MovingBaseViewModel : ViewModelBase, IDisposable {
   [RelayCommand]
   private async Task ToggleConnectAsync() {
     await _lifecycleGate.WaitAsync();
+    Busy = true;
     try {
       if (_cts != null) {
-        await StopCoreAsync();
+        await StopCoreAsync("Stopped.");
       } else {
         await StartCoreAsync();
       }
     } finally {
+      Busy = false;
       _lifecycleGate.Release();
     }
   }
 
   private async Task StartCoreAsync() {
+    if (_disposed) {
+      return;
+    }
     if (string.IsNullOrWhiteSpace(SelectedInput)) {
       Status = "Select a serial or network input first.";
       return;
@@ -135,27 +183,70 @@ public partial class MovingBaseViewModel : ViewModelBase, IDisposable {
       Status = "Network port must be between 1 and 65535.";
       return;
     }
+    if (!Rates.Contains(UpdateRateHz)) {
+      Status = "Select a supported update rate.";
+      return;
+    }
+    if (IsSerialInput && !Bauds.Contains(SelectedBaud)) {
+      Status = "Select a supported serial baud rate.";
+      return;
+    }
+
+    NmeaVehicleTarget? target = _activeTarget(UpdateRallyPoint);
+    if (target == null) {
+      Status = UpdateRallyPoint
+          ? "Connect and select a vehicle before enabling Rally Point 0 updates."
+          : "Select a MAVLink vehicle before starting Moving Base.";
+      RefreshTargetDescription();
+      return;
+    }
+    if (UpdateRallyPoint && !await _confirmRally(target)) {
+      Status = "Moving Base rally updates were cancelled.";
+      return;
+    }
+    if (!IsTargetCurrent(target, requireOpen: UpdateRallyPoint)) {
+      Status = TargetChangedMessage;
+      RefreshTargetDescription();
+      return;
+    }
 
     try {
       var opened = await Task.Run(() => OpenInput(
           SelectedInput, SelectedBaud, NetworkHost.Trim(), NetworkPort));
+      if (!IsTargetCurrent(target, requireOpen: UpdateRallyPoint)) {
+        if (opened.Input is IDisposable openedDisposable) {
+          openedDisposable.Dispose();
+        } else {
+          opened.Input.Close();
+        }
+        opened.Listener?.Stop();
+        throw new InvalidOperationException(TargetChangedMessage);
+      }
       _input = opened.Input;
       _listener = opened.Listener;
       var cts = new CancellationTokenSource();
       _cts = cts;
+      _boundTarget = target;
+      _targetInvalidated = false;
       if (_listener != null && _input is TcpSerial tcp) {
         _acceptTask = AcceptClientsAsync(_listener, tcp, cts.Token);
       }
-      _readerTask = Task.Run(() => ReadLoop(cts.Token), cts.Token);
+      _readerTask = Task.Run(() => ReadLoop(target, cts.Token), cts.Token);
       PersistSettings();
+      TargetDescription = "Bound to " + NmeaVehicleSession.Describe(target) + ".";
       ConnectButtonText = "Stop";
       Status = SelectedInput == TcpHost
           ? $"Listening for NMEA TCP clients on port {NetworkPort}."
           : $"Reading moving-base NMEA from {SelectedInput}.";
       OnPropertyChanged(nameof(IsRunning));
+      OnPropertyChanged(nameof(CanEditSettings));
     } catch (Exception ex) {
       CloseTransport();
-      Status = "Moving Base connection failed: " + ex.Message;
+      _boundTarget = null;
+      Status = _targetInvalidated || ex.Message == TargetChangedMessage
+          ? TargetChangedMessage
+          : "Moving Base connection failed: " + ex.Message;
+      RefreshTargetDescription();
     }
   }
 
@@ -227,7 +318,8 @@ public partial class MovingBaseViewModel : ViewModelBase, IDisposable {
     }
   }
 
-  private void ReadLoop(CancellationToken cancellationToken) {
+  private void ReadLoop(
+      NmeaVehicleTarget target, CancellationToken cancellationToken) {
     DateTime nextUpdate = DateTime.MinValue;
     DateTime nextRallyUpdate = DateTime.MinValue;
     string logDirectory = Settings.GetUserDataDirectory();
@@ -237,6 +329,10 @@ public partial class MovingBaseViewModel : ViewModelBase, IDisposable {
 
     while (!cancellationToken.IsCancellationRequested) {
       try {
+        if (!IsTargetCurrent(target, requireOpen: UpdateRallyPoint)) {
+          InvalidateTarget();
+          return;
+        }
         var input = _input;
         if (input?.IsOpen != true) {
           cancellationToken.WaitHandle.WaitOne(100);
@@ -262,10 +358,14 @@ public partial class MovingBaseViewModel : ViewModelBase, IDisposable {
         var baseLocation = new PointLatLngAlt(
             fix.Latitude, fix.Longitude, fix.AltitudeM,
             $"Sats {fix.Satellites} hdop {fix.Hdop:0.##}");
-        _comPort.MAV.cs.Base = baseLocation;
+        if (!IsTargetCurrent(target, requireOpen: UpdateRallyPoint)) {
+          InvalidateTarget();
+          return;
+        }
+        _setBase(target, baseLocation);
 
         double displayAlt = ShowRelativeAltitude
-            ? fix.AltitudeM - _comPort.MAV.cs.HomeAlt
+            ? fix.AltitudeM - target.Link.MAV.cs.HomeAlt
             : fix.AltitudeM;
         string altitudeKind = ShowRelativeAltitude ? "relative" : "AMSL";
         string label = string.Format(CultureInfo.InvariantCulture,
@@ -278,43 +378,51 @@ public partial class MovingBaseViewModel : ViewModelBase, IDisposable {
 
         if (UpdateRallyPoint && DateTime.UtcNow >= nextRallyUpdate) {
           nextRallyUpdate = DateTime.UtcNow.AddSeconds(5);
-          UpdateVehicleRallyPoint(baseLocation);
+          if (!IsTargetCurrent(target, requireOpen: true)) {
+            InvalidateTarget();
+            return;
+          }
+          try {
+            _updateRally(target, baseLocation);
+          } catch (Exception ex) {
+            RequestStop("Moving Base rally updates stopped: " + ex.Message);
+            return;
+          }
         }
+      } catch (TimeoutException) {
       } catch (Exception ex) when (!cancellationToken.IsCancellationRequested) {
-        Dispatcher.UIThread.Post(() => Status = "Moving Base input warning: " + ex.Message);
-        cancellationToken.WaitHandle.WaitOne(
-            TimeSpan.FromSeconds(1 / Math.Max(0.1, UpdateRateHz)));
+        RequestStop("Moving Base input stopped: " + ex.Message);
+        return;
       }
     }
   }
 
-  private void UpdateVehicleRallyPoint(PointLatLngAlt baseLocation) {
-    if (_comPort.BaseStream?.IsOpen != true || !_comPort.MAV.param.ContainsKey("RALLY_TOTAL")) {
-      return;
+  private static void UpdateVehicleRallyPoint(
+      NmeaVehicleTarget target, PointLatLngAlt baseLocation) {
+    MAVLinkInterface link = target.Link;
+    if (link.BaseStream?.IsOpen != true || !link.MAV.param.ContainsKey("RALLY_TOTAL")) {
+      throw new InvalidOperationException(
+          "the selected vehicle is disconnected or does not expose RALLY_TOTAL");
     }
-    try {
-      double defaultAltDisplay = LoadDouble(Settings.Instance, "TXT_DefaultAlt", 100);
-      double defaultAltM = defaultAltDisplay / Math.Max(0.0001, CurrentState.multiplieralt);
-      _comPort.setParam(_comPort.MAV.sysid, _comPort.MAV.compid, "RALLY_TOTAL", 1);
-      var rally = new PointLatLngAlt(baseLocation) { Alt = baseLocation.Alt + defaultAltM };
+    double defaultAltDisplay = LoadDouble(Settings.Instance, "TXT_DefaultAlt", 100);
+    double defaultAltM = defaultAltDisplay / Math.Max(0.0001, CurrentState.multiplieralt);
+    link.setParam(target.SystemId, target.ComponentId, "RALLY_TOTAL", 1);
+    var rally = new PointLatLngAlt(baseLocation) { Alt = baseLocation.Alt + defaultAltM };
 #pragma warning disable CS0612 // Legacy rally transport is required for MAVLink 1 vehicles.
-      _comPort.setRallyPoint(0, rally, 0, 0, 0, 1);
+    link.setRallyPoint(0, rally, 0, 0, 0, 1);
 #pragma warning restore CS0612
-    } catch (Exception ex) {
-      Dispatcher.UIThread.Post(() => Status = "Moving Base rally update failed: " + ex.Message);
-    }
   }
 
   public async Task StopAsync() {
     await _lifecycleGate.WaitAsync();
     try {
-      await StopCoreAsync();
+      await StopCoreAsync("Stopped.");
     } finally {
       _lifecycleGate.Release();
     }
   }
 
-  private async Task StopCoreAsync() {
+  private async Task StopCoreAsync(string reason) {
     var cts = _cts;
     var reader = _readerTask;
     var accept = _acceptTask;
@@ -335,25 +443,87 @@ public partial class MovingBaseViewModel : ViewModelBase, IDisposable {
       }
     }
     cts?.Dispose();
+    _boundTarget = null;
+    _targetInvalidated = false;
     ConnectButtonText = "Connect";
-    Status = "Stopped.";
+    Status = reason;
     OnPropertyChanged(nameof(IsRunning));
+    OnPropertyChanged(nameof(CanEditSettings));
+    RefreshTargetDescription();
   }
 
   private void CloseTransport() {
+    TcpListener? listener = Interlocked.Exchange(ref _listener, null);
     try {
-      _listener?.Stop();
+      listener?.Stop();
     } catch {
     }
-    _listener = null;
+    ICommsSerial? input = Interlocked.Exchange(ref _input, null);
     try {
-      _input?.Close();
+      input?.Close();
     } catch {
     }
-    if (_input is IDisposable disposable) {
+    if (input is IDisposable disposable) {
       disposable.Dispose();
     }
-    _input = null;
+  }
+
+  private void OnConnectionChanged() {
+    if (_disposed) {
+      return;
+    }
+    NmeaVehicleTarget? bound = _boundTarget;
+    if (bound == null) {
+      Dispatcher.UIThread.Post(RefreshTargetDescription);
+      return;
+    }
+    if (!IsTargetCurrent(bound, requireOpen: UpdateRallyPoint)) {
+      InvalidateTarget();
+    }
+  }
+
+  private void InvalidateTarget() {
+    _targetInvalidated = true;
+    _cts?.Cancel();
+    CloseTransport();
+    RequestStop(TargetChangedMessage);
+  }
+
+  private void RequestStop(string reason) {
+    if (_disposed || Interlocked.Exchange(ref _stopScheduled, 1) != 0) {
+      return;
+    }
+    Dispatcher.UIThread.Post(() => _ = StopForReasonAsync(reason));
+  }
+
+  private async Task StopForReasonAsync(string reason) {
+    await _lifecycleGate.WaitAsync();
+    try {
+      if (_cts != null || _boundTarget != null) {
+        await StopCoreAsync(reason);
+      } else if (!_disposed) {
+        Status = reason;
+      }
+    } finally {
+      _lifecycleGate.Release();
+      Interlocked.Exchange(ref _stopScheduled, 0);
+    }
+  }
+
+  private bool IsTargetCurrent(NmeaVehicleTarget target, bool requireOpen) =>
+      NmeaVehicleSession.ShouldContinue(
+          _targetInvalidated, target, _activeTarget(requireOpen), requireOpen);
+
+  internal void SynchronizeActiveTarget() => OnConnectionChanged();
+
+  private void RefreshTargetDescription() {
+    if (_disposed || _boundTarget != null) {
+      return;
+    }
+    NmeaVehicleTarget? current = _activeTarget(UpdateRallyPoint);
+    TargetDescription = current == null
+        ? "No suitable vehicle selected."
+        : "Ready for " + NmeaVehicleSession.Describe(current) + ".";
   }
 
   private void PersistSettings() {
@@ -386,8 +556,21 @@ public partial class MovingBaseViewModel : ViewModelBase, IDisposable {
       return;
     }
     _disposed = true;
-    _cts?.Cancel();
+    if (_subscribedToAppState) {
+      AppState.ConnectionChanged -= OnConnectionChanged;
+    }
+    _targetInvalidated = true;
+    CancellationTokenSource? cts = _cts;
+    _cts = null;
+    _readerTask = null;
+    _acceptTask = null;
+    cts?.Cancel();
     CloseTransport();
-    _lifecycleGate.Dispose();
+    _boundTarget = null;
+    cts?.Dispose();
   }
+
+  private const string TargetChangedMessage =
+      "The active modem or vehicle changed or disconnected. Moving Base was stopped; start it "
+      + "again only after verifying the selected target.";
 }

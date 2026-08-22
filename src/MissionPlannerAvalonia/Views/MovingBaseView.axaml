@@ -16,10 +16,13 @@
     <TextBlock
       Foreground="#AAA"
       TextWrapping="Wrap"
-      Text="Reads GGA positions from an external NMEA GPS and shows the moving base on Flight Data. Optionally keeps Plane rally point 0 at the base position."
+      Text="Reads GGA positions from an external NMEA GPS and shows the moving base on Flight Data. The session is bound to the exact selected modem/system/component and stops after a selection change. Optional Plane Rally Point 0 writes require a separate reject-by-default confirmation."
     />
+    <TextBlock Text="{Binding TargetDescription}" Foreground="{DynamicResource MpAccentBrush}"
+               TextWrapping="Wrap" />
 
-    <Grid ColumnDefinitions="120,*,Auto" RowDefinitions="Auto,Auto" RowSpacing="8">
+    <Grid ColumnDefinitions="120,*,Auto" RowDefinitions="Auto,Auto" RowSpacing="8"
+          IsEnabled="{Binding CanEditSettings}">
       <TextBlock Grid.Row="0" Grid.Column="0" Text="NMEA input" Foreground="#DDD" VerticalAlignment="Center" />
       <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding Inputs}"
                 SelectedItem="{Binding SelectedInput}" HorizontalAlignment="Stretch" />
@@ -33,7 +36,8 @@
                 IsVisible="{Binding IsSerialInput}" />
     </Grid>
 
-    <Grid ColumnDefinitions="120,*,120,*" IsVisible="{Binding !IsSerialInput}">
+    <Grid ColumnDefinitions="120,*,120,*" IsVisible="{Binding !IsSerialInput}"
+          IsEnabled="{Binding CanEditSettings}">
       <TextBlock Grid.Column="0" Text="Remote host" Foreground="#DDD" VerticalAlignment="Center"
                  IsVisible="{Binding IsNetworkClient}" />
       <TextBox Grid.Column="1" Text="{Binding NetworkHost}" IsVisible="{Binding IsNetworkClient}" />
@@ -43,7 +47,7 @@
                      Increment="1" FormatString="0" />
     </Grid>
 
-    <Grid ColumnDefinitions="120,*,120,*">
+    <Grid ColumnDefinitions="120,*,120,*" IsEnabled="{Binding CanEditSettings}">
       <TextBlock Grid.Column="0" Text="Update rate (Hz)" Foreground="#DDD" VerticalAlignment="Center" />
       <ComboBox Grid.Column="1" ItemsSource="{Binding Rates}" SelectedItem="{Binding UpdateRateHz}"
                 HorizontalAlignment="Stretch" />
@@ -53,10 +57,12 @@
 
     <CheckBox Content="Update vehicle rally point 0 every five seconds"
               IsChecked="{Binding UpdateRallyPoint}"
+              IsEnabled="{Binding CanEditSettings}"
               ToolTip.Tip="Requires a connected vehicle with RALLY_TOTAL support. The rally altitude is base AMSL plus the planner default altitude." />
 
     <StackPanel Orientation="Horizontal" Spacing="8">
-      <Button Content="{Binding ConnectButtonText}" Command="{Binding ToggleConnectCommand}" MinWidth="100" />
+      <Button x:Name="ToggleMovingBaseButton" Content="{Binding ConnectButtonText}"
+              Command="{Binding ToggleConnectCommand}" MinWidth="100" />
       <TextBlock Text="Raw NMEA is logged to MovingBase.txt in the user data directory."
                  Foreground="#888" VerticalAlignment="Center" />
     </StackPanel>

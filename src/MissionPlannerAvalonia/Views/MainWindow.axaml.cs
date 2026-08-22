@@ -209,6 +209,10 @@ public partial class MainWindow : Window {
   private void OnPropagationSettings(object? sender, RoutedEventArgs e) =>
       PropagationSettingsWindow.OpenWindow();
 
+  private void OnFollowMe(object? sender, RoutedEventArgs e) => FollowMeWindow.OpenWindow();
+
+  private void OnMovingBase(object? sender, RoutedEventArgs e) => MovingBaseWindow.OpenWindow();
+
   private void OnFormationControl(object? sender, RoutedEventArgs e) =>
       FormationControlWindow.OpenWindow();
 
