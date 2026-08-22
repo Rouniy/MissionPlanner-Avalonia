@@ -1335,7 +1335,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
         "TCP" => new PreconfiguredTcpSerial(primary, secondary),
         "UDPCl" => new PreconfiguredUdpClient(primary, secondary),
         "UDP" => new PreconfiguredUdpListener(primary),
-        "WS" => new PreconfiguredWebSocket(primary),
+        "WS" => new Services.PortableWebSocketSerial(primary),
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown network transport."),
       };
 
@@ -1478,16 +1478,6 @@ internal sealed class PreconfiguredUdpClient : UdpSerialConnect, IPreconfiguredN
 
 internal sealed class PreconfiguredUdpListener : UdpSerial, IPreconfiguredNetworkStream {
   internal PreconfiguredUdpListener(string port) => Port = port;
-
-  public bool SuppressesUpstreamInput => true;
-
-  protected override inputboxreturn OnInputBoxShow(
-      string title, string prompttext, ref string text) => inputboxreturn.OK;
-}
-
-internal sealed class PreconfiguredWebSocket : MissionPlanner.Comms.WebSocket,
-    IPreconfiguredNetworkStream {
-  internal PreconfiguredWebSocket(string url) => AppState.CommsSettings["WS_url"] = url;
 
   public bool SuppressesUpstreamInput => true;
 
