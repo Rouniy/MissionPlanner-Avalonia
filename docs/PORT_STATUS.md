@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 721 tests verified; the all-interface antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 742 tests verified; the interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -345,6 +345,13 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   media for its full native lifetime, and accepts direct MRLs plus common RTP/GStreamer input.
   Announced MAVLink camera streams can be selected and remembered, while the payload page exposes
   MAVLink photo, recording and zoom commands and a video snapshot action.
+- The upstream combined `GimbalVideoControl` workflow is ported into the libVLC popup. It overlays
+  camera point/rectangle tracking status on the decoded image; supports mouse pan/tilt, Ctrl+click
+  ROI and Alt+click/drag object tracking; and restores W/A/S/D slew, Q/E continuous zoom,
+  slow/normal/fast modifiers, lock/follow, retract, neutral, point-down, home, photo and camera
+  recording actions. Gimbal ID, speeds and FOV policy are configurable and persistent. Active
+  camera/gimbal resolution follows vehicle switches, while every held-rate stop packet retains the
+  originating link, system, component and gimbal ID so switching UDP modems cannot redirect it.
 - Speech event announcements are functional: mode and waypoint changes speak through the upstream
   `CurrentState` hooks, and a cross-platform announcer covers arm/disarm, battery, custom, low
   altitude and low speed alerts with upstream-compatible templates and thresholds.
@@ -390,12 +397,12 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 721 passed, 0 failed.
+- Automated tests: 742 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target was rebuilt from the current 721-test source on 2026-08-22. Package metadata,
+- The `.deb` target was rebuilt from the current 742-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 396 packaged-file checksums match after extraction, including the
   byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -409,10 +416,11 @@ native-platform acceptance testing.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.e57191a_amd64.deb`
-(53,886,414 bytes; SHA-256
-`b1b0d4e0a9208144a2ff6200e31462e6280570802d64953233cf0b9ddebacb8a`), built from the current
-721-test source including all official Maestro/ArduTracker/DegreeTracker serial antenna outputs,
+`out/packages/missionplanner-avalonia_1.3.83-20260822.9d46036_amd64.deb`
+(53,897,324 bytes; SHA-256
+`388fe23abf5307d3c2d39051f1656b7076d37c064cd244e100c5c37c9eca3093`), built from the current
+742-test source including the interactive MAVLink camera/gimbal video control and all official
+Maestro/ArduTracker/DegreeTracker serial antenna outputs,
 pydronecan multicast CAN1/CAN2, direct serial SLCAN, target-safe official DroneCAN
 parameter/firmware, MicroDrone, DEVICE_OP
 and ArduPilot Default Settings workflows,
@@ -426,8 +434,8 @@ Flight Data splitter, session-only/latest-wins vehicle parameter loading, single
 connections, independent multi-link Connection List support and composite upstream/date/commit
 versioning.
 Its APT version is
-`1:1.3.83+20260822.r168.e57191a`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r168` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r171.9d46036`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r171` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -469,7 +477,6 @@ not remove required Windows-native files from `win-x64` builds.
 | --- | --- | --- |
 | Full Mission Planner plugin loader | All | Discovery, lifecycle and WinForms plugin hosting are absent. Keep the new portable action/HUD hooks and add a cross-platform plugin host separately. |
 | Optional native GDAL/OGR map drivers | All | GeoPackage feature layers, SHP and DXF are available through managed cross-platform readers. The generic native OGR/GDAL driver path for additional formats remains absent. |
-| MAVLink Camera Protocol v2 remaining UI | All | Announced `VIDEO_STREAM_INFORMATION` streams can be selected and remembered, and photo, recording and zoom commands are wired to detected camera components. The legacy mount camera-target map overlay is ported; the upstream combined gimbal/video overlay recorder remains absent. |
 | Swarm / formation flight | All | The upstream swarm controllers and UI are absent. The control logic is portable, but needs a new multi-vehicle foundation and Avalonia safety UI. |
 | Grid v2 / SimpleGrid variants | All | The alternative upstream/plugin grid workflows remain absent. |
 | Signed beta application updates | All | Stable signed updates work. The Beta Updates control is disabled until this project publishes and signs a separate beta manifest/channel. |
