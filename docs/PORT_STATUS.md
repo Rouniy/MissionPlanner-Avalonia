@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 966 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 978 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
@@ -53,8 +53,12 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 - The hidden upstream `temp.cs` developer form is replaced by an explicit Avalonia Developer Tools
   page. It ports MAVLink packet and hardware-ID decoders, APJ embedded-defaults editing, DataFlash
   splitting, DashWare CSV, raw GPS-correction extraction, log organization, arbitrary MAVFTP file
-  download (including `@SYS/threads.txt`), parameter-recovery restore, QNH, forced recovery
-  calibration flags, reboot/DFU/bootloader actions and remote DataFlash logging. Vehicle-changing
+  download (including `@SYS/threads.txt`), parameter-recovery restore, QNH, barometric-altitude
+  adjustment, forced recovery calibration flags, reboot/DFU/bootloader actions and remote DataFlash
+  logging. The altitude adjustment preserves the official pressure-offset formula, uses only the
+  selected vehicle's cached `GND_ABS_PRESS`/`BARO1_GND_PRESS` and revalidates the exact live target
+  before writing, so an unresponsive or newly selected modem cannot inherit a blocking read or a
+  stale write. Vehicle-changing
   actions require a live link, a disarmed vehicle and explicit confirmation where destructive.
 - The official hidden ResEdit workflow is a native Translation / RESX Editor in Developer Tools.
   It scans the selected Mission Planner source tree for the same `Strings.resx`, `.Text`, `.ToolTip`,
@@ -565,7 +569,7 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 966 passed, 0 failed, including Settings concurrency/null-reset stress,
+- Automated tests: 978 passed, 0 failed, including Settings concurrency/null-reset stress,
   WMS/WMTS capabilities and tile addressing, raw/Socket.IO WebSocket protocol, fragmentation,
   reconnect and bounded-close integration, real
   loopback-UDP Moving Base input, blocking serial cancellation, exact multi-modem target isolation
@@ -574,13 +578,15 @@ native-platform acceptance testing.
   duplicate handling, replacement in BruTile's persistent cache and the bound Avalonia controls.
   SHP-to-POLY tests cover official multi-feature naming/layout, closed rings, WGS84 reprojection,
   locale-independent coordinates, atomic replacement and the visible Developer Tools action.
+  Barometer-altitude tests cover the exact upstream conversion, range/finite checks, pressure
+  bounds, zero-offset handling and reject-by-default link/MAV target identity guards.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop; the packaged Ctrl+X action opens
-  the bound Map Tile Cache import UI and Ctrl+F shows the native SHP-to-POLY action while the title
-  reports the exact upstream/date/commit version.
+  the bound Map Tile Cache import UI and Ctrl+F shows the native SHP-to-POLY and Adjust Barometer
+  Altitude actions while the title reports the exact upstream/date/commit version.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 966-test source on 2026-08-22. Package metadata,
+- The `.deb` target is rebuilt from the current 978-test source on 2026-08-23. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 401 packaged-file checksums match after extraction, including the
   portable plugin API, BLE dependency licenses and byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -599,10 +605,10 @@ native-platform acceptance testing.
   scans; no Nordic UART modem was in range for a traffic test.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.35132d0_amd64.deb`
-(54,232,002 bytes; SHA-256
-`f65ec6eecfb840448e2967588ebbc9db79d5ed6203d1ac9a2b421e7b77d89fe7`), built from commit
-`35132d0` and the current 966-test source including the portable plugin host, HUD-to-MJPEG/AVI
+`out/packages/missionplanner-avalonia_1.3.83-20260823.691cff7_amd64.deb`
+(54,229,694 bytes; SHA-256
+`77cd972af778909c61e9641346696a410c77649a37f45b4f2fd9c1960a2253b8`), built from commit
+`691cff7` and the current 978-test source including the portable plugin host, HUD-to-MJPEG/AVI
 recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
@@ -614,6 +620,7 @@ parameter/firmware, MicroDrone, DEVICE_OP
 and ArduPilot Default Settings workflows,
 camera feedback/overlap/gimbal overlays, managed SHP/DXF/GeoPackage
 planner import, the official SHP-to-POLY developer conversion, local GeoTIFF/DTED elevation sources,
+target-safe official barometric-altitude pressure adjustment,
 styled KML/KMZ vector/GroundOverlay layers, Flight Data overlay copying, corrected translucent-red
 airport disks, Rally Points actions, switchable Planner docking, the interactive verified-host-key
 SSH terminal, secure SFTP DataFlash download/delete workflow, the recursive flight Log Index with
@@ -637,8 +644,8 @@ exports identified during the current CodeQL triage, plus concurrent global-sett
 serialized settings-file writes, and a cancellable bounded WebSocket transport with explicit
 raw-WebSocket/Socket.IO protocol separation and reconnect lifecycle ownership.
 Its APT version is
-`1:1.3.83+20260822.r246.35132d0`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r246` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260823.r249.691cff7`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r249` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -689,7 +696,7 @@ Mission Planner functional-parity gap.
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
 | BLE transport | macOS; Linux/Windows hardware acceptance | Linux uses the port-native managed BlueZ/D-Bus Nordic UART transport and no longer needs a SimpleBLE `.so`; adapter discovery is verified, while end-to-end traffic still needs a Nordic UART modem. Upstream's Windows SimpleBLE path remains hardware-unverified. macOS still needs a CoreBluetooth or maintained native integration. |
-| Developer utility handler audit | All | The safe portable subset of `temp.cs`, including the Translation / RESX Editor and live 3D terrain/imagery view, is native. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration, PX4Flow live image assembly, local map-tile import and SHP-to-POLY conversion are also port-native. Remaining upstream handlers are reviewed individually: already exposed, obsolete and unsafe handlers are classified instead of being presented as missing user functionality. |
+| Developer utility handler audit | All | The safe portable subset of `temp.cs`, including the Translation / RESX Editor and live 3D terrain/imagery view, is native. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration, PX4Flow live image assembly, local map-tile import, SHP-to-POLY conversion and target-safe barometric-altitude adjustment are also port-native. Remaining upstream handlers are reviewed individually: already exposed, obsolete and unsafe handlers are classified instead of being presented as missing user functionality. |
 
 ## Optional runtime experiment
 
