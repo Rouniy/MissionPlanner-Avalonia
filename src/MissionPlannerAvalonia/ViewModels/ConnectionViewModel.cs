@@ -16,12 +16,14 @@ using MissionPlannerAvalonia.Views;
 
 namespace MissionPlannerAvalonia.ViewModels;
 
-public sealed record MavSystemChoice(byte SysId, byte CompId, string Label) {
+public sealed record MavSystemChoice(
+    MAVLinkInterface Link, byte SysId, byte CompId, string Endpoint, string Label) {
   public override string ToString() => Label;
 }
 
 public partial class ConnectionViewModel : ViewModelBase, IDisposable {
-  private readonly MAVLinkInterface _comPort = AppState.comPort;
+  private readonly MAVLinkInterface _primaryPort = AppState.PrimaryComPort;
+  private MAVLinkInterface _comPort => _primaryPort;
   private readonly CancellationTokenSource _lifetimeCts = new();
   private readonly Task _lifetimeTask;
 
@@ -58,7 +60,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
   public bool CanEditConnection => !IsConnected;
   public bool CanEditBaud => !IsConnected && IsSerialEndpoint(SelectedPort);
-  public bool VehicleSelectorVisible => IsConnected && HasVehicleChoices;
+  public bool VehicleSelectorVisible => HasVehicleChoices;
 
   [ObservableProperty]
   private string _connectText = "CONNECT";
@@ -95,18 +97,29 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   }
 
   partial void OnSelectedVehicleChanged(MavSystemChoice? value) {
-    if (_updatingVehicleChoices || value == null || !IsConnected) {
+    if (_updatingVehicleChoices || value == null || value.Link.BaseStream?.IsOpen != true) {
       return;
     }
 
-    _comPort.sysidcurrent = value.SysId;
-    _comPort.compidcurrent = value.CompId;
+    AppState.ParameterLoads.CancelCurrent();
+    Interlocked.Exchange(ref _selectionSwitchInProgress, 1);
+    try {
+      if (!AppState.Connections.SetActive(value.Link)) {
+        Status = $"Connection {value.Endpoint} is no longer available.";
+        return;
+      }
+    } finally {
+      Interlocked.Exchange(ref _selectionSwitchInProgress, 0);
+    }
+    value.Link.sysidcurrent = value.SysId;
+    value.Link.compidcurrent = value.CompId;
     LoadSelectedVehicleParameters(value);
   }
 
   public ConnectionViewModel() {
     _initializing = true;
     _comPort.Progress += OnProgress;
+    AppState.Connections.ActiveChanged += OnActiveConnectionChanged;
     ApplyPersistentLinkSettings();
     RefreshPorts();
     string savedPort = Settings.Instance.ComPort;
@@ -143,6 +156,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   private readonly bool _initializing;
   private bool _updatingVehicleChoices;
   private string _vehicleChoiceSignature = "";
+  private int _selectionSwitchInProgress;
 
   private int StartReader() {
     StopReader();
@@ -214,10 +228,12 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
     }
     CloseLogs();
+    AppState.Connections.Dispose();
   }
 
   public void Dispose() {
     _comPort.Progress -= OnProgress;
+    AppState.Connections.ActiveChanged -= OnActiveConnectionChanged;
     _lifetimeCts.Cancel();
     Shutdown();
     try {
@@ -340,19 +356,24 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     }
   }
 
-  private void RefreshVehicleChoices() {
-    var choices = _comPort.BaseStream?.IsOpen == true
-        ? [.. _comPort.MAVlist.ToArray()
+  private void RefreshVehicleChoices(bool reloadActiveParameters = false) {
+    Services.MavLinkConnection[] openConnections = [.. AppState.Connections.Snapshot()
+        .Where(connection => connection.IsOpen)];
+    MavSystemChoice[] choices = [.. openConnections
+        .SelectMany(connection => connection.Link.MAVlist.ToArray()
             .Where(mav => mav.sysid != 0 &&
                 mav.compid != (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_MISSIONPLANNER)
             .Select(mav => new MavSystemChoice(
-                mav.sysid, mav.compid, VehicleChoiceLabel(mav)))
-            .OrderBy(choice => choice.SysId)
-            .ThenBy(choice => choice.CompId)]
-        : Array.Empty<MavSystemChoice>();
+                connection.Link, mav.sysid, mav.compid, connection.Endpoint,
+                VehicleChoiceLabel(connection, mav))))
+        .OrderBy(choice => choice.Endpoint, StringComparer.OrdinalIgnoreCase)
+        .ThenBy(choice => choice.SysId)
+        .ThenBy(choice => choice.CompId)];
     string signature = string.Join(";", choices.Select(choice =>
+        $"{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(choice.Link)}:" +
         $"{choice.SysId}:{choice.CompId}:{choice.Label}"));
-    if (string.Equals(signature, _vehicleChoiceSignature, StringComparison.Ordinal)) {
+    if (!reloadActiveParameters &&
+        string.Equals(signature, _vehicleChoiceSignature, StringComparison.Ordinal)) {
       return;
     }
     _vehicleChoiceSignature = signature;
@@ -361,20 +382,30 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       MavSystemChoice? fallbackSelection = null;
       _updatingVehicleChoices = true;
       try {
+        IsConnected = openConnections.Length > 0;
+        ConnectText = IsConnected ? "DISCONNECT" : "CONNECT";
         VehicleChoices.Clear();
         foreach (var choice in choices) {
           VehicleChoices.Add(choice);
         }
         HasVehicleChoices = choices.Length > 0;
         var selected = choices.FirstOrDefault(choice =>
-            choice.SysId == _comPort.sysidcurrent && choice.CompId == _comPort.compidcurrent)
+            ReferenceEquals(choice.Link, AppState.comPort) &&
+            choice.SysId == AppState.comPort.sysidcurrent &&
+            choice.CompId == AppState.comPort.compidcurrent)
             ?? choices.FirstOrDefault();
         SelectedVehicle = selected;
-        if (selected != null &&
-            (_comPort.sysidcurrent != selected.SysId || _comPort.compidcurrent != selected.CompId)) {
-          _comPort.sysidcurrent = selected.SysId;
-          _comPort.compidcurrent = selected.CompId;
-          fallbackSelection = selected;
+        if (selected != null) {
+          if (!ReferenceEquals(AppState.comPort, selected.Link) ||
+              selected.Link.sysidcurrent != selected.SysId ||
+              selected.Link.compidcurrent != selected.CompId) {
+            AppState.Connections.SetActive(selected.Link);
+            selected.Link.sysidcurrent = selected.SysId;
+            selected.Link.compidcurrent = selected.CompId;
+            fallbackSelection = selected;
+          } else if (reloadActiveParameters) {
+            fallbackSelection = selected;
+          }
         }
       } finally {
         _updatingVehicleChoices = false;
@@ -385,7 +416,20 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     });
   }
 
-  private static string VehicleChoiceLabel(MAVState mav) {
+  private void OnActiveConnectionChanged(
+      Services.MavLinkConnection previous,
+      Services.MavLinkConnection current) {
+    if (Volatile.Read(ref _selectionSwitchInProgress) != 0) {
+      return;
+    }
+    // This path covers automatic fallback after a modem disappears. AppState has already cleared
+    // the new target's cached parameters; rebuild the selector and start a fresh read on the UI.
+    Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        RefreshVehicleChoices(reloadActiveParameters: true));
+  }
+
+  private static string VehicleChoiceLabel(
+      Services.MavLinkConnection connection, MAVState mav) {
     string component;
     if (mav.CANNode) {
       component = string.IsNullOrWhiteSpace(mav.VersionString)
@@ -401,11 +445,12 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       }
       component = component.Replace('_', ' ');
     }
-    return $"{mav.sysid}:{mav.compid} {component}";
+    return $"{connection.Endpoint} — {mav.sysid}:{mav.compid} {component}";
   }
 
   private void LoadSelectedVehicleParameters(MavSystemChoice choice) {
-    var mav = _comPort.MAVlist[choice.SysId, choice.CompId];
+    MAVLinkInterface link = choice.Link;
+    var mav = link.MAVlist[choice.SysId, choice.CompId];
     // A list from a previous selection may be correct, but displaying it while a new read is in
     // flight is unsafe. Always make the selected target visibly empty until this request completes.
     ResetSelectedVehicleParameters(mav);
@@ -444,8 +489,9 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     }
 
     Avalonia.Threading.Dispatcher.UIThread.Post(() => {
-      if (!operation.IsLatest || _comPort.BaseStream?.IsOpen != true ||
-          _comPort.sysidcurrent != choice.SysId || _comPort.compidcurrent != choice.CompId) {
+      if (!operation.IsLatest || !ReferenceEquals(AppState.comPort, choice.Link) ||
+          choice.Link.BaseStream?.IsOpen != true ||
+          choice.Link.sysidcurrent != choice.SysId || choice.Link.compidcurrent != choice.CompId) {
         return;
       }
       Status = error == null
@@ -494,6 +540,8 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       return;
     }
     OpenLogs();
+    AppState.Connections.Primary.Endpoint = endpoint;
+    AppState.Connections.SetActive(_comPort);
     IsConnected = true;
     ConnectText = "DISCONNECT";
     Status = $"Connected to {endpoint}. {_comPort.MAV.param.Count} params.";
@@ -651,6 +699,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       }
       ResetAllVehicleParameters(_comPort);
       CloseLogs();
+      AppState.Connections.NotifyClosed(AppState.Connections.Primary);
     }
     Services.Speech.Stop();
     self.Dispose();
@@ -761,14 +810,23 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private async Task ToggleConnect() {
-    if (_comPort.BaseStream?.IsOpen == true) {
-      double displayedSpeed = _comPort.MAV.cs.groundspeed * CurrentState.multiplierspeed;
-      if (_comPort.MAV.cs.groundspeed > 4 && !await Services.Dialogs.Confirm(
+    MAVLinkInterface activeLink = AppState.comPort;
+    if (activeLink.BaseStream?.IsOpen == true) {
+      double displayedSpeed = activeLink.MAV.cs.groundspeed * CurrentState.multiplierspeed;
+      if (activeLink.MAV.cs.groundspeed > 4 && !await Services.Dialogs.Confirm(
               "Disconnect",
               $"The vehicle is still moving at {displayedSpeed:0.0} {CurrentState.SpeedUnit}. Disconnect anyway?")) {
         return;
       }
-      await DisconnectAsync("Disconnected.");
+      Services.MavLinkConnection? connection = AppState.Connections.Find(activeLink);
+      if (connection is { IsPrimary: false }) {
+        AppState.ParameterLoads.CancelCurrent();
+        await AppState.Connections.RemoveAsync(connection);
+        Status = $"Disconnected {connection.Endpoint}.";
+        RefreshVehicleChoices();
+      } else {
+        await DisconnectAsync("Disconnected.");
+      }
       return;
     }
 
@@ -783,6 +841,58 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
     Status = $"Auto-connecting to {SelectedPort}…";
     await ConnectAsync(interactive: false);
+  }
+
+  internal async Task ImportConnectionListAsync(string path) {
+    if (!await _connectGate.WaitAsync(0)) {
+      await Services.Dialogs.Alert(
+          "Connection List", "Another connection attempt is already running.");
+      return;
+    }
+
+    var reporter = new Services.ProgressReporter("Opening Connection List");
+    _connectDialog = reporter;
+    AppState.ActiveConnectReporter = reporter;
+    reporter.Set(0, "Reading connection list…");
+    reporter.Show2();
+    try {
+      Services.ConnectionListOpenResult result = await Services.ConnectionListService.OpenFileAsync(
+          path, AppState.Connections, reporter.Token,
+          (percent, message) => reporter.Set(percent, message));
+      RefreshVehicleChoices();
+      Status = $"Connection List: opened {result.Opened.Count}/{result.Requested}.";
+
+      var issues = result.ParseErrors
+          .Select(error => $"Line {error.Line}: {error.Message}")
+          .Concat(result.Failures.Select(failure =>
+              $"{failure.Endpoint.DisplayName}: {failure.Message}"))
+          .Take(12)
+          .ToArray();
+      string summary = $"Opened {result.Opened.Count} connection(s).";
+      int issueCount = result.ParseErrors.Count + result.Failures.Count;
+      if (issueCount > 0) {
+        summary += $"\n\n{issueCount} entry/entries were not opened:\n" +
+            string.Join("\n", issues);
+        if (issueCount > issues.Length) {
+          summary += $"\n…and {issueCount - issues.Length} more.";
+        }
+      }
+      await Services.Dialogs.Alert("Connection List", summary);
+    } catch (OperationCanceledException) when (reporter.CancelRequested) {
+      Status = "Connection List opening cancelled.";
+    } catch (Exception ex) {
+      Status = "Connection List failed: " + ex.Message;
+      await Services.Dialogs.Alert("Connection List", ex.Message);
+    } finally {
+      reporter.Close();
+      if (ReferenceEquals(_connectDialog, reporter)) {
+        _connectDialog = null;
+      }
+      if (ReferenceEquals(AppState.ActiveConnectReporter, reporter)) {
+        AppState.ActiveConnectReporter = null;
+      }
+      _connectGate.Release();
+    }
   }
 
   internal async Task<(bool Connected, string Error)> ConnectPreparedStreamAsync(
@@ -828,6 +938,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     });
     ResetAllVehicleParameters(_comPort);
     CloseLogs();
+    AppState.Connections.NotifyClosed(AppState.Connections.Primary);
     IsConnected = false;
     ConnectText = "CONNECT";
     Status = status;
@@ -966,6 +1077,8 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       IsConnected = _comPort.BaseStream.IsOpen;
       ConnectText = IsConnected ? "DISCONNECT" : "CONNECT";
       if (IsConnected) {
+        AppState.Connections.Primary.Endpoint = endpoint;
+        AppState.Connections.SetActive(_comPort);
         Settings.Instance.ComPort = endpoint;
         Settings.Instance.BaudRate = SelectedBaud.ToString();
         if (IsSerialEndpoint(endpoint)) {
@@ -1203,16 +1316,29 @@ internal sealed class PreconfiguredTcpSerial : TcpSerial, IPreconfiguredNetworkS
 }
 
 internal sealed class PreconfiguredUdpClient : UdpSerialConnect, IPreconfiguredNetworkStream {
+  private readonly string _host;
+  private readonly string _port;
+
   internal PreconfiguredUdpClient(string host, string port) {
+    _host = host;
+    _port = port;
     Port = port;
-    AppState.CommsSettings["UDP_host"] = host;
-    AppState.CommsSettings["UDP_port"] = port;
   }
 
   public bool SuppressesUpstreamInput => true;
 
   protected override inputboxreturn OnInputBoxShow(
       string title, string prompttext, ref string text) => inputboxreturn.OK;
+
+  protected override string OnSettings(string name, string value, bool set = false) {
+    if (name.StartsWith("UDP_host", StringComparison.Ordinal)) {
+      return _host;
+    }
+    if (name.StartsWith("UDP_port", StringComparison.Ordinal)) {
+      return _port;
+    }
+    return base.OnSettings(name, value, set);
+  }
 }
 
 internal sealed class PreconfiguredUdpListener : UdpSerial, IPreconfiguredNetworkStream {

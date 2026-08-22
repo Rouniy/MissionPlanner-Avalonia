@@ -45,7 +45,7 @@
           <MenuItem Header="Download Logs (MAVLink)" Click="OnDownloadLogs" />
           <MenuItem Header="Tlog Convert / Extract" Click="OnMavlinkLogConvert" />
           <Separator />
-          <MenuItem Header="Connection List (not ported)" IsEnabled="False" />
+          <MenuItem Header="Connection List…" Click="OnConnectionList" />
         </ContextMenu>
       </Border.ContextMenu>
       <Grid ColumnDefinitions="*,Auto,Auto,Auto">

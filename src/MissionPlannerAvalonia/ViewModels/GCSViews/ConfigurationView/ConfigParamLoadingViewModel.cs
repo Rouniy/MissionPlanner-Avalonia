@@ -8,7 +8,7 @@ using MissionPlanner;
 namespace MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView;
 
 public partial class ConfigParamLoadingViewModel : ViewModelBase, IDisposable {
-  private readonly MAVLinkInterface _comPort = AppState.comPort;
+  private MAVLinkInterface _comPort => AppState.comPort;
   private readonly DispatcherTimer _timer;
 
   [ObservableProperty]

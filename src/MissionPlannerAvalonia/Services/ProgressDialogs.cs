@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using MissionPlanner;
 using MissionPlanner.Utilities;
 
 namespace MissionPlannerAvalonia.Services;
@@ -87,17 +88,26 @@ public class ProgressReporter : Window {
 
 public class ForwardingProgressReporter : IProgressReporterDialogue {
   private readonly ProgressReporter? _target;
+  private readonly CancellationTokenRegistration _targetCancellation;
+  private readonly CancellationTokenRegistration _operationCancellation;
 
   public ProgressWorkerEventArgs doWorkArgs { get; set; } = new();
   public event DoWorkEventHandler? DoWork;
 
-  public ForwardingProgressReporter(ProgressReporter? target) {
+  public ForwardingProgressReporter(
+      ProgressReporter? target,
+      CancellationToken operationCancellation = default) {
     _target = target;
     try {
-      _target?.Token.Register(() => doWorkArgs.CancelRequested = true);
+      _targetCancellation = _target?.Token.Register(RequestCancellation) ?? default;
     } catch (ObjectDisposedException) {
     }
+    _operationCancellation = operationCancellation.CanBeCanceled
+        ? operationCancellation.Register(RequestCancellation)
+        : default;
   }
+
+  private void RequestCancellation() => doWorkArgs.CancelRequested = true;
 
   // The upstream contract is synchronous: callers expect DoWork to be finished on return, so
   // the delegate runs inline on the calling thread. Call sites must not be on the UI thread.
@@ -115,7 +125,41 @@ public class ForwardingProgressReporter : IProgressReporterDialogue {
   public void BeginInvoke(Delegate method) =>
       Dispatcher.UIThread.Post(() => method?.DynamicInvoke());
 
-  public void Dispose() { }
+  public void Dispose() {
+    _targetCancellation.Dispose();
+    _operationCancellation.Dispose();
+  }
+}
+
+/// <summary>
+/// Carries a per-operation cancellation token through the upstream progress factory. AsyncLocal
+/// keeps parallel Connection List opens isolated while preserving the normal primary-link dialog.
+/// </summary>
+internal static class MavLinkProgressContext {
+  private static readonly AsyncLocal<CancellationToken?> _current = new();
+
+  static MavLinkProgressContext() {
+    MAVLinkInterface.CreateIProgressReporterDialogue += _ =>
+        new ForwardingProgressReporter(AppState.ActiveConnectReporter, _current.Value ?? default);
+  }
+
+  internal static void EnsureRegistered() {
+  }
+
+  internal static IDisposable Use(CancellationToken cancellationToken) {
+    CancellationToken? previous = _current.Value;
+    _current.Value = cancellationToken;
+    return new Scope(previous);
+  }
+
+  private sealed class Scope(CancellationToken? previous) : IDisposable {
+    private CancellationToken? _previous = previous;
+
+    public void Dispose() {
+      _current.Value = _previous;
+      _previous = null;
+    }
+  }
 }
 
 /// <summary>

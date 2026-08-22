@@ -20,7 +20,7 @@ using Newtonsoft.Json.Linq;
 namespace MissionPlannerAvalonia.ViewModels;
 
 public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
-  private readonly MAVLinkInterface _comPort = AppState.comPort;
+  private MAVLinkInterface _comPort => AppState.comPort;
   private bool _recomputing;
   private bool _restoringUndo;
   private bool _clearingRallyPoints;

@@ -1,15 +1,23 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using MissionPlanner;
 using MissionPlanner.Comms;
 
 namespace MissionPlannerAvalonia;
 
 public static class AppState {
-  public static MAVLinkInterface comPort { get; }
+  public static MAVLinkInterface comPort => Connections.Active.Link;
+
+  internal static MAVLinkInterface PrimaryComPort => Connections.Primary.Link;
+
+  internal static Services.MavLinkConnectionManager Connections { get; }
 
   internal static Services.JoystickControlService JoystickControl { get; }
 
-  internal static Services.VehicleParameterLoadCoordinator ParameterLoads { get; }
+  private static Services.VehicleParameterLoadCoordinator _parameterLoads = null!;
+
+  internal static Services.VehicleParameterLoadCoordinator ParameterLoads =>
+      System.Threading.Volatile.Read(ref _parameterLoads);
 
   internal static Services.TrafficService Traffic { get; }
 
@@ -31,13 +39,28 @@ public static class AppState {
     // Replace upstream WinForms UI hooks before constructing or opening any shared
     // MAVLink/communications component.
     global::System.CustomMessageBox.ShowEvent += Services.Dialogs.ShowUpstreamMessage;
-    comPort = new MAVLinkInterface();
-    ParameterLoads = new Services.VehicleParameterLoadCoordinator(comPort);
-    JoystickControl = new Services.JoystickControlService(comPort);
-    Traffic = new Services.TrafficService(comPort, applySavedSettings: true);
+    var primary = new MAVLinkInterface();
+    Connections = new Services.MavLinkConnectionManager(primary);
+    _parameterLoads = new Services.VehicleParameterLoadCoordinator(primary);
+    JoystickControl = new Services.JoystickControlService(() => comPort);
+    Traffic = new Services.TrafficService(() => comPort, applySavedSettings: true);
 
-    MAVLinkInterface.CreateIProgressReporterDialogue +=
-        _ => new Services.ForwardingProgressReporter(ActiveConnectReporter);
+    Connections.ActiveChanged += (_, current) => {
+      var replacement = new Services.VehicleParameterLoadCoordinator(current.Link);
+      var previous = System.Threading.Interlocked.Exchange(ref _parameterLoads, replacement);
+      previous.CancelCurrent();
+      // Never expose parameters from the last time this link/vehicle was active. The selector will
+      // start a fresh read, but all persistent views must see an empty list immediately.
+      MAVState selected = current.Link.MAV;
+      selected.param.Clear();
+      selected.param_types.Clear();
+    };
+    Connections.Changed += () => {
+      Traffic.SetMavlinkSources(Connections.Snapshot().Select(connection => connection.Link));
+      RaiseConnectionChanged();
+    };
+
+    Services.MavLinkProgressContext.EnsureRegistered();
 
     CommsBase.Settings += (name, value, set) => {
       if (set) {

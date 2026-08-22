@@ -161,16 +161,18 @@ internal sealed class JoystickControlService : IDisposable {
 
   private readonly object _sync = new();
   private readonly object _transition = new();
-  private readonly MAVLinkInterface _comPort;
+  private readonly Func<MAVLinkInterface> _currentLink;
   private JoystickBase? _active;
   private CancellationTokenSource? _sendCts;
   private Task? _sendTask;
   private string? _lastSendError;
   private bool _disposed;
 
-  public JoystickControlService(MAVLinkInterface comPort) {
-    _comPort = comPort;
+  public JoystickControlService(MAVLinkInterface comPort) : this(() => comPort) {
   }
+
+  internal JoystickControlService(Func<MAVLinkInterface> currentLink) =>
+      _currentLink = currentLink ?? throw new ArgumentNullException(nameof(currentLink));
 
   public event Action<JoystickBase, string>? Stopped;
   public event Action<string>? SendError;
@@ -313,14 +315,15 @@ internal sealed class JoystickControlService : IDisposable {
     var empty = new JoystickOutputSnapshot(false, new bool[18], new short[18]);
     SitlLauncher.TrySendRcInput(empty);
 
+    MAVLinkInterface comPort = _currentLink();
     if (clearOverride) {
       try {
         joystick.clearRCOverride();
       } catch {
-        JoystickControlPackets.ResetOverrides(_comPort.MAV.cs);
+        JoystickControlPackets.ResetOverrides(comPort.MAV.cs);
       }
     } else {
-      JoystickControlPackets.ResetOverrides(_comPort.MAV.cs);
+      JoystickControlPackets.ResetOverrides(comPort.MAV.cs);
     }
   }
 
@@ -380,11 +383,12 @@ internal sealed class JoystickControlService : IDisposable {
 
   private void TrySendOnce(JoystickBase joystick) {
     try {
-      if (_comPort.BaseStream?.IsOpen != true || _comPort.BaseStream.BytesToWrite >= 50) {
+      MAVLinkInterface comPort = _currentLink();
+      if (comPort.BaseStream?.IsOpen != true || comPort.BaseStream.BytesToWrite >= 50) {
         return;
       }
 
-      var mav = _comPort.MAV;
+      var mav = comPort.MAV;
       var snapshot = JoystickControlPackets.Capture(joystick, mav.cs);
       if (!snapshot.ManualControl && SitlLauncher.TrySendRcInput(snapshot)) {
         _lastSendError = null;
@@ -393,10 +397,10 @@ internal sealed class JoystickControlService : IDisposable {
 
       if (snapshot.ManualControl) {
         var manual = JoystickControlPackets.BuildManualControl(mav.sysid, snapshot);
-        _comPort.sendPacket(manual, mav.sysid, mav.compid);
+        comPort.sendPacket(manual, mav.sysid, mav.compid);
       } else {
         var rc = JoystickControlPackets.BuildRcOverride(mav.sysid, mav.compid, snapshot);
-        _comPort.sendPacket(rc, mav.sysid, mav.compid);
+        comPort.sendPacket(rc, mav.sysid, mav.compid);
       }
       _lastSendError = null;
     } catch (Exception ex) {

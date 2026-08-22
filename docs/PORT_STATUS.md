@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 647 tests verified; the camera-overlay/SHP/DXF/KML-GroundOverlay/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety `.deb` passed lintian, checksum and Xvfb smoke checks; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 660 tests verified; the camera-overlay/SHP/DXF/KML-GroundOverlay/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` passed lintian, checksum and Xvfb smoke checks; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -104,10 +104,18 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   rates per physical port and expose the active MAVLink system/component selector. AUTO scan now has
   visible progress and cancellation and records the actual detected port/rate instead of persisting
   the synthetic `AUTO` endpoint.
+- The official Connection List workflow is restored for `tcp://host:port`, `udp://host:port`,
+  `udpcl://host:port` and `serial:port:baud` files. Independent MAVLink interfaces are opened with
+  bounded parallelism, per-line telemetry logs, reader/heartbeat/stream-request lifecycles and
+  prompt cancellation when a modem does not answer. The top selector combines systems/components
+  from every live line and shows their endpoint; choosing one atomically redirects flight data,
+  planner, parameter pages, joystick and traffic uplink. Flight Data keeps the active aircraft red
+  and renders the other connected aircraft as grey heading-aware markers. Closing or losing the
+  active line falls back to another live line without blocking on the old transport.
 - Parameter lists are deliberately session-only: neither the port nor the compiled upstream
   `MAVState` writes a reusable vehicle-parameter cache. Disconnecting, beginning a new connection or
-  selecting another MAVLink system clears the applicable values/types/count immediately and keeps
-  configuration fields behind the loading overlay until a complete live list arrives. Post-connect
+  selecting another MAVLink system or modem clears the applicable values/types/count immediately
+  and keeps configuration fields behind the loading overlay until a complete live list arrives. Post-connect
   reads are globally serialized and latest-wins cancellable, so a silent UDP modem cannot hold the
   next selected device behind an unbounded retry. Connected configuration view models are recreated
   on target/list changes, preventing controls from retaining another device's values. After a live
@@ -324,10 +332,10 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 647 passed, 0 failed.
+- Automated tests: 660 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
-- The `.deb` target was rebuilt from the current 647-test source on 2026-08-22. Package metadata,
+- The `.deb` target was rebuilt from the current 660-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 391 packaged-file checksums match after extraction, including the
   byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -341,19 +349,20 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.857b810_amd64.deb`
-(52,999,308 bytes; SHA-256
-`a12a5ae97a54c80d6c4980312f50457e709167473d3227cbb549095bd44d751f`), built from the current
-647-test source including camera feedback/overlap/gimbal overlays, managed SHP/DXF planner import,
+`out/packages/missionplanner-avalonia_1.3.83-20260822.5e18ecd_amd64.deb`
+(53,011,788 bytes; SHA-256
+`f849caa22a1ca7b9a313377bb89cbfdafb2dbde1a271df3c0dfc82619e629f8a`), built from the current
+660-test source including camera feedback/overlap/gimbal overlays, managed SHP/DXF planner import,
 styled KML/KMZ vector/GroundOverlay layers, Flight Data overlay copying, corrected translucent-red
 airport disks, Rally Points actions, switchable Planner docking, the interactive verified-host-key
 SSH terminal, secure SFTP DataFlash download/delete workflow, the recursive flight Log Index with
 map thumbnails, offline sphere/ellipsoid MagFit, live Traditional Heli visualization, the movable
 Flight Data splitter, session-only/latest-wins vehicle parameter loading, single-prompt network
-connections and composite upstream/date/commit versioning.
+connections, independent multi-link Connection List support and composite upstream/date/commit
+versioning.
 Its APT version is
-`1:1.3.83+20260822.r138.857b810`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r138` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r143.5e18ecd`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r143` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -393,7 +402,6 @@ not remove required Windows-native files from `win-x64` builds.
 
 | Area | Affected targets | Current state and direction |
 | --- | --- | --- |
-| Multiple simultaneous vehicle links / Connection List | All | Menu remains disabled; the port has one global primary link. Requires multi-link AppState/UI architecture. |
 | Full Mission Planner plugin loader | All | Discovery, lifecycle and WinForms plugin hosting are absent. Keep the new portable action/HUD hooks and add a cross-platform plugin host separately. |
 | GeoPackage and optional GDAL map import | All | Managed SHP mission/polygon/overlay import and colour-preserving DXF overlays are ported. The optional native OGR/GDAL GeoPackage workflow remains absent. |
 | Extra elevation sources | All | Local SRTM profiles and the official vehicle `TERRAIN_DATA` service work. DTED/GeoTIFF elevation sources remain absent. |
