@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 710 tests verified; the DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 721 tests verified; the all-interface antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -104,6 +104,13 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   their advertised range; uncalibrated devices keep the original bit-for-bit mapping. Calibration
   uses a detached read-only joydev session and releases active control first, so endpoint movements
   cannot reach SITL or a real vehicle.
+- Standalone Antenna Tracker serial output ports all three interfaces from the pinned Mission
+  Planner source: Maestro compact binary commands, ArduTracker PWM text commands and DegreeTracker
+  tenths-of-a-degree text commands. Both Setup entries share the same tested drivers and settings;
+  live tracking follows the currently selected modem/vehicle, reverse and trim changes apply
+  immediately, unsafe numeric input is rejected, and serial close is synchronized with in-flight
+  writes. Byte-exact protocol, 180-degree Maestro tilt flip, reversal, validation, connect/disconnect
+  and concurrent-disposal tests cover the hardware-independent behavior.
 - Persisted serial, TCP, UDP client/listener and WebSocket endpoints can auto-connect at normal app
   startup without reopening the endpoint prompt. An interactive network connection now uses the
   single combined Avalonia address/port dialog and suppresses the transport's second upstream prompt.
@@ -383,12 +390,12 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 710 passed, 0 failed.
+- Automated tests: 721 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target was rebuilt from the current 710-test source on 2026-08-22. Package metadata,
+- The `.deb` target was rebuilt from the current 721-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 396 packaged-file checksums match after extraction, including the
   byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -402,11 +409,12 @@ native-platform acceptance testing.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.9c60a03_amd64.deb`
-(53,893,318 bytes; SHA-256
-`00480d27ac5f4b6adcae7aab617663e962ed84b793ef3178798f65c69700c708`), built from the current
-710-test source including pydronecan multicast CAN1/CAN2, direct serial SLCAN, target-safe official
-DroneCAN parameter/firmware, MicroDrone, DEVICE_OP
+`out/packages/missionplanner-avalonia_1.3.83-20260822.e57191a_amd64.deb`
+(53,886,414 bytes; SHA-256
+`b1b0d4e0a9208144a2ff6200e31462e6280570802d64953233cf0b9ddebacb8a`), built from the current
+721-test source including all official Maestro/ArduTracker/DegreeTracker serial antenna outputs,
+pydronecan multicast CAN1/CAN2, direct serial SLCAN, target-safe official DroneCAN
+parameter/firmware, MicroDrone, DEVICE_OP
 and ArduPilot Default Settings workflows,
 camera feedback/overlap/gimbal overlays, managed SHP/DXF/GeoPackage
 planner import, local GeoTIFF/DTED elevation sources,
@@ -418,8 +426,8 @@ Flight Data splitter, session-only/latest-wins vehicle parameter loading, single
 connections, independent multi-link Connection List support and composite upstream/date/commit
 versioning.
 Its APT version is
-`1:1.3.83+20260822.r165.9c60a03`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r165` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r168.e57191a`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r168` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -464,7 +472,6 @@ not remove required Windows-native files from `win-x64` builds.
 | MAVLink Camera Protocol v2 remaining UI | All | Announced `VIDEO_STREAM_INFORMATION` streams can be selected and remembered, and photo, recording and zoom commands are wired to detected camera components. The legacy mount camera-target map overlay is ported; the upstream combined gimbal/video overlay recorder remains absent. |
 | Swarm / formation flight | All | The upstream swarm controllers and UI are absent. The control logic is portable, but needs a new multi-vehicle foundation and Avalonia safety UI. |
 | Grid v2 / SimpleGrid variants | All | The alternative upstream/plugin grid workflows remain absent. |
-| Antenna tracker interfaces other than Maestro | All, hardware-specific | Configuration rejects other drivers; port/test each driver independently. |
 | Signed beta application updates | All | Stable signed updates work. The Beta Updates control is disabled until this project publishes and signs a separate beta manifest/channel. |
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
