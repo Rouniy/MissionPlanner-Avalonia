@@ -283,6 +283,71 @@ public class PlannerPortParityTests {
     }
   }
 
+  [AvaloniaFact]
+  [Obsolete]
+  public void Flight_data_hud_and_quick_panels_detach_and_return_without_recreation() {
+    var view = new FlightDataView();
+    var vm = new FlightDataViewModel();
+    try {
+      view.DataContext = vm;
+      var hudHost = Assert.IsType<ContentControl>(view.FindControl<ContentControl>("HudHost"));
+      var quickHost = Assert.IsType<ContentControl>(view.FindControl<ContentControl>("QuickHost"));
+      var hud = Assert.IsType<HudControl>(view.FindControl<HudControl>("Hud"));
+      var quick = Assert.IsType<ItemsControl>(view.FindControl<ItemsControl>("QuickGrid"));
+      var hudMenu = Assert.IsType<MenuItem>(view.FindControl<MenuItem>("DetachHudMenuItem"));
+      var quickMenu = Assert.IsType<MenuItem>(view.FindControl<MenuItem>("DetachQuickMenuItem"));
+
+      var hudWindow = Assert.IsType<Window>(view.DetachHud(showWindow: false));
+      var quickWindow = Assert.IsType<Window>(view.DetachQuick(showWindow: false));
+
+      Assert.True(view.IsHudDetached);
+      Assert.True(view.IsQuickDetached);
+      Assert.Same(hud, hudWindow.Content);
+      Assert.Same(quick, quickWindow.Content);
+      Assert.IsType<Button>(hudHost.Content);
+      Assert.IsType<Button>(quickHost.Content);
+      Assert.Equal("Dock HUD", hudMenu.Header);
+      Assert.Equal("Dock Quick", quickMenu.Header);
+
+      view.RestoreDetachedPanels();
+
+      Assert.False(view.IsHudDetached);
+      Assert.False(view.IsQuickDetached);
+      Assert.Same(hud, hudHost.Content);
+      Assert.Same(quick, quickHost.Content);
+      Assert.Null(hudWindow.Content);
+      Assert.Null(quickWindow.Content);
+      Assert.Equal("Undock HUD", hudMenu.Header);
+      Assert.Equal("Undock Quick", quickMenu.Header);
+    } finally {
+      view.RestoreDetachedPanels();
+      vm.Dispose();
+    }
+  }
+
+  [AvaloniaFact]
+  [Obsolete]
+  public void Closing_a_detached_flight_data_window_redocks_its_live_panel() {
+    var view = new FlightDataView();
+    var owner = new Window { Content = view };
+    owner.Show();
+    try {
+      var hudHost = Assert.IsType<ContentControl>(view.FindControl<ContentControl>("HudHost"));
+      var hud = Assert.IsType<HudControl>(view.FindControl<HudControl>("Hud"));
+      var detached = Assert.IsType<Window>(view.DetachHud());
+
+      Assert.True(detached.IsVisible);
+      Assert.True(view.IsHudDetached);
+      detached.Close();
+
+      Assert.False(view.IsHudDetached);
+      Assert.Same(hud, hudHost.Content);
+    } finally {
+      view.RestoreDetachedPanels();
+      owner.Close();
+    }
+  }
+
   [Theory]
   [InlineData("50S", -50)]
   [InlineData("11N", 11)]

@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 955 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/WMS-WMTS/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 957 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
@@ -445,6 +445,10 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 - Flight Data's instrumentation and map columns now have a draggable main splitter. Its clamped
   position is persisted as the upstream-compatible `FlightSplitter` setting, allowing either side
   to be enlarged without collapsing the other into an unusable width.
+- Flight Data's HUD and Quick panels can be undocked into separate owned windows like the official
+  application. HUD double-click and both panels' context actions move the existing live controls
+  rather than copies; closing a window, docking explicitly or leaving the page safely restores each
+  panel with its bindings and runtime state intact.
 - Flight Data now renders the loaded mission and current waypoint, Home, inclusion/exclusion fence
   polygons and circles, rally points, Guided target, POIs, camera feedback, the live terrain-projected
   gimbal target and a live mission-distance progress strip. Its context menu restores POI
@@ -545,16 +549,16 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 955 passed, 0 failed, including Settings concurrency/null-reset stress,
+- Automated tests: 957 passed, 0 failed, including Settings concurrency/null-reset stress,
   WMS/WMTS capabilities and tile addressing, raw/Socket.IO WebSocket protocol, fragmentation,
   reconnect and bounded-close integration, real
   loopback-UDP Moving Base input, blocking serial cancellation, exact multi-modem target isolation
-  and reject-by-default command/rally starts.
+  and reject-by-default command/rally starts, plus live HUD/Quick undock and close-to-redock behavior.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 955-test source on 2026-08-22. Package metadata,
+- The `.deb` target is rebuilt from the current 957-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 401 packaged-file checksums match after extraction, including the
   portable plugin API, BLE dependency licenses and byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -573,10 +577,10 @@ native-platform acceptance testing.
   scans; no Nordic UART modem was in range for a traffic test.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.a0e7a7b_amd64.deb`
-(54,222,378 bytes; SHA-256
-`6c8bfeb8e1159f456d9e9a70ee1058441a093b211bc1390862faf28a46eb657f`), built from commit
-`a0e7a7b` and the current 955-test source including the portable plugin host, HUD-to-MJPEG/AVI
+`out/packages/missionplanner-avalonia_1.3.83-20260822.295c80e_amd64.deb`
+(54,219,166 bytes; SHA-256
+`5c8b445999d82c2687c0f7d6a428ccecc3e2ced9e7a394bebe2498ff64a439b6`), built from commit
+`295c80e` and the current 957-test source including the portable plugin host, HUD-to-MJPEG/AVI
 recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
@@ -592,7 +596,8 @@ styled KML/KMZ vector/GroundOverlay layers, Flight Data overlay copying, correct
 airport disks, Rally Points actions, switchable Planner docking, the interactive verified-host-key
 SSH terminal, secure SFTP DataFlash download/delete workflow, the recursive flight Log Index with
 map thumbnails, offline sphere/ellipsoid MagFit, live Traditional Heli visualization, the movable
-Flight Data splitter, session-only/latest-wins vehicle parameter loading, single-prompt network
+Flight Data splitter and detachable live HUD/Quick windows, session-only/latest-wins vehicle
+parameter loading, single-prompt network
 connections, independent multi-link Connection List support and composite upstream/date/commit
 versioning, shared persisted WMS/WMTS maps, non-blocking physical-device loss/reconnect, the native
 official-compatible
@@ -609,8 +614,8 @@ exports identified during the current CodeQL triage, plus concurrent global-sett
 serialized settings-file writes, and a cancellable bounded WebSocket transport with explicit
 raw-WebSocket/Socket.IO protocol separation and reconnect lifecycle ownership.
 Its APT version is
-`1:1.3.83+20260822.r232.a0e7a7b`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r232` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r235.295c80e`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r235` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
