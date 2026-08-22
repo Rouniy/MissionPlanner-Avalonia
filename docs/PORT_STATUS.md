@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 742 tests verified; the interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 746 tests verified; the Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -144,7 +144,14 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   yellow route segments with distance hover, shared numbered waypoint/photo markers, terrain-aware
   camera footprints, the 1–8+ overlap palette and legend, point-start vertex selection and the
   optional distance optimiser. Boundary edits are returned to Flight Planner when the grid is
-  accepted.
+  accepted. The working geometry modes from the separate upstream Grid v2 plugin are integrated in
+  that same preview: draw a rectangular replacement, move the complete boundary or shift the
+  nearest edge perpendicular to itself, in addition to dragging individual vertices. SimpleGrid is
+  a strict subset of this workflow and calls the same `Utilities.Grid.CreateGrid` implementation.
+  Grid v2's displayed aircraft turn radius and maximum flight time never affect its grid or mission,
+  while its min/max speed values only populate otherwise unused fields. The six historical 3DR
+  profiles merely limit a redundant altitude slider without validating the editable altitude or
+  generated mission, so those inert/presentation controls are not presented as missing functionality.
 - The integrated DroneCAN parameter page now has search, favourites, modified-only filtering and
   `.param` import/export; failed writes remain visibly dirty instead of being accepted locally.
   Its MAVLink-CAN session, forwarding packets and every node parameter/firmware operation are bound
@@ -397,12 +404,12 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 742 passed, 0 failed.
+- Automated tests: 746 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target was rebuilt from the current 742-test source on 2026-08-22. Package metadata,
+- The `.deb` target was rebuilt from the current 746-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 396 packaged-file checksums match after extraction, including the
   byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -416,10 +423,11 @@ native-platform acceptance testing.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.9d46036_amd64.deb`
-(53,897,324 bytes; SHA-256
-`388fe23abf5307d3c2d39051f1656b7076d37c064cd244e100c5c37c9eca3093`), built from the current
-742-test source including the interactive MAVLink camera/gimbal video control and all official
+`out/packages/missionplanner-avalonia_1.3.83-20260822.4753095_amd64.deb`
+(53,904,350 bytes; SHA-256
+`878d14326fc400df9bd00b5ec003e661508479212a2700cec8307d7f01c9a033`), built from the current
+746-test source including the integrated Grid v2 boundary editor, interactive MAVLink
+camera/gimbal video control and all official
 Maestro/ArduTracker/DegreeTracker serial antenna outputs,
 pydronecan multicast CAN1/CAN2, direct serial SLCAN, target-safe official DroneCAN
 parameter/firmware, MicroDrone, DEVICE_OP
@@ -434,8 +442,8 @@ Flight Data splitter, session-only/latest-wins vehicle parameter loading, single
 connections, independent multi-link Connection List support and composite upstream/date/commit
 versioning.
 Its APT version is
-`1:1.3.83+20260822.r171.9d46036`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r171` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r174.4753095`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r174` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -478,7 +486,6 @@ not remove required Windows-native files from `win-x64` builds.
 | Full Mission Planner plugin loader | All | Discovery, lifecycle and WinForms plugin hosting are absent. Keep the new portable action/HUD hooks and add a cross-platform plugin host separately. |
 | Optional native GDAL/OGR map drivers | All | GeoPackage feature layers, SHP and DXF are available through managed cross-platform readers. The generic native OGR/GDAL driver path for additional formats remains absent. |
 | Swarm / formation flight | All | The upstream swarm controllers and UI are absent. The control logic is portable, but needs a new multi-vehicle foundation and Avalonia safety UI. |
-| Grid v2 / SimpleGrid variants | All | The alternative upstream/plugin grid workflows remain absent. |
 | Signed beta application updates | All | Stable signed updates work. The Beta Updates control is disabled until this project publishes and signs a separate beta manifest/channel. |
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
