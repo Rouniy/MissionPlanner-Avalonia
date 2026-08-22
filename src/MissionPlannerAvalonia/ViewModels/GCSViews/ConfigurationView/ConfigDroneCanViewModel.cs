@@ -24,12 +24,36 @@ namespace MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView;
 
 public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   private const string _favoritesKey = "dronecan_fav_params";
-  private readonly MAVLinkInterface _comPort = AppState.comPort;
+  private readonly Func<DroneCanSessionTarget?> _activeTarget;
+  private readonly bool _subscribedToAppState;
   private DroneCAN.DroneCAN? _can;
   private CommsInjection? _port;
+  private MAVLinkInterface? _subscribedLink;
+  private DroneCanSessionTarget? _observedTarget;
+  private DroneCanSessionTarget? _sessionTarget;
+  private CancellationTokenSource? _operationCancellation;
   private bool _mavlinkCanRun;
+  private volatile bool _targetInvalidated;
+  private long _targetRevision;
+  private long _nodeRevision;
   private byte _busInUse;
   private int _subId = -1;
+  private bool _disposed;
+
+  public ConfigDroneCanViewModel()
+      : this(CaptureAppStateTarget, subscribeToAppState: true) {
+  }
+
+  internal ConfigDroneCanViewModel(
+      Func<DroneCanSessionTarget?> activeTarget,
+      bool subscribeToAppState = false) {
+    _activeTarget = activeTarget;
+    _subscribedToAppState = subscribeToAppState;
+    _observedTarget = CaptureActiveTarget();
+    if (_subscribedToAppState) {
+      AppState.ConnectionChanged += OnConnectionChanged;
+    }
+  }
 
   public ObservableCollection<DroneCanNode> Nodes { get; } = new();
 
@@ -74,9 +98,9 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   [ObservableProperty]
   private bool _showModifiedParametersOnly;
 
-  private CancellationTokenSource? _fwCancel;
-
   partial void OnSelectedNodeChanged(DroneCanNode? value) {
+    Interlocked.Increment(ref _nodeRevision);
+    CancelSafely(Volatile.Read(ref _operationCancellation));
     _allNodeParams.Clear();
     NodeParams.Clear();
     NodeStatus = value == null
@@ -89,8 +113,19 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
   partial void OnShowModifiedParametersOnlyChanged(bool value) => ApplyParameterFilter();
 
   public string ConnectLabel => IsConnected ? "Disconnect" : "Connect";
+  public bool CanChangeInterface => !IsConnected && !IsBusy;
+  public bool CanToggleConnection => IsConnected || !IsBusy;
 
-  partial void OnIsConnectedChanged(bool value) => OnPropertyChanged(nameof(ConnectLabel));
+  partial void OnIsConnectedChanged(bool value) {
+    OnPropertyChanged(nameof(ConnectLabel));
+    OnPropertyChanged(nameof(CanChangeInterface));
+    OnPropertyChanged(nameof(CanToggleConnection));
+  }
+
+  partial void OnIsBusyChanged(bool value) {
+    OnPropertyChanged(nameof(CanChangeInterface));
+    OnPropertyChanged(nameof(CanToggleConnection));
+  }
 
   partial void OnLogToFileChanged(bool value) {
     if (_can == null) {
@@ -120,8 +155,14 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private void ToggleConnect() {
+    if (_disposed) {
+      return;
+    }
     if (IsConnected) {
-      Disconnect();
+      Disconnect("Disconnected.");
+      return;
+    }
+    if (IsBusy) {
       return;
     }
 
@@ -130,24 +171,36 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       return;
     }
 
-    if (_comPort.BaseStream?.IsOpen != true) {
+    DroneCanSessionTarget? target = CaptureActiveTarget();
+    if (target == null) {
       Status = "Not connected — open the MAVLink link first.";
+      ClearVehicleState();
       return;
     }
 
-    Nodes.Clear();
+    ClearVehicleState();
     byte bus = (byte)(SelectedBusIndex == 1 ? 2 : 1);
-    StartMavlinkCAN(bus);
+    _observedTarget = target;
+    _sessionTarget = target;
+    _targetInvalidated = false;
+    long revision = Interlocked.Increment(ref _targetRevision);
     IsConnected = true;
-    Status = $"Listening for nodes on MAVLink CAN{bus}…";
+    StartMavlinkCAN(target, bus, revision);
+    Status = $"Starting MAVLink CAN{bus} for "
+        + $"{target.SystemId}:{target.ComponentId} on the selected modem…";
   }
 
   [RelayCommand]
   private void Filter() {
-    if (!IsConnected || _can == null) {
+    var can = _can;
+    DroneCanSessionTarget? target = _sessionTarget;
+    long revision = Volatile.Read(ref _targetRevision);
+    if (!IsConnected || can == null || target == null ||
+        !IsCanSessionCurrent(can, target, revision)) {
       Status = "Connect first to configure frame filtering.";
       return;
     }
+    byte busInUse = _busInUse;
 
     var defaultFilter = new List<ushort> {
       (ushort)0,
@@ -168,16 +221,16 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
     void SendFilter(byte numIds) {
       var filter = new MAVLink.mavlink_can_filter_modify_t(
-          defaultFilter.ToArray().MakeSize(16), (byte)_comPort.sysidcurrent,
-          (byte)_comPort.compidcurrent, _busInUse,
+          defaultFilter.ToArray().MakeSize(16), target.SystemId,
+          target.ComponentId, busInUse,
           (byte)MAVLink.CAN_FILTER_OP.CAN_FILTER_REPLACE, numIds);
 
-      if (!_mavlinkCanRun) {
+      if (!IsCanSessionCurrent(can, target, revision)) {
         return;
       }
 
       try {
-        _comPort.sendPacket(filter, (byte)_comPort.sysidcurrent, (byte)_comPort.compidcurrent);
+        target.Link.sendPacket(filter, target.SystemId, target.ComponentId);
       } catch (Exception ex) {
         Console.WriteLine(ex.ToString());
       }
@@ -228,7 +281,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private void Stats() {
-    if (!IsConnected || _can == null) {
+    if (!HasCurrentCanSession()) {
       NodeStatus = "Connect first to capture node statistics.";
       return;
     }
@@ -241,137 +294,162 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private void SelectNode(DroneCanNode? node) {
-    if (node != null) {
+    if (node != null && Nodes.Contains(node) && HasCurrentCanSession()) {
       SelectedNode = node;
     }
   }
 
   [RelayCommand]
   private void Refresh() {
-    if (!IsConnected || _can == null) {
+    if (IsBusy) {
+      Status = "Wait for the current DroneCAN operation to finish before refreshing nodes.";
+      return;
+    }
+    if (!HasCurrentCanSession()) {
       Status = "Connect first to refresh the node list.";
       return;
     }
 
+    SelectedNode = null;
     Nodes.Clear();
     Status = "Re-requesting node status…";
   }
 
   [RelayCommand]
   private async Task GetParameters() {
-    var can = _can;
-    var node = SelectedNode;
-    if (can == null || node == null) {
-      NodeStatus = "Connect and select a node first.";
+    DroneCanOperation? operation = TryBeginNodeOperation();
+    if (operation == null) {
       return;
     }
 
-    IsBusy = true;
-    NodeStatus = $"Requesting parameters from node {node.Id}…";
-    var id = node.Id;
-
-    List<DroneCAN.DroneCAN.uavcan_protocol_param_GetSet_res> list = new();
+    NodeStatus = $"Requesting parameters from node {operation.NodeId}…";
     try {
-      await Task.Run(() => list = can.GetParameters(id));
-    } catch (Exception ex) {
-      NodeStatus = "Error getting parameters: " + ex.Message;
-      IsBusy = false;
-      return;
-    }
-
-    _allNodeParams.Clear();
-    NodeParams.Clear();
-    bool hasDedicatedFavorites = Settings.Instance.ContainsKey(_favoritesKey);
-    var favs = Settings.Instance.GetList(
-        hasDedicatedFavorites ? _favoritesKey : "fav_params").ToHashSet();
-    foreach (var p in list) {
-      var name = Encoding.ASCII.GetString(p.name, 0, p.name_len);
-      if (string.IsNullOrEmpty(name)) {
-        continue;
+      List<DroneCAN.DroneCAN.uavcan_protocol_param_GetSet_res> list = await Task.Run(() => {
+        operation.Cancellation.Token.ThrowIfCancellationRequested();
+        var result = operation.Can.GetParameters(operation.NodeId);
+        operation.Cancellation.Token.ThrowIfCancellationRequested();
+        return result;
+      });
+      if (!IsOperationCurrent(operation)) {
+        return;
       }
 
-      _allNodeParams.Add(new DroneCanParam {
-        Name = name,
-        Value = Convert.ToString(p.value.GetValue(), CultureInfo.InvariantCulture) ?? "",
-        OriginalValue = Convert.ToString(p.value.GetValue(), CultureInfo.InvariantCulture) ?? "",
-        Min = Convert.ToString(p.min_value.GetValue(), CultureInfo.InvariantCulture) ?? "",
-        Max = Convert.ToString(p.max_value.GetValue(), CultureInfo.InvariantCulture) ?? "",
-        Default = Convert.ToString(p.default_value.GetValue(), CultureInfo.InvariantCulture) ?? "",
-        IsFav = favs.Contains(name),
-      });
+      _allNodeParams.Clear();
+      NodeParams.Clear();
+      bool hasDedicatedFavorites = Settings.Instance.ContainsKey(_favoritesKey);
+      var favs = Settings.Instance.GetList(
+          hasDedicatedFavorites ? _favoritesKey : "fav_params").ToHashSet();
+      foreach (var p in list) {
+        var name = Encoding.ASCII.GetString(p.name, 0, p.name_len);
+        if (string.IsNullOrEmpty(name)) {
+          continue;
+        }
+
+        _allNodeParams.Add(new DroneCanParam {
+          Name = name,
+          Value = Convert.ToString(p.value.GetValue(), CultureInfo.InvariantCulture) ?? "",
+          OriginalValue = Convert.ToString(p.value.GetValue(), CultureInfo.InvariantCulture) ?? "",
+          Min = Convert.ToString(p.min_value.GetValue(), CultureInfo.InvariantCulture) ?? "",
+          Max = Convert.ToString(p.max_value.GetValue(), CultureInfo.InvariantCulture) ?? "",
+          Default = Convert.ToString(p.default_value.GetValue(), CultureInfo.InvariantCulture) ?? "",
+          IsFav = favs.Contains(name),
+        });
+      }
+
+      if (!hasDedicatedFavorites) {
+        // Early Avalonia builds accidentally shared fav_params with the vehicle parameter page.
+        // Copy only names that exist on this node, without modifying the vehicle favourites.
+        Settings.Instance.SetList(_favoritesKey,
+            _allNodeParams.Where(parameter => parameter.IsFav).Select(parameter => parameter.Name));
+      }
+
+      SortAndFilterParameters();
+      NodeStatus = $"Loaded {_allNodeParams.Count} parameters from node {operation.NodeId}.";
+    } catch (OperationCanceledException) when (operation.Cancellation.IsCancellationRequested) {
+      // A modem/vehicle change reports the stronger session warning from the invalidation path.
+    } catch (Exception ex) {
+      if (IsOperationCurrent(operation)) {
+        NodeStatus = "Error getting parameters: " + ex.Message;
+      }
+    } finally {
+      CompleteOperation(operation);
     }
-
-    if (!hasDedicatedFavorites) {
-      // Early Avalonia builds accidentally shared fav_params with the vehicle parameter page.
-      // Copy only names that exist on this node, without modifying the vehicle favourites.
-      Settings.Instance.SetList(_favoritesKey,
-          _allNodeParams.Where(parameter => parameter.IsFav).Select(parameter => parameter.Name));
-    }
-
-    SortAndFilterParameters();
-
-    NodeStatus = $"Loaded {_allNodeParams.Count} parameters from node {node.Id}.";
-    IsBusy = false;
   }
 
   [RelayCommand]
   private async Task WriteParameters() {
-    var can = _can;
-    var node = SelectedNode;
-    if (can == null || node == null) {
-      NodeStatus = "Connect and select a node first.";
+    DroneCanOperation? operation = TryBeginNodeOperation();
+    if (operation == null) {
       return;
     }
 
-    var changed = _allNodeParams.Where(p => p.IsDirty).ToList();
+    var changed = _allNodeParams.Where(p => p.IsDirty)
+        .Select(parameter => (Parameter: parameter, Value: parameter.Value)).ToList();
     if (changed.Count == 0) {
       NodeStatus = "No modified parameters to write.";
+      CompleteOperation(operation);
       return;
     }
 
-    IsBusy = true;
-    var id = node.Id;
-    int failed = 0;
-    var written = new List<DroneCanParam>();
-
-    await Task.Run(() => {
-      foreach (var p in changed) {
-        try {
-
-          object value = double.TryParse(p.Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var d)
-              ? d
-              : p.Value;
-          if (!can.SetParameter(id, p.Name, value)) {
-            failed++;
-          } else {
-            written.Add(p);
+    NodeStatus = $"Writing {changed.Count} parameter(s) to node {operation.NodeId}…";
+    try {
+      var result = await Task.Run(() => {
+        int failed = 0;
+        var written = new List<DroneCanParam>();
+        foreach (var item in changed) {
+          if (!IsOperationCurrent(operation)) {
+            return (Stale: true, Failed: failed, Written: written);
           }
-        } catch {
-          failed++;
+          try {
+            object value = double.TryParse(item.Value, NumberStyles.Any,
+                    CultureInfo.InvariantCulture, out var number)
+                ? number
+                : item.Value;
+            if (!operation.Can.SetParameter(
+                    operation.NodeId, item.Parameter.Name, value)) {
+              failed++;
+            } else {
+              written.Add(item.Parameter);
+            }
+          } catch {
+            failed++;
+          }
         }
+
+        if (!IsOperationCurrent(operation)) {
+          return (Stale: true, Failed: failed, Written: written);
+        }
+        try {
+          operation.Can.SaveConfig(operation.NodeId);
+        } catch {
+        }
+        return (Stale: false, Failed: failed, Written: written);
+      });
+      if (result.Stale || !IsOperationCurrent(operation)) {
+        return;
       }
 
-      try {
-        can.SaveConfig(id);
-      } catch {
+      foreach (var parameter in result.Written) {
+        parameter.AcceptValue();
       }
-    });
+      ApplyParameterFilter();
 
-    foreach (var p in written) {
-      p.AcceptValue();
+      NodeStatus = result.Failed == 0
+          ? $"Wrote {changed.Count} parameters and saved to flash."
+          : $"Wrote parameters with {result.Failed} failure(s); saved to flash.";
+    } catch (OperationCanceledException) when (operation.Cancellation.IsCancellationRequested) {
+    } catch (Exception ex) {
+      if (IsOperationCurrent(operation)) {
+        NodeStatus = "Parameter write failed: " + ex.Message;
+      }
+    } finally {
+      CompleteOperation(operation);
     }
-
-    ApplyParameterFilter();
-
-    NodeStatus = failed == 0
-        ? $"Wrote {changed.Count} parameters and saved to flash."
-        : $"Wrote parameters with {failed} failure(s); saved to flash.";
-    IsBusy = false;
   }
 
   [RelayCommand]
   private void ToggleParameterFavorite(DroneCanParam? parameter) {
-    if (parameter == null) {
+    if (parameter == null || !_allNodeParams.Contains(parameter) || !HasCurrentCanSession()) {
       return;
     }
 
@@ -383,8 +461,9 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private async Task ImportParameters() {
+    DroneCanSelection? selection = CaptureSelection();
     var owner = Services.Dialogs.Owner;
-    if (owner == null || _allNodeParams.Count == 0) {
+    if (owner == null || _allNodeParams.Count == 0 || selection == null) {
       NodeStatus = "Get node parameters before importing a .param file.";
       return;
     }
@@ -401,12 +480,20 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     if (path == null) {
       return;
     }
+    if (!IsSelectionCurrent(selection)) {
+      NodeStatus = TargetChangedMessage;
+      return;
+    }
 
     Dictionary<string, double> fileParams;
     try {
       fileParams = ParamFile.loadParamFile(path);
     } catch (Exception ex) {
       NodeStatus = "Parameter import failed: " + ex.Message;
+      return;
+    }
+    if (!IsSelectionCurrent(selection)) {
+      NodeStatus = TargetChangedMessage;
       return;
     }
 
@@ -423,8 +510,9 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private async Task ExportParameters() {
+    DroneCanSelection? selection = CaptureSelection();
     var owner = Services.Dialogs.Owner;
-    if (owner == null || _allNodeParams.Count == 0) {
+    if (owner == null || _allNodeParams.Count == 0 || selection == null) {
       NodeStatus = "Get node parameters before exporting.";
       return;
     }
@@ -441,6 +529,10 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     if (path == null) {
       return;
     }
+    if (!IsSelectionCurrent(selection)) {
+      NodeStatus = TargetChangedMessage;
+      return;
+    }
 
     var table = new Hashtable();
     foreach (var parameter in _allNodeParams) {
@@ -451,6 +543,10 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     }
 
     try {
+      if (!IsSelectionCurrent(selection)) {
+        NodeStatus = TargetChangedMessage;
+        return;
+      }
       ParamFile.SaveParamFile(path, table);
       NodeStatus = $"Exported {table.Count} numeric parameter(s) to {Path.GetFileName(path)}.";
     } catch (Exception ex) {
@@ -484,135 +580,179 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private async Task SaveConfig() {
-    var can = _can;
-    var node = SelectedNode;
-    if (can == null || node == null) {
-      NodeStatus = "Connect and select a node first.";
+    DroneCanOperation? operation = TryBeginNodeOperation();
+    if (operation == null) {
       return;
     }
 
-    IsBusy = true;
-    var id = node.Id;
-    bool ok = false;
-    await Task.Run(() => {
-      try {
-        ok = can.SaveConfig(id);
-      } catch {
+    try {
+      bool ok = await Task.Run(() => {
+        operation.Cancellation.Token.ThrowIfCancellationRequested();
+        return operation.Can.SaveConfig(operation.NodeId);
+      });
+      if (IsOperationCurrent(operation)) {
+        NodeStatus = ok
+            ? "Parameters committed to non-volatile memory."
+            : "Failed to save parameters.";
       }
-    });
-    NodeStatus = ok ? "Parameters committed to non-volatile memory." : "Failed to save parameters.";
-    IsBusy = false;
+    } catch (OperationCanceledException) when (operation.Cancellation.IsCancellationRequested) {
+    } catch (Exception ex) {
+      if (IsOperationCurrent(operation)) {
+        NodeStatus = "Failed to save parameters: " + ex.Message;
+      }
+    } finally {
+      CompleteOperation(operation);
+    }
   }
 
   [RelayCommand]
   private async Task EraseConfig() {
-    var can = _can;
-    var node = SelectedNode;
-    if (can == null || node == null) {
-      NodeStatus = "Connect and select a node first.";
+    DroneCanOperation? operation = TryBeginNodeOperation();
+    if (operation == null) {
       return;
     }
 
-    IsBusy = true;
-    var id = node.Id;
-    bool ok = false;
-    await Task.Run(() => {
-      try {
-        ok = can.ExecuteOpCode(id, (byte)DroneCAN.DroneCAN.uavcan_protocol_param_ExecuteOpcode_req
-            .UAVCAN_PROTOCOL_PARAM_EXECUTEOPCODE_REQ_OPCODE_ERASE);
-      } catch {
+    try {
+      bool ok = await Task.Run(() => {
+        operation.Cancellation.Token.ThrowIfCancellationRequested();
+        return operation.Can.ExecuteOpCode(operation.NodeId,
+            (byte)DroneCAN.DroneCAN.uavcan_protocol_param_ExecuteOpcode_req
+                .UAVCAN_PROTOCOL_PARAM_EXECUTEOPCODE_REQ_OPCODE_ERASE);
+      });
+      if (IsOperationCurrent(operation)) {
+        NodeStatus = ok
+            ? "Erased parameters to defaults (node restart may be required)."
+            : "Failed to erase parameters.";
       }
-    });
-    NodeStatus = ok ? "Erased parameters to defaults (node restart may be required)." : "Failed to erase parameters.";
-    IsBusy = false;
+    } catch (OperationCanceledException) when (operation.Cancellation.IsCancellationRequested) {
+    } catch (Exception ex) {
+      if (IsOperationCurrent(operation)) {
+        NodeStatus = "Failed to erase parameters: " + ex.Message;
+      }
+    } finally {
+      CompleteOperation(operation);
+    }
   }
 
   [RelayCommand]
   private async Task RestartNode() {
-    var can = _can;
-    var node = SelectedNode;
-    if (can == null || node == null) {
-      NodeStatus = "Connect and select a node first.";
+    DroneCanOperation? operation = TryBeginNodeOperation();
+    if (operation == null) {
       return;
     }
 
-    IsBusy = true;
-    var id = node.Id;
-    bool ok = false;
-    await Task.Run(() => {
-      try {
-        ok = can.RestartNode(id);
-      } catch {
+    try {
+      bool ok = await Task.Run(() => {
+        operation.Cancellation.Token.ThrowIfCancellationRequested();
+        return operation.Can.RestartNode(operation.NodeId);
+      });
+      if (IsOperationCurrent(operation)) {
+        NodeStatus = ok
+            ? $"Node {operation.NodeId} restart requested."
+            : $"Node {operation.NodeId} did not acknowledge restart.";
       }
-    });
-    NodeStatus = ok ? $"Node {id} restart requested." : $"Node {id} did not acknowledge restart.";
-    IsBusy = false;
+    } catch (OperationCanceledException) when (operation.Cancellation.IsCancellationRequested) {
+    } catch (Exception ex) {
+      if (IsOperationCurrent(operation)) {
+        NodeStatus = "Node restart failed: " + ex.Message;
+      }
+    } finally {
+      CompleteOperation(operation);
+    }
   }
 
   public async Task UpdateFirmwareAsync(string firmwarePath) {
-    var can = _can;
-    var node = SelectedNode;
-    if (can == null || node == null) {
-      NodeStatus = "Connect and select a node first.";
+    DroneCanOperation? operation = TryBeginNodeOperation();
+    if (operation == null) {
       return;
     }
 
     if (string.IsNullOrEmpty(firmwarePath) || !File.Exists(firmwarePath)) {
       NodeStatus = "Firmware file not found.";
+      CompleteOperation(operation);
       return;
     }
 
-    IsBusy = true;
-    var id = node.Id;
-    _fwCancel = new CancellationTokenSource();
+    DroneCAN.DroneCAN.FileSendProgressArgs progress = (n, f, p) => {
+      if (IsOperationCurrent(operation)) {
+        Dispatcher.UIThread.Post(() => {
+          if (IsOperationCurrent(operation)) {
+            NodeStatus = $"Firmware {f}: {p:0}%";
+          }
+        });
+      }
+    };
+    DroneCAN.DroneCAN.FileSendCompleteArgs complete = (n, f) => {
+      if (IsOperationCurrent(operation)) {
+        Dispatcher.UIThread.Post(() => {
+          if (IsOperationCurrent(operation)) {
+            NodeStatus = "Firmware send complete.";
+          }
+        });
+      }
+    };
 
-    DroneCAN.DroneCAN.FileSendProgressArgs progress = (n, f, p) =>
-        Dispatcher.UIThread.Post(() => NodeStatus = $"Firmware {f}: {p:0}%");
-    DroneCAN.DroneCAN.FileSendCompleteArgs complete = (n, f) =>
-        Dispatcher.UIThread.Post(() => NodeStatus = "Firmware send complete.");
+    operation.Can.FileSendProgress += progress;
+    operation.Can.FileSendComplete += complete;
 
-    can.FileSendProgress += progress;
-    can.FileSendComplete += complete;
-
+    string? temporaryFirmware = null;
     try {
-      var devicename = can.GetNodeName(id);
-      await Task.Run(() => {
+      string deviceName = await Task.Run(() => {
+        operation.Cancellation.Token.ThrowIfCancellationRequested();
+        string name = operation.Can.GetNodeName(operation.NodeId);
         var file = firmwarePath;
 
         if (file.ToLowerInvariant().EndsWith(".apj")) {
           var fw = px4uploader.Firmware.ProcessFirmware(file);
-          var tmp = Path.GetTempFileName();
-          File.WriteAllBytes(tmp, fw.imagebyte);
-          file = tmp;
+          temporaryFirmware = Path.GetTempFileName();
+          File.WriteAllBytes(temporaryFirmware, fw.imagebyte);
+          file = temporaryFirmware;
         }
 
-        can.Update(id, devicename, 0, file, _fwCancel.Token);
+        operation.Cancellation.Token.ThrowIfCancellationRequested();
+        operation.Can.Update(
+            operation.NodeId, name, 0, file, operation.Cancellation.Token);
+        operation.Cancellation.Token.ThrowIfCancellationRequested();
+        return name;
       });
-      NodeStatus = $"Firmware update started for node {id} ({devicename}).";
+      if (IsOperationCurrent(operation)) {
+        NodeStatus = $"Firmware update started for node {operation.NodeId} ({deviceName}).";
+      }
+    } catch (OperationCanceledException) when (operation.Cancellation.IsCancellationRequested) {
     } catch (Exception ex) {
-      NodeStatus = "Firmware update failed: " + ex.Message;
+      if (IsOperationCurrent(operation)) {
+        NodeStatus = "Firmware update failed: " + ex.Message;
+      }
     } finally {
-      can.FileSendProgress -= progress;
-      can.FileSendComplete -= complete;
-      IsBusy = false;
+      operation.Can.FileSendProgress -= progress;
+      operation.Can.FileSendComplete -= complete;
+      if (temporaryFirmware != null) {
+        try {
+          File.Delete(temporaryFirmware);
+        } catch {
+        }
+      }
+      CompleteOperation(operation);
     }
   }
 
-  private void StartMavlinkCAN(byte bus) {
+  private void StartMavlinkCAN(
+      DroneCanSessionTarget target, byte bus, long revision) {
     _busInUse = bus;
     _mavlinkCanRun = true;
+    MAVLinkInterface link = target.Link;
 
-    Task.Run(() => {
-      Thread.Sleep(1000);
-      while (_mavlinkCanRun) {
+    _ = Task.Run(async () => {
+      await Task.Delay(1000).ConfigureAwait(false);
+      while (IsSessionCurrent(target, revision)) {
         try {
-          _comPort.doCommand((byte)_comPort.sysidcurrent, (byte)_comPort.compidcurrent,
+          link.doCommand(target.SystemId, target.ComponentId,
               MAVLink.MAV_CMD.CAN_FORWARD, bus, 0, 0, 0, 0, 0, 0, false);
         } catch {
         }
 
-        if (_mavlinkCanRun) {
-          Thread.Sleep(1000);
+        if (IsSessionCurrent(target, revision)) {
+          await Task.Delay(1000).ConfigureAwait(false);
         }
       }
     });
@@ -624,22 +764,31 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     var port = _port;
 
     can.FrameReceived += (frame, payload) => {
-      if (payload.packet_data.Length > 8) {
-        _comPort.sendPacket(new MAVLink.mavlink_canfd_frame_t(
-                BitConverter.ToUInt32(frame.packet_data, 0) + (frame.Extended ? 0x80000000 : 0),
-                (byte)_comPort.sysidcurrent, (byte)_comPort.compidcurrent, (byte)(bus - 1),
-                (byte)DroneCAN.DroneCAN.dataLengthToDlc(payload.packet_data.Length), payload.packet_data),
-            (byte)_comPort.sysidcurrent, (byte)_comPort.compidcurrent);
-      } else {
-        _comPort.sendPacket(new MAVLink.mavlink_can_frame_t(
-                BitConverter.ToUInt32(frame.packet_data, 0) + (frame.Extended ? 0x80000000 : 0),
-                (byte)_comPort.sysidcurrent, (byte)_comPort.compidcurrent, (byte)(bus - 1),
-                (byte)DroneCAN.DroneCAN.dataLengthToDlc(payload.packet_data.Length), payload.packet_data),
-            (byte)_comPort.sysidcurrent, (byte)_comPort.compidcurrent);
+      if (!IsCanSessionCurrent(can, target, revision)) {
+        return;
+      }
+      try {
+        if (payload.packet_data.Length > 8) {
+          link.sendPacket(new MAVLink.mavlink_canfd_frame_t(
+                  BitConverter.ToUInt32(frame.packet_data, 0) + (frame.Extended ? 0x80000000 : 0),
+                  target.SystemId, target.ComponentId, (byte)(bus - 1),
+                  (byte)DroneCAN.DroneCAN.dataLengthToDlc(payload.packet_data.Length), payload.packet_data),
+              target.SystemId, target.ComponentId);
+        } else {
+          link.sendPacket(new MAVLink.mavlink_can_frame_t(
+                  BitConverter.ToUInt32(frame.packet_data, 0) + (frame.Extended ? 0x80000000 : 0),
+                  target.SystemId, target.ComponentId, (byte)(bus - 1),
+                  (byte)DroneCAN.DroneCAN.dataLengthToDlc(payload.packet_data.Length), payload.packet_data),
+              target.SystemId, target.ComponentId);
+        }
+      } catch {
       }
     };
 
     port.WriteCallback += (_, bytes) => {
+      if (!IsCanSessionCurrent(can, target, revision)) {
+        return;
+      }
       var lines = Encoding.ASCII.GetString(bytes.ToArray())
           .Split(new[] { '\r' }, StringSplitOptions.RemoveEmptyEntries);
       foreach (var line in lines) {
@@ -647,7 +796,11 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       }
     };
 
-    _subId = _comPort.SubscribeToPacketType(MAVLink.MAVLINK_MSG_ID.CAN_FRAME, m => {
+    _subscribedLink = link;
+    _subId = link.SubscribeToPacketType(MAVLink.MAVLINK_MSG_ID.CAN_FRAME, m => {
+      if (!IsCanSessionCurrent(can, target, revision)) {
+        return false;
+      }
       if (m.msgid == (uint)MAVLink.MAVLINK_MSG_ID.CAN_FRAME) {
         var pkt = (MAVLink.mavlink_can_frame_t)m.data;
         var cf = new DroneCAN.CANFrame(BitConverter.GetBytes(pkt.id));
@@ -665,10 +818,10 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       }
 
       return true;
-    }, (byte)_comPort.sysidcurrent, (byte)_comPort.compidcurrent, true);
+    }, target.SystemId, target.ComponentId, true);
 
     can.NodeAdded += (id, msg) => {
-      Dispatcher.UIThread.Post(() => {
+      PostForSession(can, target, revision, () => {
         if (Nodes.Any(n => n.Id == id)) {
           return;
         }
@@ -685,7 +838,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
 
     can.MessageReceived += (frame, msg, transferID) => {
       if (msg is DroneCAN.DroneCAN.uavcan_protocol_NodeStatus ns) {
-        Dispatcher.UIThread.Post(() => {
+        PostForSession(can, target, revision, () => {
           foreach (var item in Nodes.Where(n => n.Id == frame.SourceNode)) {
             item.Health = HealthString(ns.health);
             item.Mode = ModeString(ns.mode);
@@ -693,7 +846,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
           }
         });
       } else if (msg is DroneCAN.DroneCAN.uavcan_protocol_GetNodeInfo_res gnires) {
-        Dispatcher.UIThread.Post(() => {
+        PostForSession(can, target, revision, () => {
           foreach (var item in Nodes.Where(n => n.Id == frame.SourceNode)) {
             item.Name = Encoding.ASCII.GetString(gnires.name, 0, gnires.name_len);
             item.SoftwareVersion = gnires.software_version.major + "." + gnires.software_version.minor +
@@ -706,7 +859,7 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
           }
         });
       } else if (msg is DroneCAN.DroneCAN.uavcan_protocol_debug_LogMessage dbg) {
-        Dispatcher.UIThread.Post(() => {
+        PostForSession(can, target, revision, () => {
           DebugLog.Insert(0, new DroneCanLog {
             Node = frame.SourceNode.ToString(),
             Level = dbg.level.value.ToString(),
@@ -717,12 +870,21 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
             DebugLog.RemoveAt(DebugLog.Count - 1);
           }
         });
-      } else if (StatsLogging && msg is DroneCAN.DroneCAN.dronecan_protocol_Stats st) {
-        Dispatcher.UIThread.Post(() => AppendStat(frame.SourceNode,
-            $"tx={st.tx_frames} txerr={st.tx_errors} rx={st.rx_frames} crc_err={st.rx_error_bad_crc}"));
-      } else if (StatsLogging && msg is DroneCAN.DroneCAN.dronecan_protocol_CanStats cs) {
-        Dispatcher.UIThread.Post(() => AppendStat(frame.SourceNode,
-            $"if{cs.@interface} tx_req={cs.tx_requests} tx_ok={cs.tx_success} rx={cs.rx_received} busoff={cs.busoff_errors}"));
+      } else if (msg is DroneCAN.DroneCAN.dronecan_protocol_Stats st) {
+        PostForSession(can, target, revision, () => {
+          if (StatsLogging) {
+            AppendStat(frame.SourceNode,
+                $"tx={st.tx_frames} txerr={st.tx_errors} rx={st.rx_frames} crc_err={st.rx_error_bad_crc}");
+          }
+        });
+      } else if (msg is DroneCAN.DroneCAN.dronecan_protocol_CanStats cs) {
+        PostForSession(can, target, revision, () => {
+          if (StatsLogging) {
+            AppendStat(frame.SourceNode,
+                $"if{cs.@interface} tx_req={cs.tx_requests} tx_ok={cs.tx_success} "
+                + $"rx={cs.rx_received} busoff={cs.busoff_errors}");
+          }
+        });
       }
     };
 
@@ -733,13 +895,34 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       }
     }
 
-    try {
-      can.StartSLCAN(port.BaseStream);
-      can.SetupFileServer();
-      can.SetupDynamicNodeAllocator();
-    } catch (Exception ex) {
-      Dispatcher.UIThread.Post(() => Status = "CAN start failed: " + ex.Message);
-    }
+    _ = Task.Run(() => {
+      try {
+        can.StartSLCAN(port.BaseStream);
+        if (!IsCanSessionCurrent(can, target, revision)) {
+          return;
+        }
+        can.SetupFileServer();
+        can.SetupDynamicNodeAllocator();
+        PostForSession(can, target, revision, () =>
+            Status = $"Listening for nodes on MAVLink CAN{bus} from "
+                + $"{target.SystemId}:{target.ComponentId} on the selected modem…");
+      } catch (Exception ex) {
+        PostForSession(can, target, revision,
+            () => Disconnect("CAN start failed: " + ex.Message));
+      }
+    });
+  }
+
+  private void PostForSession(
+      DroneCAN.DroneCAN can,
+      DroneCanSessionTarget target,
+      long revision,
+      Action action) {
+    Dispatcher.UIThread.Post(() => {
+      if (IsCanSessionCurrent(can, target, revision)) {
+        action();
+      }
+    });
   }
 
   private void AppendStat(byte node, string text) {
@@ -775,49 +958,256 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
     };
   }
 
-  private void Disconnect() {
+  private void Disconnect(string reason) {
+    Interlocked.Increment(ref _targetRevision);
     _mavlinkCanRun = false;
+    CancelCurrentOperation();
 
-    try {
-      _fwCancel?.Cancel();
-    } catch {
-    }
+    DroneCAN.DroneCAN? can = _can;
+    CommsInjection? port = _port;
+    MAVLinkInterface? subscribedLink = _subscribedLink;
+    int subscription = _subId;
+    _can = null;
+    _port = null;
+    _subscribedLink = null;
+    _subId = -1;
+    _sessionTarget = null;
 
-    if (_subId != -1) {
+    if (subscription != -1 && subscribedLink != null) {
       try {
-        _comPort.UnSubscribeToPacketType(_subId);
+        subscribedLink.UnSubscribeToPacketType(subscription);
       } catch {
       }
-
-      _subId = -1;
     }
 
     try {
-      _can?.Stop(false);
+      can?.Stop(ExitSlcanOnLeave);
     } catch {
     }
-
-    _can = null;
 
     try {
-      _port?.Close();
+      port?.Close();
     } catch {
     }
 
-    _port = null;
     IsConnected = false;
+    IsBusy = false;
+    ClearVehicleState();
+    Status = reason;
+    NodeStatus = reason;
+  }
+
+  private void ClearVehicleState() {
+    SelectedNode = null;
+    Nodes.Clear();
     _allNodeParams.Clear();
     NodeParams.Clear();
-    SelectedNode = null;
-    Status = "Disconnected.";
+    DebugLog.Clear();
   }
 
-  public void Dispose() {
-    if (ExitSlcanOnLeave) {
-      Disconnect();
+  private DroneCanOperation? TryBeginNodeOperation() {
+    if (IsBusy) {
+      NodeStatus = "Another DroneCAN operation is already running.";
+      return null;
+    }
+
+    DroneCAN.DroneCAN? can = _can;
+    DroneCanNode? node = SelectedNode;
+    DroneCanSessionTarget? target = _sessionTarget;
+    long revision = Volatile.Read(ref _targetRevision);
+    if (can == null || node == null || target == null ||
+        !IsCanSessionCurrent(can, target, revision)) {
+      NodeStatus = _targetInvalidated ? TargetChangedMessage :
+          "Connect and select a node first.";
+      return null;
+    }
+
+    var cancellation = new CancellationTokenSource();
+    CancellationTokenSource? previous =
+        Interlocked.Exchange(ref _operationCancellation, cancellation);
+    CancelSafely(previous);
+    var operation = new DroneCanOperation(
+        can, node.Id, Volatile.Read(ref _nodeRevision), target, revision, cancellation);
+    if (!IsOperationCurrent(operation)) {
+      CompleteOperation(operation);
+      NodeStatus = TargetChangedMessage;
+      return null;
+    }
+    IsBusy = true;
+    return operation;
+  }
+
+  private bool IsOperationCurrent(DroneCanOperation operation) =>
+      !operation.Cancellation.IsCancellationRequested &&
+      ReferenceEquals(Volatile.Read(ref _operationCancellation), operation.Cancellation) &&
+      ReferenceEquals(_can, operation.Can) && _mavlinkCanRun &&
+      ShouldAcceptNodeBoundResult(
+          _targetInvalidated,
+          operation.Revision,
+          Volatile.Read(ref _targetRevision),
+          operation.Target,
+          CaptureActiveTarget(),
+          operation.NodeRevision,
+          Volatile.Read(ref _nodeRevision));
+
+  private void CompleteOperation(DroneCanOperation operation) {
+    bool current = ReferenceEquals(
+        Interlocked.CompareExchange(
+            ref _operationCancellation, null, operation.Cancellation),
+        operation.Cancellation);
+    if (current && !_disposed) {
+      IsBusy = false;
+    }
+    operation.Cancellation.Dispose();
+  }
+
+  private void CancelCurrentOperation() {
+    CancellationTokenSource? cancellation =
+        Interlocked.Exchange(ref _operationCancellation, null);
+    CancelSafely(cancellation);
+  }
+
+  private static void CancelSafely(CancellationTokenSource? cancellation) {
+    try {
+      cancellation?.Cancel();
+    } catch (ObjectDisposedException) {
     }
   }
+
+  private bool HasCurrentCanSession() {
+    DroneCAN.DroneCAN? can = _can;
+    DroneCanSessionTarget? target = _sessionTarget;
+    return IsConnected && can != null && target != null &&
+        IsCanSessionCurrent(can, target, Volatile.Read(ref _targetRevision));
+  }
+
+  private DroneCanSelection? CaptureSelection() {
+    DroneCanSessionTarget? target = _sessionTarget;
+    DroneCanNode? node = SelectedNode;
+    long revision = Volatile.Read(ref _targetRevision);
+    return target != null && node != null && HasCurrentCanSession()
+        ? new DroneCanSelection(
+            target, revision, node.Id, Volatile.Read(ref _nodeRevision))
+        : null;
+  }
+
+  private bool IsSelectionCurrent(DroneCanSelection selection) =>
+      ShouldAcceptNodeBoundResult(
+          _targetInvalidated,
+          selection.Revision,
+          Volatile.Read(ref _targetRevision),
+          selection.Target,
+          CaptureActiveTarget(),
+          selection.NodeRevision,
+          Volatile.Read(ref _nodeRevision)) &&
+      TargetsMatch(_sessionTarget, selection.Target);
+
+  private bool IsCanSessionCurrent(
+      DroneCAN.DroneCAN can,
+      DroneCanSessionTarget target,
+      long revision) =>
+      ReferenceEquals(_can, can) && IsSessionCurrent(target, revision);
+
+  private bool IsSessionCurrent(DroneCanSessionTarget target, long revision) =>
+      !_disposed && _mavlinkCanRun && !_targetInvalidated &&
+      revision == Volatile.Read(ref _targetRevision) &&
+      TargetsMatch(_sessionTarget, target) && TargetsMatch(CaptureActiveTarget(), target);
+
+  internal static bool TargetsMatch(
+      DroneCanSessionTarget? expected, DroneCanSessionTarget? current) => expected == current;
+
+  internal static bool ShouldAcceptSessionResult(
+      bool invalidated,
+      long capturedRevision,
+      long currentRevision,
+      DroneCanSessionTarget? expected,
+      DroneCanSessionTarget? current) =>
+      !invalidated && capturedRevision == currentRevision && expected != null &&
+      TargetsMatch(expected, current);
+
+  internal static bool ShouldAcceptNodeBoundResult(
+      bool invalidated,
+      long capturedTargetRevision,
+      long currentTargetRevision,
+      DroneCanSessionTarget? expected,
+      DroneCanSessionTarget? current,
+      long capturedNodeRevision,
+      long currentNodeRevision) =>
+      ShouldAcceptSessionResult(
+          invalidated, capturedTargetRevision, currentTargetRevision, expected, current) &&
+      capturedNodeRevision == currentNodeRevision;
+
+  private static DroneCanSessionTarget? CaptureAppStateTarget() {
+    MAVLinkInterface link = AppState.comPort;
+    return link.BaseStream?.IsOpen == true
+        ? new DroneCanSessionTarget(link, link.MAV.sysid, link.MAV.compid)
+        : null;
+  }
+
+  private DroneCanSessionTarget? CaptureActiveTarget() => _activeTarget();
+
+  private void OnConnectionChanged() {
+    if (_disposed) {
+      return;
+    }
+    DroneCanSessionTarget? current = CaptureActiveTarget();
+    if (TargetsMatch(_observedTarget, current)) {
+      return;
+    }
+
+    _observedTarget = current;
+    _targetInvalidated = true;
+    Interlocked.Increment(ref _targetRevision);
+    _mavlinkCanRun = false;
+    CancelCurrentOperation();
+    if (Dispatcher.UIThread.CheckAccess()) {
+      InvalidateForTargetChange();
+    } else {
+      Dispatcher.UIThread.Post(InvalidateForTargetChange);
+    }
+  }
+
+  private void InvalidateForTargetChange() {
+    if (_disposed) {
+      return;
+    }
+    Disconnect(TargetChangedMessage);
+  }
+
+  internal void SynchronizeActiveTarget() => OnConnectionChanged();
+
+  public void Dispose() {
+    if (_disposed) {
+      return;
+    }
+    if (_subscribedToAppState) {
+      AppState.ConnectionChanged -= OnConnectionChanged;
+    }
+    Disconnect("Disconnected.");
+    _disposed = true;
+  }
+
+  private const string TargetChangedMessage =
+      "The active modem or vehicle changed. DroneCAN was disconnected and all old nodes, "
+      + "parameters, logs and late operation results were cleared.";
 }
+
+internal sealed record DroneCanSessionTarget(
+    MAVLinkInterface Link, byte SystemId, byte ComponentId);
+
+internal sealed record DroneCanOperation(
+    DroneCAN.DroneCAN Can,
+    byte NodeId,
+    long NodeRevision,
+    DroneCanSessionTarget Target,
+    long Revision,
+    CancellationTokenSource Cancellation);
+
+internal sealed record DroneCanSelection(
+    DroneCanSessionTarget Target,
+    long Revision,
+    byte NodeId,
+    long NodeRevision);
 
 public partial class DroneCanNode : ObservableObject {
   [ObservableProperty]
