@@ -35,6 +35,70 @@ internal sealed record SurveyGridPreviewGeometry(
     IReadOnlyList<SurveyPreviewFootprint> Footprints,
     IReadOnlyList<SurveyCoveragePoint> Coverage);
 
+public enum SurveyBoundaryEditMode {
+  Pan,
+  DrawRectangle,
+  ShiftEdge,
+  MoveBoundary,
+}
+
+internal static class SurveyBoundaryGeometryEditor {
+  internal static IReadOnlyList<PointLatLngAlt> CreateRectangle(
+      MPoint first, MPoint second, double altitude) {
+    double left = Math.Min(first.X, second.X);
+    double right = Math.Max(first.X, second.X);
+    double bottom = Math.Min(first.Y, second.Y);
+    double top = Math.Max(first.Y, second.Y);
+    return new[] {
+      FromWorld(left, top, altitude),
+      FromWorld(right, top, altitude),
+      FromWorld(right, bottom, altitude),
+      FromWorld(left, bottom, altitude),
+    };
+  }
+
+  internal static IReadOnlyList<PointLatLngAlt> Translate(
+      IReadOnlyList<PointLatLngAlt> boundary, double deltaX, double deltaY) =>
+      boundary.Select(point => {
+        var world = SphericalMercator.FromLonLat(point.Lng, point.Lat);
+        return FromWorld(world.x + deltaX, world.y + deltaY, point.Alt);
+      }).ToArray();
+
+  internal static IReadOnlyList<PointLatLngAlt> ShiftEdge(
+      IReadOnlyList<PointLatLngAlt> boundary, int edgeIndex, double deltaX, double deltaY) {
+    PointLatLngAlt[] result = boundary.Select(point => new PointLatLngAlt(point)).ToArray();
+    if (result.Length < 2 || edgeIndex < 0 || edgeIndex >= result.Length) {
+      return result;
+    }
+
+    int nextIndex = (edgeIndex + 1) % result.Length;
+    var first = SphericalMercator.FromLonLat(result[edgeIndex].Lng, result[edgeIndex].Lat);
+    var second = SphericalMercator.FromLonLat(result[nextIndex].Lng, result[nextIndex].Lat);
+    double edgeX = second.x - first.x;
+    double edgeY = second.y - first.y;
+    double length = Math.Sqrt(edgeX * edgeX + edgeY * edgeY);
+    if (length < double.Epsilon) {
+      return result;
+    }
+
+    double normalX = -edgeY / length;
+    double normalY = edgeX / length;
+    double normalDistance = deltaX * normalX + deltaY * normalY;
+    double shiftX = normalX * normalDistance;
+    double shiftY = normalY * normalDistance;
+    result[edgeIndex] = FromWorld(first.x + shiftX, first.y + shiftY,
+        result[edgeIndex].Alt);
+    result[nextIndex] = FromWorld(second.x + shiftX, second.y + shiftY,
+        result[nextIndex].Alt);
+    return result;
+  }
+
+  private static PointLatLngAlt FromWorld(double x, double y, double altitude) {
+    var (lng, lat) = SphericalMercator.ToLonLat(x, y);
+    return new PointLatLngAlt(lat, lng, altitude);
+  }
+}
+
 internal static class SurveyGridPreviewBuilder {
   internal const double CoverageStepDegrees = OverlapCoverageBuilder.StepDegrees;
 
@@ -149,6 +213,10 @@ public sealed class SurveyGridPreviewMap : MapControl {
   private GridUIViewModel? _viewModel;
   private SurveyGridPreviewState? _state;
   private int _dragIndex = -1;
+  private SurveyBoundaryEditMode _editMode;
+  private MPoint? _gestureStart;
+  private IReadOnlyList<PointLatLngAlt>? _gestureBoundary;
+  private int _gestureEdge = -1;
   private bool _attached;
   private CancellationTokenSource? _coverageCancellation;
   private long _previewRevision;
@@ -177,6 +245,17 @@ public sealed class SurveyGridPreviewMap : MapControl {
     };
   }
 
+  public SurveyBoundaryEditMode EditMode {
+    get => _editMode;
+    set {
+      if (_editMode == value) {
+        return;
+      }
+      ResetBoundaryGesture();
+      _editMode = value;
+    }
+  }
+
   protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e) {
     base.OnAttachedToVisualTree(e);
     _attached = true;
@@ -187,7 +266,7 @@ public sealed class SurveyGridPreviewMap : MapControl {
 
   protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e) {
     _attached = false;
-    _dragIndex = -1;
+    ResetBoundaryGesture();
     CancelCoverage();
     AttachViewModel(null);
     MapTileSourceFactory.AccessModeChanged -= OnTileAccessModeChanged;
@@ -433,9 +512,24 @@ public sealed class SurveyGridPreviewMap : MapControl {
   }
 
   private void OnMapPointerPressed(object? sender, MapEventArgs e) {
-    if (_state == null || !_state.ShowBoundary) {
+    if (_state == null || _viewModel == null || !_state.ShowBoundary) {
       return;
     }
+
+    if (EditMode != SurveyBoundaryEditMode.Pan) {
+      if (EditMode != SurveyBoundaryEditMode.DrawRectangle && _state.Boundary.Count < 3) {
+        return;
+      }
+      _gestureStart = new MPoint(e.WorldPosition.X, e.WorldPosition.Y);
+      _gestureBoundary = _state.Boundary
+          .Select(point => new PointLatLngAlt(point)).ToArray();
+      _gestureEdge = EditMode == SurveyBoundaryEditMode.ShiftEdge
+          ? HitTestBoundaryEdge(e.ScreenPosition, _state.Boundary)
+          : -1;
+      e.Handled = true;
+      return;
+    }
+
     _dragIndex = HitTestBoundary(e.ScreenPosition, _state.Boundary);
     if (_dragIndex >= 0) {
       e.Handled = true;
@@ -443,6 +537,28 @@ public sealed class SurveyGridPreviewMap : MapControl {
   }
 
   private void OnMapPointerMoved(object? sender, MapEventArgs e) {
+    if (_gestureStart != null && _gestureBoundary != null && _viewModel != null) {
+      HideRouteTooltip();
+      double deltaX = e.WorldPosition.X - _gestureStart.X;
+      double deltaY = e.WorldPosition.Y - _gestureStart.Y;
+      IReadOnlyList<PointLatLngAlt>? boundary = EditMode switch {
+        SurveyBoundaryEditMode.DrawRectangle =>
+            SurveyBoundaryGeometryEditor.CreateRectangle(_gestureStart, e.WorldPosition,
+                _gestureBoundary.FirstOrDefault()?.Alt ?? _state?.Home.Alt ?? 0),
+        SurveyBoundaryEditMode.MoveBoundary =>
+            SurveyBoundaryGeometryEditor.Translate(_gestureBoundary, deltaX, deltaY),
+        SurveyBoundaryEditMode.ShiftEdge when _gestureEdge >= 0 =>
+            SurveyBoundaryGeometryEditor.ShiftEdge(
+                _gestureBoundary, _gestureEdge, deltaX, deltaY),
+        _ => null,
+      };
+      if (boundary != null) {
+        _viewModel.ReplaceBoundary(boundary);
+      }
+      e.Handled = true;
+      return;
+    }
+
     if (_dragIndex < 0) {
       UpdateRouteTooltip(e.ScreenPosition);
       return;
@@ -520,11 +636,23 @@ public sealed class SurveyGridPreviewMap : MapControl {
   }
 
   private void OnMapPointerReleased(object? sender, MapEventArgs e) {
+    if (_gestureStart != null) {
+      ResetBoundaryGesture();
+      e.Handled = true;
+      return;
+    }
     if (_dragIndex < 0) {
       return;
     }
     _dragIndex = -1;
     e.Handled = true;
+  }
+
+  private void ResetBoundaryGesture() {
+    _dragIndex = -1;
+    _gestureStart = null;
+    _gestureBoundary = null;
+    _gestureEdge = -1;
   }
 
   private int HitTestBoundary(Mapsui.Manipulations.ScreenPosition screen,
@@ -535,6 +663,31 @@ public sealed class SurveyGridPreviewMap : MapControl {
     for (int index = 0; index < boundary.Count; index++) {
       var (x, y) = SphericalMercator.FromLonLat(boundary[index].Lng, boundary[index].Lat);
       double distance = viewport.WorldToScreen(x, y).Distance(screen);
+      if (distance < best) {
+        best = distance;
+        found = index;
+      }
+    }
+    return found;
+  }
+
+  private int HitTestBoundaryEdge(Mapsui.Manipulations.ScreenPosition screen,
+      IReadOnlyList<PointLatLngAlt> boundary) {
+    if (boundary.Count < 2) {
+      return -1;
+    }
+    var viewport = Map.Navigator.Viewport;
+    double best = double.MaxValue;
+    int found = -1;
+    for (int index = 0; index < boundary.Count; index++) {
+      PointLatLngAlt first = boundary[index];
+      PointLatLngAlt second = boundary[(index + 1) % boundary.Count];
+      var firstWorld = SphericalMercator.FromLonLat(first.Lng, first.Lat);
+      var secondWorld = SphericalMercator.FromLonLat(second.Lng, second.Lat);
+      var firstScreen = viewport.WorldToScreen(firstWorld.x, firstWorld.y);
+      var secondScreen = viewport.WorldToScreen(secondWorld.x, secondWorld.y);
+      double distance = DistanceToSegment(screen.X, screen.Y,
+          firstScreen.X, firstScreen.Y, secondScreen.X, secondScreen.Y);
       if (distance < best) {
         best = distance;
         found = index;

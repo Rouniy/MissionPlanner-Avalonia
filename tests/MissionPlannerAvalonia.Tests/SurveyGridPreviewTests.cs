@@ -1,5 +1,6 @@
 using Avalonia.Headless.XUnit;
 using Mapsui;
+using Mapsui.Projections;
 using Mapsui.Styles;
 using MissionPlanner.Grid;
 using MissionPlanner.Utilities;
@@ -123,6 +124,86 @@ public class SurveyGridPreviewTests {
   }
 
   [Fact]
+  public void Grid_v2_rectangle_editor_builds_four_projected_corners() {
+    var first = new MPoint(100, 400);
+    var second = new MPoint(300, 200);
+
+    IReadOnlyList<PointLatLngAlt> rectangle =
+        SurveyBoundaryGeometryEditor.CreateRectangle(first, second, 73);
+
+    Assert.Equal(4, rectangle.Count);
+    Assert.All(rectangle, point => Assert.Equal(73, point.Alt, 8));
+    var projected = rectangle.Select(point =>
+        SphericalMercator.FromLonLat(point.Lng, point.Lat)).ToArray();
+    Assert.Equal(new[] { 100d, 300d, 300d, 100d },
+        projected.Select(point => point.x), new RoundedDoubleComparer(6));
+    Assert.Equal(new[] { 400d, 400d, 200d, 200d },
+        projected.Select(point => point.y), new RoundedDoubleComparer(6));
+  }
+
+  [Fact]
+  public void Grid_v2_move_editor_translates_complete_boundary_without_changing_altitude() {
+    IReadOnlyList<PointLatLngAlt> polygon = Polygon();
+
+    IReadOnlyList<PointLatLngAlt> moved =
+        SurveyBoundaryGeometryEditor.Translate(polygon, 25, -40);
+
+    Assert.Equal(polygon.Count, moved.Count);
+    for (int index = 0; index < polygon.Count; index++) {
+      var before = SphericalMercator.FromLonLat(polygon[index].Lng, polygon[index].Lat);
+      var after = SphericalMercator.FromLonLat(moved[index].Lng, moved[index].Lat);
+      Assert.Equal(before.x + 25, after.x, 6);
+      Assert.Equal(before.y - 40, after.y, 6);
+      Assert.Equal(polygon[index].Alt, moved[index].Alt, 8);
+    }
+  }
+
+  [Fact]
+  public void Grid_v2_edge_editor_moves_only_selected_edge_perpendicular_to_it() {
+    IReadOnlyList<PointLatLngAlt> polygon = new[] {
+      new PointLatLngAlt(0, 0, 10),
+      new PointLatLngAlt(0, 0.001, 20),
+      new PointLatLngAlt(-0.001, 0.001, 30),
+      new PointLatLngAlt(-0.001, 0, 40),
+    };
+
+    IReadOnlyList<PointLatLngAlt> shifted =
+        SurveyBoundaryGeometryEditor.ShiftEdge(polygon, 0, 15, 30);
+
+    for (int index = 0; index < polygon.Count; index++) {
+      var before = SphericalMercator.FromLonLat(polygon[index].Lng, polygon[index].Lat);
+      var after = SphericalMercator.FromLonLat(shifted[index].Lng, shifted[index].Lat);
+      Assert.Equal(before.x, after.x, 6);
+      Assert.Equal(before.y + (index < 2 ? 30 : 0), after.y, 6);
+      Assert.Equal(polygon[index].Alt, shifted[index].Alt, 8);
+    }
+  }
+
+  [Fact]
+  public void Grid_v2_geometry_replacement_is_previewed_and_committed_on_accept() {
+    var vm = new GridUIViewModel(Polygon(), PointLatLngAlt.Zero, _ => 0) {
+      SelectedCamera = "",
+    };
+    IReadOnlyList<PointLatLngAlt> rectangle = new[] {
+      new PointLatLngAlt(-35.363, 149.165),
+      new PointLatLngAlt(-35.363, 149.166),
+      new PointLatLngAlt(-35.364, 149.166),
+      new PointLatLngAlt(-35.364, 149.165),
+    };
+    SurveyGridPreviewState? preview = null;
+    IReadOnlyList<PointLatLngAlt>? accepted = null;
+    vm.PreviewChanged += (state, _) => preview = state;
+    vm.BoundaryAccepted += boundary => accepted = boundary;
+
+    vm.ReplaceBoundary(rectangle);
+    vm.AcceptCommand.Execute(null);
+
+    Assert.Equal(4, preview?.Boundary.Count);
+    Assert.Equal(rectangle.Select(point => (point.Lat, point.Lng)),
+        accepted?.Select(point => (point.Lat, point.Lng)));
+  }
+
+  [Fact]
   public void View_model_defaults_match_upstream_and_point_start_selects_boundary_vertex() {
     var polygon = Polygon();
     var vm = new GridUIViewModel(polygon, new PointLatLngAlt(-35.363, 149.165, 580), _ => 500) {
@@ -174,6 +255,12 @@ public class SurveyGridPreviewTests {
       Heading: heading,
       HorizontalFovDegrees: 60,
       VerticalFovDegrees: 45);
+
+  private sealed class RoundedDoubleComparer(int precision) : IEqualityComparer<double> {
+    public bool Equals(double x, double y) => Math.Round(x, precision) == Math.Round(y, precision);
+
+    public int GetHashCode(double obj) => Math.Round(obj, precision).GetHashCode();
+  }
 
   private static IReadOnlyList<PointLatLngAlt> GridPoints() => new[] {
     new PointLatLngAlt(-35.3640, 149.1640, 100, "S"),
