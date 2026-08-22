@@ -177,7 +177,7 @@ public sealed class FormationFlightTests {
   }
 
   [Fact]
-  public void ArduPlaneTargetIsExplicitlyRejected() {
+  public void ArduPlaneTargetRequiresExplicitOptIn() {
     DateTime now = DateTime.UtcNow;
     FormationVehicleSource leader = Source(new MAVLinkInterface(), 1, 1, "leader", now,
         35, 33, 100);
@@ -192,8 +192,88 @@ public sealed class FormationFlightTests {
     FormationTickResult result = runner.Tick(plan, now);
 
     Assert.False(result.Continue);
-    Assert.Contains("ArduPlane", result.Status, StringComparison.Ordinal);
+    Assert.Contains("experimental attitude/PID", result.Status,
+        StringComparison.OrdinalIgnoreCase);
     Assert.Empty(sink.Setpoints);
+    Assert.Empty(sink.Attitudes);
+  }
+
+  [Fact]
+  public void ArduPlaneOptInSendsUpstreamAttitudePidCommandOnCapturedLink() {
+    DateTime now = DateTime.UtcNow;
+    FormationVehicleSource leader = Source(new MAVLinkInterface(), 1, 1, "leader", now,
+        35, 33, 100, yaw: 15, vx: 18, vy: 2);
+    FormationVehicleSource plane = Source(new MAVLinkInterface(), 2, 1, "plane", now,
+        35.0002, 33.0002, 96, yaw: 12);
+    plane.State.cs.firmware = Firmwares.ArduPlane;
+    plane.State.cs.groundspeed = 22;
+    var sink = new RecordingSink();
+    var runner = new FormationCommandRunner(() => [leader, plane], sink);
+    var plan = new FormationPlan(leader.Id,
+        [new FormationFollower(plane.Id, new FormationOffset(20, -5, 8))],
+        AlignYaw: true, AimGimbals: false, EnablePlaneAttitude: true);
+
+    FormationTickResult result = runner.Tick(plan, now);
+
+    Assert.True(result.Continue, result.Status);
+    Assert.Empty(sink.Setpoints);
+    FormationAttitudeCall call = Assert.Single(sink.Attitudes);
+    Assert.Equal(plane.Id, call.Vehicle.Id);
+    Assert.Equal(108, call.Target.Altitude, 5);
+    Assert.InRange(call.Attitude.Thrust, 0.1f, 1f);
+    Assert.All(call.Attitude.Quaternion, value => Assert.True(float.IsFinite(value)));
+    double norm = Math.Sqrt(call.Attitude.Quaternion.Sum(value => value * value));
+    Assert.Equal(1, norm, 5);
+    Assert.Contains("attitude/PID", result.Status, StringComparison.OrdinalIgnoreCase);
+  }
+
+  [Fact]
+  public void MixedFormationValidatesThenUsesControllerForEachFirmware() {
+    DateTime now = DateTime.UtcNow;
+    FormationVehicleSource leader = Source(new MAVLinkInterface(), 1, 1, "leader", now,
+        35, 33, 100, yaw: 20);
+    FormationVehicleSource copter = Source(new MAVLinkInterface(), 2, 1, "copter", now,
+        35.0001, 33.0001, 100);
+    FormationVehicleSource plane = Source(new MAVLinkInterface(), 3, 1, "plane", now,
+        35.0002, 33.0002, 100, yaw: 20);
+    plane.State.cs.firmware = Firmwares.ArduPlane;
+    plane.State.cs.groundspeed = 18;
+    var sink = new RecordingSink();
+    var runner = new FormationCommandRunner(() => [leader, copter, plane], sink);
+    var plan = new FormationPlan(leader.Id,
+        [
+          new FormationFollower(copter.Id, new FormationOffset(10, 0, 0)),
+          new FormationFollower(plane.Id, new FormationOffset(-30, 10, 5)),
+        ], false, false, EnablePlaneAttitude: true);
+
+    FormationTickResult result = runner.Tick(plan, now);
+
+    Assert.True(result.Continue, result.Status);
+    Assert.Equal(copter.Id, Assert.Single(sink.Setpoints).Vehicle.Id);
+    Assert.Equal(plane.Id, Assert.Single(sink.Attitudes).Vehicle.Id);
+    Assert.Contains("position setpoints", result.Status, StringComparison.OrdinalIgnoreCase);
+  }
+
+  [Fact]
+  public void PlaneAttitudePacketTargetsExactVehicleAndIgnoresUnusedBodyRates() {
+    DateTime now = DateTime.UtcNow;
+    FormationVehicleSource plane = Source(new MAVLinkInterface(), 17, 1, "plane", now,
+        35, 33, 100);
+    float[] quaternion = [0.9f, 0.1f, 0.2f, 0.3f];
+    var attitude = new PlaneFormationAttitude(quaternion, 0.42f, 1, 2, 3, 4);
+
+    MAVLink.mavlink_set_attitude_target_t packet =
+        MavlinkFormationCommandSink.CreatePlaneAttitudePacket(plane, attitude);
+
+    byte expectedMask = (byte)(
+        MAVLink.ATTITUDE_TARGET_TYPEMASK.BODY_ROLL_RATE_IGNORE |
+        MAVLink.ATTITUDE_TARGET_TYPEMASK.BODY_PITCH_RATE_IGNORE |
+        MAVLink.ATTITUDE_TARGET_TYPEMASK.BODY_YAW_RATE_IGNORE);
+    Assert.Equal((byte)17, packet.target_system);
+    Assert.Equal((byte)1, packet.target_component);
+    Assert.Equal(expectedMask, packet.type_mask);
+    Assert.Equal(0.42f, packet.thrust);
+    Assert.Same(quaternion, packet.q);
   }
 
   [Fact]
@@ -241,6 +321,31 @@ public sealed class FormationFlightTests {
     Assert.Contains("operator", result, StringComparison.OrdinalIgnoreCase);
   }
 
+  [Fact]
+  public async Task PlaneRunRequestsItsPositionAndAttitudeStreams() {
+    DateTime now = DateTime.UtcNow;
+    FormationVehicleSource leader = Source(new MAVLinkInterface(), 1, 1, "leader", now,
+        35, 33, 100);
+    FormationVehicleSource plane = Source(new MAVLinkInterface(), 2, 1, "plane", now,
+        35.0001, 33.0001, 100);
+    plane.State.cs.firmware = Firmwares.ArduPlane;
+    plane.State.cs.groundspeed = 20;
+    using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+    var sink = new RecordingSink();
+    sink.AfterAttitude = cancellation.Cancel;
+    var runner = new FormationCommandRunner(() => [leader, plane], sink);
+    var plan = new FormationPlan(leader.Id,
+        [new FormationFollower(plane.Id, new FormationOffset(20, 0, 0))],
+        false, false, EnablePlaneAttitude: true);
+
+    string result = await runner.RunAsync(plan, null, cancellation.Token);
+
+    Assert.Equal(leader.Id, Assert.Single(sink.StreamRequests).Id);
+    Assert.Equal(plane.Id, Assert.Single(sink.PlaneStreamRequests).Id);
+    Assert.Single(sink.Attitudes);
+    Assert.Contains("operator", result, StringComparison.OrdinalIgnoreCase);
+  }
+
   [AvaloniaFact]
   public void WindowLoadsNativeGridAndSafetyControls() {
     var window = new FormationControlWindow();
@@ -248,6 +353,8 @@ public sealed class FormationFlightTests {
       Assert.NotNull(window.FindControl<FormationGridControl>("FormationGrid"));
       Assert.NotNull(window.FindControl<Avalonia.Controls.DataGrid>("FormationVehicleGrid"));
       Assert.NotNull(window.FindControl<Avalonia.Controls.Button>("FormationRunButton"));
+      Assert.NotNull(window.FindControl<Avalonia.Controls.CheckBox>(
+          "FormationPlaneAttitudeCheckBox"));
     } finally {
       (window.DataContext as IDisposable)?.Dispose();
       window.Close();
@@ -307,17 +414,34 @@ public sealed class FormationFlightTests {
       bool AlignYaw,
       bool AimGimbal);
 
+  private sealed record FormationAttitudeCall(
+      FormationVehicleSource Vehicle,
+      FormationTarget Target,
+      PlaneFormationAttitude Attitude);
+
   private sealed class RecordingSink : IFormationCommandSink {
     internal List<FormationSetpointCall> Setpoints { get; } = [];
+    internal List<FormationAttitudeCall> Attitudes { get; } = [];
     internal List<FormationVehicleSource> StreamRequests { get; } = [];
+    internal List<FormationVehicleSource> PlaneStreamRequests { get; } = [];
     internal Action? AfterSetpoint { get; set; }
+    internal Action? AfterAttitude { get; set; }
 
     public void RequestLeaderStreams(FormationVehicleSource leader) =>
         StreamRequests.Add(leader);
 
+    public void RequestPlaneStreams(FormationVehicleSource plane) =>
+        PlaneStreamRequests.Add(plane);
+
     public void SendSetpoint(FormationVehicleSource follower, FormationTarget target,
         bool alignYaw, bool aimGimbal) =>
         RecordSetpoint(follower, target, alignYaw, aimGimbal);
+
+    public void SendPlaneAttitude(FormationVehicleSource follower, FormationTarget target,
+        PlaneFormationAttitude attitude) {
+      Attitudes.Add(new FormationAttitudeCall(follower, target, attitude));
+      AfterAttitude?.Invoke();
+    }
 
     public bool Arm(FormationVehicleSource vehicle, bool arm) => true;
 

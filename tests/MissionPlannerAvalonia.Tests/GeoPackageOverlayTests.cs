@@ -6,6 +6,7 @@ using NetTopologySuite.IO;
 
 namespace MissionPlannerAvalonia.Tests;
 
+[Collection("Imported overlay store")]
 public sealed class GeoPackageOverlayTests {
   [Fact]
   public void GeoPackage_reads_points_lines_polygons_and_quoted_table_names() {

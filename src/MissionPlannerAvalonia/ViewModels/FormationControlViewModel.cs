@@ -60,6 +60,9 @@ public partial class FormationControlViewModel : ViewModelBase, IDisposable {
   private bool _aimGimbals;
 
   [ObservableProperty]
+  private bool _enablePlaneAttitude;
+
+  [ObservableProperty]
   private double _takeoffAltitudeM = 5;
 
   [ObservableProperty]
@@ -73,6 +76,10 @@ public partial class FormationControlViewModel : ViewModelBase, IDisposable {
 
   partial void OnAimGimbalsChanged(bool value) =>
       StopBecausePlanChanged("Formation stopped because the gimbal option changed.");
+
+  partial void OnEnablePlaneAttitudeChanged(bool value) =>
+      StopBecausePlanChanged(
+          "Formation stopped because the experimental ArduPlane controller changed.");
 
   partial void OnSelectedLeaderChanged(
       FormationVehicleItem? oldValue, FormationVehicleItem? newValue) {
@@ -157,12 +164,19 @@ public partial class FormationControlViewModel : ViewModelBase, IDisposable {
       return;
     }
     string targets = TargetList(plan);
+    bool includesPlane = plan.Followers.Any(follower => Vehicles.Any(
+        row => row.Id == follower.Id && row.IsPlane));
+    string planeWarning = includesPlane
+        ? "\n\nArduPlane followers will receive the upstream experimental 10 Hz " +
+          "SET_ATTITUDE_TARGET controller with fixed pitch/thrust PID gains. " +
+          "Use only after validating the aircraft and flight mode in SITL."
+        : "";
     bool accepted = await _confirm(
         "Start Formation Flight",
         "BETA / USE AT OWN RISK. Mission Planner will continuously command these followers " +
         $"at 10 Hz relative to the selected leader:\n\n{targets}\n\n" +
         "Verify flight modes, coordinate frame, altitude reference and clear airspace. " +
-        "Cancel is the default action.",
+        "Cancel is the default action." + planeWarning,
         "START FORMATION");
     if (!accepted || _disposed) {
       Status = accepted ? "Formation window is closing." : "Formation start cancelled.";
@@ -321,7 +335,7 @@ public partial class FormationControlViewModel : ViewModelBase, IDisposable {
     }
     int eligible = Vehicles.Count(row => row.IsEligible);
     Status = eligible == 0
-        ? "No supported Copter/Rover autopilots were found across open MAVLink links."
+        ? "No supported Plane/Copter/Rover autopilots were found across open MAVLink links."
         : $"Found {eligible} supported autopilot(s) across {sources.Select(source => source.Id.Link).Distinct().Count()} link(s). " +
           "Enable followers explicitly before starting.";
   }
@@ -375,13 +389,19 @@ public partial class FormationControlViewModel : ViewModelBase, IDisposable {
         error = "Follower " + resolveError;
         return false;
       }
+      if (follower.IsPlane && !EnablePlaneAttitude) {
+        error = $"Follower {follower.Label} is ArduPlane. Explicitly enable the experimental " +
+            "ArduPlane attitude/PID controller before starting.";
+        return false;
+      }
     }
     plan = new FormationPlan(
         leader.Id,
         followers.Select(row => new FormationFollower(
             row.Id, new FormationOffset(row.X, row.Y, row.Z))).ToArray(),
         AlignYaw,
-        AimGimbals);
+        AimGimbals,
+        EnablePlaneAttitude);
     error = "";
     return true;
   }
@@ -397,7 +417,10 @@ public partial class FormationControlViewModel : ViewModelBase, IDisposable {
     var labels = Vehicles.ToDictionary(row => row.Id, row => row.Label);
     return string.Join("\n", plan.Followers.Select(follower =>
         $"• {labels.GetValueOrDefault(follower.Id, follower.Id.SystemId + ":" + follower.Id.ComponentId)} " +
-        $"— X {follower.Offset.X:0.#} m, Y {follower.Offset.Y:0.#} m, Z {follower.Offset.Z:0.#} m"));
+        $"— X {follower.Offset.X:0.#} m, Y {follower.Offset.Y:0.#} m, Z {follower.Offset.Z:0.#} m" +
+        (Vehicles.FirstOrDefault(row => row.Id == follower.Id)?.IsPlane == true
+            ? "; attitude/PID"
+            : "; position/velocity")));
   }
 
   private async Task ObserveRunAsync(Task<string> task, CancellationTokenSource cancellation) {
@@ -483,6 +506,7 @@ public partial class FormationVehicleItem : ObservableObject {
   public int ComponentId => _source.Id.ComponentId;
   public string Firmware => _source.State.cs.firmware.ToString();
   public bool IsEligible => _source.SupportsFormation;
+  public bool IsPlane => _source.State.cs.firmware == MissionPlanner.ArduPilot.Firmwares.ArduPlane;
   public string Role => IsLeader
       ? "Leader"
       : IsEligible
@@ -535,6 +559,7 @@ public partial class FormationVehicleItem : ObservableObject {
     OnPropertyChanged(nameof(Endpoint));
     OnPropertyChanged(nameof(Firmware));
     OnPropertyChanged(nameof(IsEligible));
+    OnPropertyChanged(nameof(IsPlane));
     OnPropertyChanged(nameof(Role));
   }
 
@@ -545,9 +570,7 @@ public partial class FormationVehicleItem : ObservableObject {
     } else if (!_source.IsAutopilot) {
       LiveStatus = "Not an autopilot";
     } else if (!_source.SupportsFormation) {
-      LiveStatus = _source.State.cs.firmware == MissionPlanner.ArduPilot.Firmwares.ArduPlane
-          ? "ArduPlane attitude formation pending"
-          : "Unsupported formation firmware";
+      LiveStatus = "Unsupported formation firmware";
     } else if (packet == DateTime.MinValue ||
                nowUtc - packet > FormationCommandRunner.MaximumTelemetryAge ||
                packet > nowUtc.AddSeconds(1)) {
@@ -555,7 +578,8 @@ public partial class FormationVehicleItem : ObservableObject {
     } else if (!FormationCommandRunner.HasPosition(_source.State)) {
       LiveStatus = $"{_source.State.cs.mode}; no position";
     } else {
-      LiveStatus = $"{_source.State.cs.mode}; " +
+      LiveStatus = (IsPlane ? "Plane attitude/PID; " : "Position/velocity; ") +
+          $"{_source.State.cs.mode}; " +
           (_source.State.cs.armed ? "armed" : "disarmed") +
           $"; GPS {_source.State.cs.gpsstatus}";
     }

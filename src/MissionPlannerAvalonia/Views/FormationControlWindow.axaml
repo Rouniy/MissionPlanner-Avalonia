@@ -16,10 +16,11 @@
     <Border Grid.Row="0" Background="#5A2B20" BorderBrush="#FF9B66" BorderThickness="1"
             CornerRadius="4" Padding="10">
       <TextBlock Foreground="#FFD4B8" TextWrapping="Wrap"
-                 Text="BETA / USE AT OWN RISK — port of the official Mission Planner Formation tool. Commands are sent to explicitly enabled Copter/Rover followers only; ArduPlane's separate experimental attitude/PID path remains disabled. Loss of a selected modem, leader or follower stops the 10 Hz stream immediately." />
+                 Text="BETA / USE AT OWN RISK — port of the official Mission Planner Formation tool. Copter/Rover followers receive position/velocity targets. ArduPlane's separate attitude/PID path requires explicit opt-in below. Loss of a selected modem, leader or follower stops the 10 Hz stream immediately." />
     </Border>
 
-    <Grid Grid.Row="1" ColumnDefinitions="Auto,260,Auto,Auto,Auto,Auto,*" ColumnSpacing="8">
+    <Grid Grid.Row="1" RowDefinitions="Auto,Auto"
+          ColumnDefinitions="Auto,260,Auto,Auto,*" ColumnSpacing="8" RowSpacing="6">
       <TextBlock Text="Leader" VerticalAlignment="Center" />
       <ComboBox Grid.Column="1" ItemsSource="{Binding Vehicles}"
                 SelectedItem="{Binding SelectedLeader, Mode=TwoWay}">
@@ -32,11 +33,19 @@
       <Button Grid.Column="2" Content="Refresh Vehicles" Command="{Binding RefreshCommand}" />
       <Button Grid.Column="3" Content="Capture Live Offsets"
               Command="{Binding CaptureOffsetsCommand}" />
-      <CheckBox Grid.Column="4" Content="Align follower yaw"
-                IsChecked="{Binding AlignYaw, Mode=TwoWay}" VerticalAlignment="Center" />
-      <CheckBox Grid.Column="5" Content="Aim gimbals instead"
-                IsChecked="{Binding AimGimbals, Mode=TwoWay}"
-                IsEnabled="{Binding AlignYaw}" VerticalAlignment="Center" />
+      <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="4"
+                  Orientation="Horizontal" Spacing="18">
+        <CheckBox Content="Align follower yaw"
+                  IsChecked="{Binding AlignYaw, Mode=TwoWay}" VerticalAlignment="Center" />
+        <CheckBox Content="Aim gimbals instead"
+                  IsChecked="{Binding AimGimbals, Mode=TwoWay}"
+                  IsEnabled="{Binding AlignYaw}" VerticalAlignment="Center" />
+        <CheckBox x:Name="FormationPlaneAttitudeCheckBox"
+                  Content="Enable ArduPlane attitude/PID"
+                  IsChecked="{Binding EnablePlaneAttitude, Mode=TwoWay}"
+                  VerticalAlignment="Center"
+                  ToolTip.Tip="Experimental official Formation controller; validate in SITL first" />
+      </StackPanel>
     </Grid>
 
     <Grid Grid.Row="2" ColumnDefinitions="5*,7*" ColumnSpacing="10">

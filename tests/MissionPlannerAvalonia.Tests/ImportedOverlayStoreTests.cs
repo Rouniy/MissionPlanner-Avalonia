@@ -5,6 +5,7 @@ using MissionPlannerAvalonia.Services;
 
 namespace MissionPlannerAvalonia.Tests;
 
+[Collection("Imported overlay store")]
 public sealed class ImportedOverlayStoreTests {
   [AvaloniaFact]
   public void FlightData_copy_matches_upstream_routes_only_semantics() {
