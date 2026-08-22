@@ -60,6 +60,10 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   before writing, so an unresponsive or newly selected modem cannot inherit a blocking read or a
   stale write. Vehicle-changing
   actions require a live link, a disarmed vehicle and explicit confirmation where destructive.
+  Its parameter-recovery path is additionally cancellable and bound to the exact active link,
+  MAVState, system and component. A modem/vehicle switch, link loss or arming event stops the
+  workflow between bounded upstream parameter calls before another write. All 67 official click
+  handlers are classified in [`TEMP_HANDLER_AUDIT.md`](TEMP_HANDLER_AUDIT.md); none remains open.
 - Developer Tools now ports the official hidden `MAVLinkSerialPort` TCP bridge. One sequential TCP
   client can exchange raw bytes with TELEM1/2, GPS1/2, SHELL or SERIAL0-9 through MAVLink
   `SERIAL_CONTROL`; the official TCP port 500, GPS1 and current UART baud are the defaults. The
@@ -720,8 +724,9 @@ not remove required Windows-native files from `win-x64` builds.
 
 ## Remaining cross-platform parity and release work
 
-This list contains six concrete open areas plus one ongoing handler-level audit of the hidden
-developer form. Completed workflows are documented above rather than being left in the gap table.
+This list contains six concrete open areas. The handler-level audit of the hidden developer form is
+complete and enforced against the pinned upstream source by a test. Completed workflows are
+documented above rather than being left in the gap table.
 NativeAOT is tracked separately as an optional runtime experiment and is not counted as a
 Mission Planner functional-parity gap.
 
@@ -733,7 +738,6 @@ Mission Planner functional-parity gap.
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
 | BLE transport | macOS; Linux/Windows hardware acceptance | Linux uses the port-native managed BlueZ/D-Bus Nordic UART transport and no longer needs a SimpleBLE `.so`; adapter discovery is verified, while end-to-end traffic still needs a Nordic UART modem. Upstream's Windows SimpleBLE path remains hardware-unverified. macOS still needs a CoreBluetooth or maintained native integration. |
-| Developer utility handler audit | All | The safe portable subset of `temp.cs`, including the Translation / RESX Editor and live 3D terrain/imagery view, is native. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration, PX4Flow live image assembly, local map-tile import, SHP-to-POLY conversion, target-safe barometric-altitude adjustment, the MAVLink serial-to-TCP bridge and the firmware-archive workflow are also port-native. Remaining upstream handlers are reviewed individually: already exposed, obsolete and unsafe handlers are classified instead of being presented as missing user functionality. |
 
 ## Optional runtime experiment
 
