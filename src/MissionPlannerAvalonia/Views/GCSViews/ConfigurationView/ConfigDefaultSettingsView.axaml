@@ -1,0 +1,23 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:cv="using:MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView"
+  xmlns:views="using:MissionPlannerAvalonia.Views"
+  mc:Ignorable="d"
+  d:DesignWidth="1000"
+  d:DesignHeight="700"
+  x:Class="MissionPlannerAvalonia.Views.GCSViews.ConfigurationView.ConfigDefaultSettingsView"
+  x:DataType="cv:ConfigDefaultSettingsViewModel"
+  Background="{DynamicResource MpControlBg}">
+  <Grid RowDefinitions="Auto,*" Margin="8" RowSpacing="4">
+    <StackPanel Grid.Row="0" Margin="8,4,8,0" Spacing="4">
+      <TextBlock Classes="pagetitle" Text="Default Settings" />
+      <TextBlock Classes="fieldlbl" TextWrapping="Wrap" MaxWidth="900"
+                 HorizontalAlignment="Left"
+                 Text="Choose an official ArduPilot profile from Tools/Frame_params. The profile is compared only with the currently selected vehicle. Selected differences are staged for review and are not sent until you explicitly choose Write Params and confirm the write." />
+    </StackPanel>
+    <views:RawParamsView Grid.Row="1" />
+  </Grid>
+</UserControl>

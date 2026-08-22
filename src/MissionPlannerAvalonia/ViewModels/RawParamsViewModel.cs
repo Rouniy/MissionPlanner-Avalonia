@@ -3,13 +3,16 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MissionPlanner;
 using MissionPlanner.Utilities;
+using MissionPlannerAvalonia.Services;
 
 namespace MissionPlannerAvalonia.ViewModels;
 
@@ -24,6 +27,10 @@ public partial class RawParamsViewModel : ViewModelBase, IDisposable {
     "ARSPD_OFFSET",
     "GND_ABS_PRESS",
     "GND_TEMP",
+    "BARO1_GND_PRESS",
+    "BARO2_GND_PRESS",
+    "BARO3_GND_PRESS",
+    "BARO_GND_TEMP",
     "CMD_INDEX",
     "LOG_LASTFILE",
     "FORMAT_VERSION",
@@ -31,7 +38,13 @@ public partial class RawParamsViewModel : ViewModelBase, IDisposable {
 
   private MAVLinkInterface _comPort => AppState.comPort;
 
+  private readonly FrameDefaultCatalogService _frameDefaultCatalog;
   private readonly List<ParamRow> _all = new();
+  private readonly object _targetGate = new();
+  private CancellationTokenSource? _frameDefaultCancellation;
+  private ParameterTarget? _currentTarget;
+  private long _targetRevision;
+  private bool _disposed;
 
   public ObservableCollection<ParamRow> Params { get; } = new();
 
@@ -65,7 +78,10 @@ public partial class RawParamsViewModel : ViewModelBase, IDisposable {
 
   public bool IsConnected => _comPort.BaseStream?.IsOpen == true;
 
-  public RawParamsViewModel() {
+  public RawParamsViewModel() : this(FrameDefaultCatalogService.Shared) { }
+
+  internal RawParamsViewModel(FrameDefaultCatalogService frameDefaultCatalog) {
+    _frameDefaultCatalog = frameDefaultCatalog;
     AppState.ConnectionChanged += OnConnectionChanged;
     SynchronizeSelectedVehicle();
   }
@@ -324,28 +340,22 @@ public partial class RawParamsViewModel : ViewModelBase, IDisposable {
   }
 
   [RelayCommand]
-  private async Task RefreshFrameDefaults() {
+  private Task RefreshFrameDefaults() => LoadFrameDefaultsAsync(forceRefresh: true);
+
+  internal Task EnsureFrameDefaultsAsync() => FrameDefaults.Count > 0
+      ? Task.CompletedTask
+      : LoadFrameDefaultsAsync(forceRefresh: false);
+
+  private async Task LoadFrameDefaultsAsync(bool forceRefresh) {
     if (LoadingFrameDefaults) {
       return;
     }
     LoadingFrameDefaults = true;
+    CancellationTokenSource cancellation = BeginFrameDefaultOperation();
     try {
-      var files = await Task.Run(() => {
-        var result = GitHubContent.GetDirContent(
-            "ArduPilot", "ardupilot", "/Tools/Frame_params/", ".param");
-        try {
-          result.AddRange(GitHubContent.GetDirContent(
-              "ArduPilot", "ardupilot", "/Tools/Frame_params/QuadPlanes/", ".param"));
-        } catch {
-          // Keep the root list usable if GitHub briefly rejects the second request.
-        }
-        return result.Where(file => file.type == GitHubContent.FileInfo.TypeEnum.File)
-            .GroupBy(file => file.path, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First())
-            .OrderBy(file => file.path, StringComparer.OrdinalIgnoreCase)
-            .Select(file => new FrameDefaultFile(file.name, file.path))
-            .ToList();
-      });
+      IReadOnlyList<FrameDefaultCatalogItem> catalog =
+          await _frameDefaultCatalog.ListAsync(cancellation.Token, forceRefresh);
+      var files = catalog.Select(file => new FrameDefaultFile(file.Name, file.Path)).ToList();
       FrameDefaults.Clear();
       foreach (var file in files) {
         FrameDefaults.Add(file);
@@ -354,38 +364,80 @@ public partial class RawParamsViewModel : ViewModelBase, IDisposable {
       Status = files.Count == 0
           ? "No ArduPilot frame-default files were found."
           : $"Loaded {files.Count} ArduPilot frame-default file choices.";
+    } catch (OperationCanceledException) when (cancellation.IsCancellationRequested) {
+      if (!_disposed) {
+        Status = "Frame-default list request cancelled.";
+      }
     } catch (Exception ex) {
       Status = "Frame-default list failed: " + ex.Message;
     } finally {
-      LoadingFrameDefaults = false;
+      CompleteFrameDefaultOperation(cancellation);
     }
   }
 
-  public async Task<IReadOnlyList<ParamComparisonRow>> DownloadFrameDefaultComparisonAsync() {
+  internal async Task<FrameDefaultComparison?> DownloadFrameDefaultComparisonAsync() {
     var selected = SelectedFrameDefault;
     if (selected == null) {
       Status = "Select a frame-default file first.";
-      return [];
+      return null;
     }
+    TargetSnapshot snapshot = ObserveTargetChange();
+    ParameterTarget? target = snapshot.Target;
+    if (target == null) {
+      Status = "Connect a vehicle before comparing a default profile.";
+      return null;
+    }
+    long revision = snapshot.Revision;
     LoadingFrameDefaults = true;
+    CancellationTokenSource cancellation = BeginFrameDefaultOperation();
+    if (!IsTargetCurrent(target, revision)) {
+      cancellation.Cancel();
+    }
     try {
-      byte[] bytes = await Task.Run(() => GitHubContent.GetFileContent(
-          "ArduPilot", "ardupilot", selected.Path));
-      string directory = System.IO.Path.Combine(Services.AppPaths.CacheRoot, "frame-defaults");
-      System.IO.Directory.CreateDirectory(directory);
-      string path = System.IO.Path.Combine(directory, System.IO.Path.GetFileName(selected.Path));
-      await System.IO.File.WriteAllBytesAsync(path, bytes);
+      byte[] bytes = await _frameDefaultCatalog.DownloadAsync(selected.Path, cancellation.Token);
+      if (!IsTargetCurrent(target, revision)) {
+        Status = "Vehicle changed while the profile was downloading; the old result was discarded.";
+        return null;
+      }
+      string path = FrameDefaultCatalogService.GetCachePath(
+          Services.AppPaths.CacheRoot, selected.Path);
+      Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+      await File.WriteAllBytesAsync(path, bytes, cancellation.Token);
+      if (!IsTargetCurrent(target, revision)) {
+        Status = "Vehicle changed while the profile was loading; the old result was discarded.";
+        return null;
+      }
       var comparison = CompareParamFile(path);
       Status = comparison.Count == 0
           ? $"{selected.Name}: no differing matched parameters."
           : $"{selected.Name}: choose which of {comparison.Count} differences to stage.";
-      return comparison;
+      return new FrameDefaultComparison(target, revision, selected, comparison);
+    } catch (OperationCanceledException) when (cancellation.IsCancellationRequested) {
+      if (!_disposed) {
+        Status = IsTargetCurrent(target, revision)
+            ? "Frame-default download cancelled."
+            : "Vehicle changed during download; the old profile was discarded.";
+      }
+      return null;
     } catch (Exception ex) {
       Status = "Frame-default download failed: " + ex.Message;
-      return [];
+      return null;
     } finally {
-      LoadingFrameDefaults = false;
+      CompleteFrameDefaultOperation(cancellation);
     }
+  }
+
+  internal bool TryApplyFrameDefaultComparison(FrameDefaultComparison comparison) {
+    TargetSnapshot snapshot = ObserveTargetChange();
+    if (!TryStageFrameDefaultComparison(
+            _all, comparison, snapshot.Target, snapshot.Revision, out int staged)) {
+      Status = "Vehicle changed while the comparison was open; no values were staged.";
+      return false;
+    }
+    ShowModifiedOnly = true;
+    ApplyFilter();
+    Status = $"Staged {staged} selected parameter change(s). Review them, then use Write Params.";
+    return true;
   }
 
   public void ApplyParamComparison(IEnumerable<ParamComparisonRow> comparison) {
@@ -470,6 +522,21 @@ public partial class RawParamsViewModel : ViewModelBase, IDisposable {
     return staged;
   }
 
+  internal static bool TryStageFrameDefaultComparison(
+      IEnumerable<ParamRow> current,
+      FrameDefaultComparison comparison,
+      ParameterTarget? currentTarget,
+      long currentRevision,
+      out int staged) {
+    if (currentTarget == null || comparison.Target != currentTarget
+        || comparison.TargetRevision != currentRevision) {
+      staged = 0;
+      return false;
+    }
+    staged = StageSelectedComparison(current, comparison.Rows);
+    return true;
+  }
+
   internal static bool IsProtectedFileParameter(string name) =>
       ProtectedFileParameters.Contains(name);
 
@@ -487,10 +554,21 @@ public partial class RawParamsViewModel : ViewModelBase, IDisposable {
     LoadFrom(rows);
   }
 
-  private void OnConnectionChanged() =>
-      Dispatcher.UIThread.Post(SynchronizeSelectedVehicle);
+  private void OnConnectionChanged() {
+    if (_disposed) {
+      return;
+    }
+    // Observe the change before posting UI work. This preserves a monotonic selection revision
+    // even if the user switches away and back before the dispatcher processes either callback.
+    ObserveTargetChange();
+    Dispatcher.UIThread.Post(SynchronizeSelectedVehicle);
+  }
 
   internal void SynchronizeSelectedVehicle() {
+    if (_disposed) {
+      return;
+    }
+    ObserveTargetChange();
     if (!IsConnected) {
       LoadFrom([]);
       Status = "Not connected. Connect a vehicle or explicitly load a parameter file.";
@@ -504,7 +582,77 @@ public partial class RawParamsViewModel : ViewModelBase, IDisposable {
           + $"{_comPort.MAV.sysid}:{_comPort.MAV.compid}.";
   }
 
-  public void Dispose() => AppState.ConnectionChanged -= OnConnectionChanged;
+  private ParameterTarget? CaptureCurrentTarget() => IsConnected
+      ? new ParameterTarget(_comPort, _comPort.MAV.sysid, _comPort.MAV.compid)
+      : null;
+
+  private TargetSnapshot ObserveTargetChange() {
+    ParameterTarget? selected = CaptureCurrentTarget();
+    CancellationTokenSource? cancellation = null;
+    TargetSnapshot snapshot;
+    lock (_targetGate) {
+      if (selected != _currentTarget) {
+        _currentTarget = selected;
+        _targetRevision++;
+        cancellation = _frameDefaultCancellation;
+      }
+      snapshot = new TargetSnapshot(_currentTarget, _targetRevision);
+    }
+    CancelSafely(cancellation);
+    return snapshot;
+  }
+
+  private bool IsTargetCurrent(ParameterTarget target, long revision) {
+    ParameterTarget? selected = CaptureCurrentTarget();
+    lock (_targetGate) {
+      return selected == target && _currentTarget == target && _targetRevision == revision;
+    }
+  }
+
+  private CancellationTokenSource BeginFrameDefaultOperation() {
+    var cancellation = new CancellationTokenSource();
+    lock (_targetGate) {
+      _frameDefaultCancellation = cancellation;
+    }
+    return cancellation;
+  }
+
+  private static void CancelSafely(CancellationTokenSource? cancellation) {
+    try {
+      cancellation?.Cancel();
+    } catch (ObjectDisposedException) {
+      // Completion won the race after the target snapshot was taken.
+    }
+  }
+
+  private void CompleteFrameDefaultOperation(CancellationTokenSource cancellation) {
+    bool current;
+    lock (_targetGate) {
+      current = ReferenceEquals(_frameDefaultCancellation, cancellation);
+      if (current) {
+        _frameDefaultCancellation = null;
+      }
+    }
+    if (current) {
+      if (!_disposed) {
+        LoadingFrameDefaults = false;
+      }
+    }
+    cancellation.Dispose();
+  }
+
+  public void Dispose() {
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
+    AppState.ConnectionChanged -= OnConnectionChanged;
+    CancellationTokenSource? cancellation;
+    lock (_targetGate) {
+      cancellation = _frameDefaultCancellation;
+    }
+    CancelSafely(cancellation);
+  }
 
   private ParamRow BuildRow(string name, double value, double? def, string fw, HashSet<string> favs) {
     string units = Meta(name, ParameterMetaDataConstants.Units, fw);
@@ -617,10 +765,23 @@ public partial class RawParamsViewModel : ViewModelBase, IDisposable {
 
 internal readonly record struct ParamFileStageResult(int Matched, int Differing, int Protected);
 
+internal sealed record ParameterTarget(MAVLinkInterface Link, byte SystemId, byte ComponentId);
+
+internal readonly record struct TargetSnapshot(ParameterTarget? Target, long Revision);
+
+internal sealed record FrameDefaultComparison(
+    ParameterTarget Target,
+    long TargetRevision,
+    FrameDefaultFile Source,
+    IReadOnlyList<ParamComparisonRow> Rows);
+
 public sealed record FrameDefaultFile(string Name, string Path) {
-  public override string ToString() => Path.Contains("QuadPlanes/", StringComparison.OrdinalIgnoreCase)
-      ? "QuadPlane / " + Name
-      : Name;
+  public override string ToString() {
+    const string root = FrameDefaultCatalogService.CatalogRoot + "/";
+    return Path.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+        ? Path[root.Length..].Replace("/", " / ", StringComparison.Ordinal)
+        : Name;
+  }
 }
 
 public partial class ParamComparisonRow : ObservableObject {

@@ -58,10 +58,10 @@ public partial class RawParamsView : UserControl {
     if (Vm is not { } vm || TopLevel.GetTopLevel(this) is not Window owner) {
       return;
     }
-    var comparison = await vm.DownloadFrameDefaultComparisonAsync();
-    if (comparison.Count > 0
-        && await ParamCompareWindow.ShowAsync(owner, comparison)) {
-      vm.ApplyParamComparison(comparison);
+    FrameDefaultComparison? comparison = await vm.DownloadFrameDefaultComparisonAsync();
+    if (comparison is { Rows.Count: > 0 }
+        && await ParamCompareWindow.ShowAsync(owner, comparison.Rows)) {
+      vm.TryApplyFrameDefaultComparison(comparison);
     }
   }
 

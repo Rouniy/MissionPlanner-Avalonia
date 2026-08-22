@@ -12,6 +12,10 @@ public class RawParamsImportTests {
   [InlineData("ARSPD_OFFSET")]
   [InlineData("GND_ABS_PRESS")]
   [InlineData("GND_TEMP")]
+  [InlineData("BARO1_GND_PRESS")]
+  [InlineData("BARO2_GND_PRESS")]
+  [InlineData("BARO3_GND_PRESS")]
+  [InlineData("BARO_GND_TEMP")]
   [InlineData("CMD_INDEX")]
   [InlineData("LOG_LASTFILE")]
   [InlineData("FORMAT_VERSION")]
@@ -93,6 +97,34 @@ public class RawParamsImportTests {
     string summarized = RawParamsViewModel.BuildWriteConfirmation(many);
     Assert.Contains("21 parameters", summarized);
     Assert.DoesNotContain("P0:", summarized);
+  }
+
+  [Fact]
+  public void Frame_default_comparison_cannot_stage_after_the_selected_vehicle_changes() {
+    var firstLink = new MissionPlanner.MAVLinkInterface();
+    var secondLink = new MissionPlanner.MAVLinkInterface();
+    var firstTarget = new ParameterTarget(firstLink, 1, 1);
+    var comparison = new FrameDefaultComparison(
+        firstTarget,
+        7,
+        new FrameDefaultFile("Copter.param", "Tools/Frame_params/Copter.param"),
+        [new ParamComparisonRow("RTL_ALT", 1000, 1500)]);
+    var row = Row("RTL_ALT", 1000);
+
+    Assert.False(RawParamsViewModel.TryStageFrameDefaultComparison(
+        [row], comparison, new ParameterTarget(secondLink, 1, 1), 8, out int staleCount));
+    Assert.Equal(0, staleCount);
+    Assert.Equal("1000", row.ValueText);
+
+    Assert.False(RawParamsViewModel.TryStageFrameDefaultComparison(
+        [row], comparison, firstTarget, 8, out int returnedTargetCount));
+    Assert.Equal(0, returnedTargetCount);
+    Assert.Equal("1000", row.ValueText);
+
+    Assert.True(RawParamsViewModel.TryStageFrameDefaultComparison(
+        [row], comparison, firstTarget, 7, out int stagedCount));
+    Assert.Equal(1, stagedCount);
+    Assert.Equal("1500", row.ValueText);
   }
 
   private static ParamRow Row(string name, double value) =>
