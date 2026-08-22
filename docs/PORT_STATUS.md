@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 876 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link/Formation/FollowPath/WaypointLeader/FollowLeader/Sequence `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 891 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link/Formation/FollowPath/WaypointLeader/FollowLeader/Sequence/Translation-RESX `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -54,6 +54,15 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   download (including `@SYS/threads.txt`), parameter-recovery restore, QNH, forced recovery
   calibration flags, reboot/DFU/bootloader actions and remote DataFlash logging. Vehicle-changing
   actions require a live link, a disarmed vehicle and explicit confirmation where destructive.
+- The official hidden ResEdit workflow is a native Translation / RESX Editor in Developer Tools.
+  It scans the selected Mission Planner source tree for the same `Strings.resx`, `.Text`, `.ToolTip`,
+  `HeaderText` and `ToolTipText` string set, combines neutral text with an exact selected culture and
+  exports the official sparse `<name>.<culture>.resx` layout plus resumable `output.html` and CSV.
+  Existing WinForms manifest-resource names in old `output.html` files are mapped back only when the
+  source file/key identity is unambiguous. Scans and exports are cancellable; `bin`, `obj`, generated
+  `translation`, repository metadata and directory symlinks are excluded. XML DTDs are rejected,
+  HTML/CSV values are escaped, output paths remain below the selected root, writes are atomic and
+  every replaced RESX/HTML file is copied into a timestamped `.backup` tree first.
 - The hidden upstream `DevopsUI` is a native MAVLink Device Operations window reachable from Tools,
   Developer Tools and Ctrl+J. It supports the official SPI/I2C register reads and ICM20948
   write/read developer test, decodes all upstream DEVICE_OP status values and validates the fixed
@@ -478,12 +487,12 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 864 passed, 0 failed.
+- Automated tests: 891 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 864-test source on 2026-08-22. Package metadata,
+- The `.deb` target is rebuilt from the current 891-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 397 packaged-file checksums match after extraction, including the
   portable plugin API and byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -500,10 +509,10 @@ native-platform acceptance testing.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.cf3ac2e_amd64.deb`
-(54,034,304 bytes; SHA-256
-`e1ccc13035d477dce7c242ed07863071d0b8c6c657685b42cdce271013ac03c7`), built from the current
-876-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, synchronized
+`out/packages/missionplanner-avalonia_1.3.83-20260822.84cc50d_amd64.deb`
+(54,057,200 bytes; SHA-256
+`c43aa531c6ea41191b5d992fbfdcac9e1026115b7fb7041044a7ed6858863d81`), built from the current
+891-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
 interactive MAVLink
@@ -520,14 +529,15 @@ SSH terminal, secure SFTP DataFlash download/delete workflow, the recursive flig
 map thumbnails, offline sphere/ellipsoid MagFit, live Traditional Heli visualization, the movable
 Flight Data splitter, session-only/latest-wins vehicle parameter loading, single-prompt network
 connections, independent multi-link Connection List support and composite upstream/date/commit
-versioning, plus the fail-closed official Copter/Rover leader/follower Formation and
+versioning, the native official-compatible Translation / RESX Editor, plus the fail-closed official
+Copter/Rover leader/follower Formation and
 ArduPlane/Copter/Rover Follow Path workflows, the official Copter WaypointLeader state machine and
 the official FollowLeader and Sequence layout/step workflows, immediate complete-list parameter
 clearing across device switches, and reject-by-default privacy warnings on location/parameter log
 exports identified during the current CodeQL triage.
 Its APT version is
-`1:1.3.83+20260822.r198.cf3ac2e`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r198` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r201.84cc50d`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r201` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -576,7 +586,7 @@ not remove required Windows-native files from `win-x64` builds.
 | BLE transport | Linux/macOS; Windows unverified | Upstream supplies Windows SimpleBLE binaries. Linux needs a `.so`; macOS needs a dylib/framework integration. Windows path remains packaged but needs hardware testing. |
 | NativeAOT runtime | All | Linux links to a 66 MB ELF but fails in log4net `Assembly.GetCallingAssembly()`; MAVLink/XML/fastJSON also require dynamic code. Experimental only. |
 | Flight Data map extras | All | Mission/Home/current-WP, fence, rally, Guided target, POIs, camera feedback with latest footprints and opt-in overlap count, live terrain-projected gimbal target, ADS-B/AIS/OA_DB traffic, airports, RF propagation/elevation/distance overlays and mission-distance progress are ported. The current upstream `ProximityControl` launch in `FlightData` is commented out; the port already provides a live Proximity radar tab, so it is not counted as a missing map workflow. |
-| Remaining developer utilities | All | The safe portable subset of `temp.cs` is now a native Developer Tools page. Translation/resource editor and the OpenGL 3D terrain view still need dedicated Avalonia implementations. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration and PX4Flow live image assembly are already port-native. |
+| Remaining developer utility | All | The safe portable subset of `temp.cs`, including the Translation / RESX Editor, is now native. The OpenGL 3D terrain view still needs a dedicated cross-platform implementation. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration and PX4Flow live image assembly are already port-native. |
 
 ## Intentionally disabled or replaced
 
