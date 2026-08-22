@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 864 tests verified; the portable-plugin-host/HUD-recording/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link/Formation/FollowPath/WaypointLeader/FollowLeader/Sequence `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 876 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link/Formation/FollowPath/WaypointLeader/FollowLeader/Sequence `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -418,6 +418,14 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   cannot keep up, frames are skipped and the wall-clock timeline is preserved instead of building
   an unbounded queue or freezing the interface. This remains distinct from recording the incoming
   libVLC camera stream.
+- Tools and Developer Tools now expose the official OSDVideo workflow without its DirectShow,
+  GDI+ or Win32 dependencies. A source video is decoded through libVLC while the matching `.tlog`
+  is replayed into the upstream `CurrentState` model at 100 ms buckets; the real Avalonia HUD is
+  then composited over each visible frame and written as a silent MJPEG AVI. The upstream ±900 s
+  synchronization offset, preview-size/default and source-resolution option are preserved. New
+  output names never overwrite input or existing files, sensitive export requires explicit
+  confirmation, cancellation checkpoints a playable partial AVI, and padded decoder dimensions
+  plus libVLC repeat frames are normalized without stretching or lengthening the result.
 - The upstream combined `GimbalVideoControl` workflow is ported into the libVLC popup. It overlays
   camera point/rectangle tracking status on the decoded image; supports mouse pan/tilt, Ctrl+click
   ROI and Alt+click/drag object tracking; and restores W/A/S/D slew, Q/E continuous zoom,
@@ -492,10 +500,11 @@ native-platform acceptance testing.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.626f93b_amd64.deb`
-(54,018,482 bytes; SHA-256
-`5eb8f458497a6e0e1fdf82f1f209ab308c01d9b8a6e61bc87da7f9d1351269c2`), built from the current
-864-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, the integrated
+`out/packages/missionplanner-avalonia_1.3.83-20260822.cf3ac2e_amd64.deb`
+(54,034,304 bytes; SHA-256
+`e1ccc13035d477dce7c242ed07863071d0b8c6c657685b42cdce271013ac03c7`), built from the current
+876-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, synchronized
+OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
 interactive MAVLink
 camera/gimbal video control and all official
@@ -517,8 +526,8 @@ the official FollowLeader and Sequence layout/step workflows, immediate complete
 clearing across device switches, and reject-by-default privacy warnings on location/parameter log
 exports identified during the current CodeQL triage.
 Its APT version is
-`1:1.3.83+20260822.r193.626f93b`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r193` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r198.cf3ac2e`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r198` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -567,7 +576,6 @@ not remove required Windows-native files from `win-x64` builds.
 | BLE transport | Linux/macOS; Windows unverified | Upstream supplies Windows SimpleBLE binaries. Linux needs a `.so`; macOS needs a dylib/framework integration. Windows path remains packaged but needs hardware testing. |
 | NativeAOT runtime | All | Linux links to a 66 MB ELF but fails in log4net `Assembly.GetCallingAssembly()`; MAVLink/XML/fastJSON also require dynamic code. Experimental only. |
 | Flight Data map extras | All | Mission/Home/current-WP, fence, rally, Guided target, POIs, camera feedback with latest footprints and opt-in overlap count, live terrain-projected gimbal target, ADS-B/AIS/OA_DB traffic, airports, RF propagation/elevation/distance overlays and mission-distance progress are ported. The current upstream `ProximityControl` launch in `FlightData` is commented out; the port already provides a live Proximity radar tab, so it is not counted as a missing map workflow. |
-| Log tooling extras | All | Interactive DataFlash graphing, upstream expressions/preset alternatives/MODE overlays, log message/parameter inspection, MAVLink Inspector "Graph It", the recursive LogIndex with cache-only map thumbnails, offline three-compass sphere/ellipsoid MagFit and the upstream-named SCP workflow (actually SFTP over SSH) are ported. The SFTP page lists/downloads selected or all BIN logs, creates text LOG/KML outputs, applies GPS-time names and safely deletes selected/all remote logs with host-key pinning; passwords are never persisted and an inherited plaintext `LogDownloadscppath` is erased during migration. OSD video rendering from tlog remains absent. |
 | Remaining developer utilities | All | The safe portable subset of `temp.cs` is now a native Developer Tools page. Translation/resource editor and the OpenGL 3D terrain view still need dedicated Avalonia implementations. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration and PX4Flow live image assembly are already port-native. |
 
 ## Intentionally disabled or replaced

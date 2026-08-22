@@ -1,0 +1,87 @@
+<Window
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  mc:Ignorable="d"
+  d:DesignWidth="1120"
+  d:DesignHeight="720"
+  x:Class="MissionPlannerAvalonia.Views.OsdVideoOverlayWindow"
+  x:DataType="vm:OsdVideoOverlayViewModel"
+  Title="OSD Video — Telemetry Overlay"
+  Width="1120"
+  Height="720"
+  MinWidth="820"
+  MinHeight="600"
+  WindowStartupLocation="CenterOwner"
+  Background="{DynamicResource MpControlBg}"
+>
+  <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" RowSpacing="10">
+    <StackPanel Grid.Row="0" Spacing="4">
+      <TextBlock Classes="pagetitle" Text="OSD Video — Telemetry Overlay" />
+      <TextBlock
+        Classes="fieldlbl"
+        TextWrapping="Wrap"
+        Text="Cross-platform port of Mission Planner OSDVideo. It synchronizes a camera video with a .tlog and renders the Mission Planner HUD into a new silent MJPEG AVI."
+      />
+    </StackPanel>
+
+    <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+      <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Source video" VerticalAlignment="Center" />
+      <TextBox Grid.Column="1" Text="{Binding VideoPath}" IsReadOnly="True" Watermark="AVI, MPEG, MP4, MOV or MKV" />
+      <Button Grid.Column="2" Content="Browse…" Command="{Binding BrowseVideoCommand}" IsEnabled="{Binding !IsBusy}" />
+    </Grid>
+
+    <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+      <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Telemetry log" VerticalAlignment="Center" />
+      <TextBox Grid.Column="1" Text="{Binding TlogPath}" IsReadOnly="True" Watermark="Matching .tlog" />
+      <Button Grid.Column="2" Content="Browse…" Command="{Binding BrowseTlogCommand}" IsEnabled="{Binding !IsBusy}" />
+    </Grid>
+
+    <Grid Grid.Row="3" ColumnDefinitions="Auto,120,Auto,*,Auto" ColumnSpacing="10">
+      <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Time offset (seconds)" VerticalAlignment="Center" />
+      <NumericUpDown
+        Grid.Column="1"
+        Value="{Binding TimeOffsetSeconds}"
+        Minimum="-900"
+        Maximum="900"
+        Increment="1"
+        FormatString="0"
+        IsEnabled="{Binding !IsBusy}"
+      />
+      <CheckBox
+        Grid.Column="2"
+        Content="Source resolution"
+        IsChecked="{Binding FullResolution}"
+        VerticalAlignment="Center"
+        IsEnabled="{Binding !IsBusy}"
+      />
+      <TextBlock
+        Grid.Column="3"
+        Classes="fieldlbl"
+        Text="Positive offset selects later telemetry; default output is at most 960 px wide."
+        TextWrapping="Wrap"
+        VerticalAlignment="Center"
+      />
+      <TextBlock Grid.Column="4" Text="{Binding WrittenFrames, StringFormat='Frames: {0:N0}'}" VerticalAlignment="Center" />
+    </Grid>
+
+    <Border Grid.Row="4" Background="Black" BorderBrush="#606060" BorderThickness="1" CornerRadius="4">
+      <Image x:Name="PreviewImage" Stretch="Uniform" />
+    </Border>
+
+    <Grid Grid.Row="5" RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="6">
+      <Grid Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="4" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+        <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Output" VerticalAlignment="Center" />
+        <TextBox Grid.Column="1" Text="{Binding OutputPath}" IsReadOnly="True" Watermark="Unused .avi path" />
+        <Button Grid.Column="2" Content="Choose…" Command="{Binding BrowseOutputCommand}" IsEnabled="{Binding !IsBusy}" />
+      </Grid>
+      <ProgressBar Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="4" Minimum="0" Maximum="100" Value="{Binding Progress}" />
+      <TextBlock Grid.Row="2" Grid.Column="0" Text="{Binding Status}" Foreground="#9CDCFE" TextWrapping="Wrap" VerticalAlignment="Center" />
+      <Button Grid.Row="2" Grid.Column="1" Content="Start" Command="{Binding StartCommand}" IsEnabled="{Binding !IsBusy}" MinWidth="90" />
+      <Button Grid.Row="2" Grid.Column="2" Content="Cancel" Command="{Binding CancelCommand}" IsEnabled="{Binding IsBusy}" MinWidth="90" />
+      <Button Grid.Row="2" Grid.Column="3" Content="Close" Click="OnClose" MinWidth="90" />
+    </Grid>
+  </Grid>
+</Window>

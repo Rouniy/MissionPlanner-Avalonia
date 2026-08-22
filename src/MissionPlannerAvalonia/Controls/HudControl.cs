@@ -77,6 +77,8 @@ public class HudControl : Control {
       AvaloniaProperty.Register<HudControl, bool>(nameof(GroundBrown), false);
   public static readonly StyledProperty<bool> SixteenByNineProperty =
       AvaloniaProperty.Register<HudControl, bool>(nameof(SixteenByNine), false);
+  public static readonly StyledProperty<IImage?> VideoBackgroundProperty =
+      AvaloniaProperty.Register<HudControl, IImage?>(nameof(VideoBackground));
 
   public static readonly StyledProperty<bool> DisplayHeadingProperty =
       AvaloniaProperty.Register<HudControl, bool>(nameof(DisplayHeading), true);
@@ -221,6 +223,10 @@ public class HudControl : Control {
   public bool SixteenByNine {
     get => GetValue(SixteenByNineProperty);
     set => SetValue(SixteenByNineProperty, value);
+  }
+  public IImage? VideoBackground {
+    get => GetValue(VideoBackgroundProperty);
+    set => SetValue(VideoBackgroundProperty, value);
   }
   public bool DisplayHeading {
     get => GetValue(DisplayHeadingProperty);
@@ -483,6 +489,7 @@ public class HudControl : Control {
         BatteryCellsProperty,
         GroundBrownProperty,
         SixteenByNineProperty,
+        VideoBackgroundProperty,
         DisplayHeadingProperty,
         DisplaySpeedProperty,
         DisplayAltProperty,
@@ -530,6 +537,18 @@ public class HudControl : Control {
 
   private IBrush GroundFill() => GroundBrown ? _groundBrownBrush : _groundBrush;
 
+  internal void SnapToValues() {
+    _eRoll = Roll;
+    _ePitch = Pitch;
+    _eYaw = Yaw;
+    _eAlt = Alt;
+    _eAs = AirSpeed;
+    _eGs = GroundSpeed;
+    _eVs = VerticalSpeed;
+    _easeInit = true;
+    InvalidateVisual();
+  }
+
   public override void Render(DrawingContext context) {
     var b = Bounds;
     double w = b.Width,
@@ -539,7 +558,8 @@ public class HudControl : Control {
     }
 
     context.FillRectangle(Brushes.Black, new Rect(0, 0, w, h));
-    var viewport = HudLayout.AspectViewport(new Size(w, h), SixteenByNine);
+    var viewport = HudLayout.Viewport(
+        new Size(w, h), SixteenByNine, VideoBackground != null);
     _contentOffset = new Point(viewport.X, viewport.Y);
     if (!OverlayEnabled) {
       _ekfRect = _vibeRect = _prearmRect = default;
@@ -550,6 +570,13 @@ public class HudControl : Control {
         Matrix.CreateTranslation(viewport.X, viewport.Y));
     w = viewport.Width;
     h = viewport.Height;
+    IImage? videoBackground = VideoBackground;
+    if (videoBackground != null) {
+      context.DrawImage(
+          videoBackground,
+          new Rect(0, 0, videoBackground.Size.Width, videoBackground.Size.Height),
+          new Rect(0, 0, w, h));
+    }
 
     double unit = Math.Min(w, h);
     double fontsize = Math.Clamp(unit / 28.0, 9, 30);
@@ -565,9 +592,11 @@ public class HudControl : Control {
     using (context.PushTransform(Matrix.CreateRotation(-rollRad))) {
       double big = Math.Max(w, h) * 2;
       double pitchoffset = _ePitch * perDeg;
-      context.FillRectangle(_skyBrush, new Rect(-big, -big, big * 2, big + pitchoffset));
-      context.FillRectangle(ground, new Rect(-big, pitchoffset, big * 2, big * 2 - pitchoffset));
-      context.DrawLine(_whitePen, new Point(-big, pitchoffset), new Point(big, pitchoffset));
+      if (videoBackground == null) {
+        context.FillRectangle(_skyBrush, new Rect(-big, -big, big * 2, big + pitchoffset));
+        context.FillRectangle(ground, new Rect(-big, pitchoffset, big * 2, big * 2 - pitchoffset));
+        context.DrawLine(_whitePen, new Point(-big, pitchoffset), new Point(big, pitchoffset));
+      }
 
       if (DisplayRollPitch) {
         for (int a = -90; a <= 90; a += 5) {
@@ -1022,6 +1051,11 @@ public class HudControl : Control {
 }
 
 internal static class HudLayout {
+  internal static Rect Viewport(Size available, bool sixteenByNine, bool hasVideoBackground) =>
+      hasVideoBackground
+          ? new Rect(0, 0, available.Width, available.Height)
+          : AspectViewport(available, sixteenByNine);
+
   internal static Rect AspectViewport(Size available, bool sixteenByNine) {
     if (available.Width <= 0 || available.Height <= 0) {
       return default;

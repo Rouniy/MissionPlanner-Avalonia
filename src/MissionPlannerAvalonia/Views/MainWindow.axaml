@@ -155,6 +155,7 @@
             <MenuItem Header="Connection Options" Click="OnConnectionOptions" />
             <MenuItem Header="Download Logs (MAVLink)" Click="OnDownloadLogs" />
             <MenuItem Header="Tlog Convert / Extract" Click="OnMavlinkLogConvert" />
+            <MenuItem Header="OSD Video — Telemetry Overlay" Click="OnOsdVideoOverlay" />
           </MenuItem>
         </Menu>
 

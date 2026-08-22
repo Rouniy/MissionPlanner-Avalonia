@@ -172,6 +172,9 @@ public partial class MainWindow : Window {
 
   private void OnMavlinkLogConvert(object? sender, RoutedEventArgs e) => MavlinkLogWindow.OpenWindow();
 
+  private void OnOsdVideoOverlay(object? sender, RoutedEventArgs e) =>
+      OsdVideoOverlayWindow.OpenWindow();
+
   private void OnMapCache(object? sender, RoutedEventArgs e) => MapCacheWindow.OpenWindow();
 
   private void OnDeviceOperations(object? sender, RoutedEventArgs e) =>
