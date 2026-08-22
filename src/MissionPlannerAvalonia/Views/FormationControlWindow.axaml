@@ -1,0 +1,98 @@
+<Window
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  xmlns:controls="using:MissionPlannerAvalonia.Controls"
+  x:Class="MissionPlannerAvalonia.Views.FormationControlWindow"
+  x:DataType="vm:FormationControlViewModel"
+  Title="Swarm Formation (Beta)"
+  Width="1180"
+  Height="720"
+  MinWidth="900"
+  MinHeight="600"
+  WindowStartupLocation="CenterOwner"
+  Background="{DynamicResource MpControlBg}">
+  <Grid Margin="14" RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="10">
+    <Border Grid.Row="0" Background="#5A2B20" BorderBrush="#FF9B66" BorderThickness="1"
+            CornerRadius="4" Padding="10">
+      <TextBlock Foreground="#FFD4B8" TextWrapping="Wrap"
+                 Text="BETA / USE AT OWN RISK — port of the official Mission Planner Formation tool. Commands are sent to explicitly enabled Copter/Rover followers only; ArduPlane's separate experimental attitude/PID path remains disabled. Loss of a selected modem, leader or follower stops the 10 Hz stream immediately." />
+    </Border>
+
+    <Grid Grid.Row="1" ColumnDefinitions="Auto,260,Auto,Auto,Auto,Auto,*" ColumnSpacing="8">
+      <TextBlock Text="Leader" VerticalAlignment="Center" />
+      <ComboBox Grid.Column="1" ItemsSource="{Binding Vehicles}"
+                SelectedItem="{Binding SelectedLeader, Mode=TwoWay}">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="vm:FormationVehicleItem">
+            <TextBlock Text="{Binding Label}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+      <Button Grid.Column="2" Content="Refresh Vehicles" Command="{Binding RefreshCommand}" />
+      <Button Grid.Column="3" Content="Capture Live Offsets"
+              Command="{Binding CaptureOffsetsCommand}" />
+      <CheckBox Grid.Column="4" Content="Align follower yaw"
+                IsChecked="{Binding AlignYaw, Mode=TwoWay}" VerticalAlignment="Center" />
+      <CheckBox Grid.Column="5" Content="Aim gimbals instead"
+                IsChecked="{Binding AimGimbals, Mode=TwoWay}"
+                IsEnabled="{Binding AlignYaw}" VerticalAlignment="Center" />
+    </Grid>
+
+    <Grid Grid.Row="2" ColumnDefinitions="5*,7*" ColumnSpacing="10">
+      <Border BorderBrush="#626866" BorderThickness="1" CornerRadius="4">
+        <controls:FormationGridControl x:Name="FormationGrid" Items="{Binding Vehicles}" />
+      </Border>
+
+      <DataGrid x:Name="FormationVehicleGrid" Grid.Column="1" ItemsSource="{Binding Vehicles}"
+                AutoGenerateColumns="False"
+                GridLinesVisibility="Horizontal" CanUserReorderColumns="False">
+        <DataGrid.Columns>
+          <DataGridCheckBoxColumn Header="Use" Binding="{Binding Included, Mode=TwoWay}"
+                                  Width="50" />
+          <DataGridTextColumn Header="Endpoint" Binding="{Binding Endpoint}" IsReadOnly="True"
+                              Width="150" />
+          <DataGridTextColumn Header="Sys" Binding="{Binding SystemId}" IsReadOnly="True"
+                              Width="42" />
+          <DataGridTextColumn Header="Comp" Binding="{Binding ComponentId}" IsReadOnly="True"
+                              Width="48" />
+          <DataGridTextColumn Header="Role" Binding="{Binding Role}" IsReadOnly="True"
+                              Width="130" />
+          <DataGridTextColumn Header="X m" Binding="{Binding X, Mode=TwoWay, StringFormat=0.0}"
+                              Width="65" />
+          <DataGridTextColumn Header="Y m" Binding="{Binding Y, Mode=TwoWay, StringFormat=0.0}"
+                              Width="65" />
+          <DataGridTextColumn Header="Z m" Binding="{Binding Z, Mode=TwoWay, StringFormat=0.0}"
+                              Width="65" />
+          <DataGridTextColumn Header="Firmware" Binding="{Binding Firmware}" IsReadOnly="True"
+                              Width="95" />
+          <DataGridTextColumn Header="Live status" Binding="{Binding LiveStatus}" IsReadOnly="True"
+                              Width="*" />
+        </DataGrid.Columns>
+      </DataGrid>
+    </Grid>
+
+    <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*"
+          ColumnSpacing="8" IsEnabled="{Binding !Busy}">
+      <Button x:Name="FormationRunButton" Content="{Binding RunButtonText}"
+              Command="{Binding ToggleRunCommand}"
+              MinWidth="130" />
+      <Button Grid.Column="1" Content="Arm Followers" Command="{Binding ArmFollowersCommand}" />
+      <Button Grid.Column="2" Content="Disarm Followers"
+              Command="{Binding DisarmFollowersCommand}" />
+      <Button Grid.Column="3" Content="GUIDED" Command="{Binding GuidedFollowersCommand}" />
+      <Button Grid.Column="4" Content="AUTO" Command="{Binding AutoFollowersCommand}" />
+      <Button Grid.Column="5" Content="Take Off" Command="{Binding TakeoffFollowersCommand}" />
+      <NumericUpDown Grid.Column="6" Value="{Binding TakeoffAltitudeM, Mode=TwoWay}"
+                     Minimum="1" Maximum="10000" Increment="1" FormatString="0.0"
+                     Width="85" ToolTip.Tip="Takeoff altitude in metres" />
+      <Button Grid.Column="7" Content="LAND" Command="{Binding LandFollowersCommand}" />
+    </Grid>
+
+    <Grid Grid.Row="4" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+      <TextBlock Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center"
+                 Foreground="{DynamicResource MpAccentBrush}" />
+      <Button Grid.Column="1" Content="Close" Click="OnClose" MinWidth="90" />
+    </Grid>
+  </Grid>
+</Window>

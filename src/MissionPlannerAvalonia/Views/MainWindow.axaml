@@ -145,6 +145,7 @@
             <MenuItem Header="Map Tile Cache     Ctrl+X" Click="OnMapCache" />
             <MenuItem Header="MAVLink Device Operations     Ctrl+J" Click="OnDeviceOperations" />
             <MenuItem Header="RF Propagation Settings     Ctrl+W" Click="OnPropagationSettings" />
+            <MenuItem Header="Swarm Formation (Beta)" Click="OnFormationControl" />
             <Separator />
             <MenuItem Header="Link Statistics" Click="OnLinkStats" />
             <MenuItem Header="Connection Options" Click="OnConnectionOptions" />
