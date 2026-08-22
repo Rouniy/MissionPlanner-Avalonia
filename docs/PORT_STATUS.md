@@ -500,10 +500,11 @@ native-platform acceptance testing.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.626f93b_amd64.deb`
-(54,018,482 bytes; SHA-256
-`5eb8f458497a6e0e1fdf82f1f209ab308c01d9b8a6e61bc87da7f9d1351269c2`), built from the current
-876-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, the integrated
+`out/packages/missionplanner-avalonia_1.3.83-20260822.cf3ac2e_amd64.deb`
+(54,034,304 bytes; SHA-256
+`e1ccc13035d477dce7c242ed07863071d0b8c6c657685b42cdce271013ac03c7`), built from the current
+876-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, synchronized
+OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
 interactive MAVLink
 camera/gimbal video control and all official
@@ -525,8 +526,8 @@ the official FollowLeader and Sequence layout/step workflows, immediate complete
 clearing across device switches, and reject-by-default privacy warnings on location/parameter log
 exports identified during the current CodeQL triage.
 Its APT version is
-`1:1.3.83+20260822.r193.626f93b`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r193` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r198.cf3ac2e`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r198` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
