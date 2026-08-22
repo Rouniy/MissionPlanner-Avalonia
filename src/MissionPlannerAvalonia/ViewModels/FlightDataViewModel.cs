@@ -19,7 +19,7 @@ using MissionPlannerAvalonia.ViewModels.GCSViews.ConfigurationView;
 namespace MissionPlannerAvalonia.ViewModels;
 
 public partial class FlightDataViewModel : ViewModelBase, IDisposable {
-  private readonly MAVLinkInterface _comPort = AppState.comPort;
+  private MAVLinkInterface _comPort => AppState.comPort;
   private readonly DispatcherTimer _timer;
   private readonly TlogPlayer _tlog = new();
   private readonly LuaScriptHost _lua = new();

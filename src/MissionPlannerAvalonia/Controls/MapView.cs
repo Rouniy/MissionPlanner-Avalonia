@@ -15,6 +15,7 @@ using Mapsui.Projections;
 using Mapsui.Styles;
 using Mapsui.Tiling.Layers;
 using Mapsui.UI.Avalonia;
+using MissionPlanner;
 using MissionPlanner.Utilities;
 using MissionPlannerAvalonia.Services;
 using NetTopologySuite.Geometries;
@@ -43,6 +44,7 @@ public class MapView : MapControl {
   private readonly WritableLayer _photoFootprints = new() { Name = "Camera footprints" };
   private readonly WritableLayer _photoOverlap = new() { Name = "Camera overlap count" };
   private readonly WritableLayer _cameraTarget = new() { Name = "Camera target" };
+  private readonly WritableLayer _otherVehicles = new() { Name = "Other vehicles" };
   private readonly WritableLayer _vehicle = new() { Name = "Vehicle" };
   private readonly WritableLayer _traffic = new() { Name = "ADS-B / AIS traffic" };
   private readonly DispatcherTimer _timer;
@@ -148,6 +150,7 @@ public class MapView : MapControl {
     map.Layers.Add(_guidedTarget);
     map.Layers.Add(_movingBase);
     map.Layers.Add(_cameraTarget);
+    map.Layers.Add(_otherVehicles);
     _vehicle.Style = MavMarker.Vehicle(0);
     map.Layers.Add(_vehicle);
 
@@ -311,6 +314,7 @@ public class MapView : MapControl {
     if (!LiveVehicle) {
       return;
     }
+    UpdateOtherVehicles();
     var cs = AppState.comPort.MAV?.cs;
     if (cs == null || (cs.lat == 0 && cs.lng == 0)) {
       return;
@@ -336,6 +340,33 @@ public class MapView : MapControl {
     } else if (AutoPan) {
       Map.Navigator.CenterOn(pt);
     }
+  }
+
+  private void UpdateOtherVehicles() {
+    _otherVehicles.Clear();
+    MAVLinkInterface activeLink = AppState.comPort;
+    byte activeSysId = activeLink.MAV.sysid;
+    byte activeCompId = activeLink.MAV.compid;
+    foreach (MavLinkConnection connection in AppState.Connections.Snapshot()) {
+      if (!connection.IsOpen) {
+        continue;
+      }
+      foreach (MAVState mav in connection.Link.MAVlist.ToArray()) {
+        if (ReferenceEquals(connection.Link, activeLink) && mav.sysid == activeSysId &&
+            mav.compid == activeCompId) {
+          continue;
+        }
+        CurrentState state = mav.cs;
+        if (!ValidLatLng(state.lat, state.lng) || (state.lat == 0 && state.lng == 0)) {
+          continue;
+        }
+        var (x, y) = SphericalMercator.FromLonLat(state.lng, state.lat);
+        var feature = new PointFeature(new MPoint(x, y));
+        feature.Styles.Add(MavMarker.Vehicle(state.yaw, active: false));
+        _otherVehicles.Add(feature);
+      }
+    }
+    _otherVehicles.DataHasChanged();
   }
 
   private void UpdateOperationalOverlays() {
@@ -637,7 +668,9 @@ public class MapView : MapControl {
   private void UpdateMapRotation(MissionPlanner.CurrentState cs) {
     var settings = MissionPlanner.Utilities.Settings.Instance;
     bool follow = settings.GetBoolean("CHK_maprotation", false);
-    if (follow && AppState.comPort.MAVlist.Count > 1) {
+    if (follow && AppState.Connections.Snapshot()
+        .Where(connection => connection.IsOpen)
+        .Sum(connection => connection.Link.MAVlist.Count) > 1) {
       // As in upstream, heading-up is ambiguous with multiple vehicles.
       settings["CHK_maprotation"] = false.ToString();
       follow = false;

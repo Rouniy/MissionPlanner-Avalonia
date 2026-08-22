@@ -265,7 +265,9 @@ internal static class TrafficUplink {
 internal sealed class TrafficService : IDisposable {
   private static readonly TimeSpan _maximumAge = TimeSpan.FromSeconds(30);
   private readonly TrafficStore _store = new();
-  private readonly MAVLinkInterface _link;
+  private readonly Func<MAVLinkInterface> _currentLink;
+  private readonly object _linkSubscriptionSync = new();
+  private readonly HashSet<MAVLinkInterface> _subscribedLinks = [];
   private readonly ExternalAdsbReceiver _external;
   private readonly CancellationTokenSource _shutdown = new();
   private readonly Task _uplinkTask;
@@ -275,12 +277,17 @@ internal sealed class TrafficService : IDisposable {
   private int _uplinkIndex = -1;
 
   internal TrafficService(MAVLinkInterface? link = null, bool applySavedSettings = false,
+      System.Net.Http.HttpClient? httpClient = null)
+      : this(FixedLink(link), applySavedSettings, httpClient) {
+  }
+
+  internal TrafficService(Func<MAVLinkInterface> currentLink, bool applySavedSettings = false,
       System.Net.Http.HttpClient? httpClient = null) {
-    _link = link ?? new MAVLinkInterface();
+    _currentLink = currentLink ?? throw new ArgumentNullException(nameof(currentLink));
     _external = new ExternalAdsbReceiver(OnExternalPlane, GetObserverPosition, httpClient);
     MAVLinkInterface.UpdateADSBPlanePosition += OnPlanePosition;
     MAVLinkInterface.UpdateADSBCollision += OnCollision;
-    _link.OnPacketReceived += OnPacketReceived;
+    SetMavlinkSources([_currentLink()]);
     _uplinkTask = Task.Run(() => UplinkLoopAsync(_shutdown.Token));
     if (applySavedSettings) {
       var settings = Settings.Instance;
@@ -288,6 +295,11 @@ internal sealed class TrafficService : IDisposable {
           settings.GetString("adsbserver", ExternalAdsbOptions.DefaultServer),
           settings.GetInt32("adsbport", ExternalAdsbOptions.DefaultPort));
     }
+  }
+
+  private static Func<MAVLinkInterface> FixedLink(MAVLinkInterface? link) {
+    MAVLinkInterface instance = link ?? new MAVLinkInterface();
+    return () => instance;
   }
 
   internal string ExternalStatus => _external.Status;
@@ -325,7 +337,12 @@ internal sealed class TrafficService : IDisposable {
     _disposed = true;
     MAVLinkInterface.UpdateADSBPlanePosition -= OnPlanePosition;
     MAVLinkInterface.UpdateADSBCollision -= OnCollision;
-    _link.OnPacketReceived -= OnPacketReceived;
+    lock (_linkSubscriptionSync) {
+      foreach (MAVLinkInterface link in _subscribedLinks) {
+        link.OnPacketReceived -= OnPacketReceived;
+      }
+      _subscribedLinks.Clear();
+    }
     _shutdown.Cancel();
     try {
       _external.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(3));
@@ -353,9 +370,27 @@ internal sealed class TrafficService : IDisposable {
     }
   }
 
+  internal void SetMavlinkSources(IEnumerable<MAVLinkInterface> links) {
+    ArgumentNullException.ThrowIfNull(links);
+    MAVLinkInterface[] desired = links.Distinct().ToArray();
+    lock (_linkSubscriptionSync) {
+      if (_disposed) {
+        return;
+      }
+      foreach (MAVLinkInterface removed in _subscribedLinks.Except(desired).ToArray()) {
+        removed.OnPacketReceived -= OnPacketReceived;
+        _subscribedLinks.Remove(removed);
+      }
+      foreach (MAVLinkInterface added in desired.Except(_subscribedLinks)) {
+        added.OnPacketReceived += OnPacketReceived;
+        _subscribedLinks.Add(added);
+      }
+    }
+  }
+
   private (double Lat, double Lng)? GetObserverPosition() {
     try {
-      var location = _link.MAV.cs.Location;
+      var location = _currentLink().MAV.cs.Location;
       if (double.IsFinite(location.Lat) && double.IsFinite(location.Lng)
           && (location.Lat != 0 || location.Lng != 0)) {
         return (location.Lat, location.Lng);
@@ -371,13 +406,14 @@ internal sealed class TrafficService : IDisposable {
     try {
       using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
       while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false)) {
-        if (_link.BaseStream?.IsOpen != true || GetObserverPosition() is not { } observer) {
+        MAVLinkInterface link = _currentLink();
+        if (link.BaseStream?.IsOpen != true || GetObserverPosition() is not { } observer) {
           continue;
         }
         var targets = _store.Snapshot(DateTime.UtcNow, _maximumAge);
         if (TrafficUplink.TryBuildNext(targets, observer.Lat, observer.Lng, ref _uplinkIndex,
             out var packet)) {
-          _link.sendPacket(packet, _link.MAV.sysid, _link.MAV.compid);
+          link.sendPacket(packet, link.MAV.sysid, link.MAV.compid);
         }
       }
     } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {

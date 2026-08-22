@@ -29,7 +29,7 @@ public partial class RawParamsViewModel : ViewModelBase, IDisposable {
     "FORMAT_VERSION",
   };
 
-  private readonly MAVLinkInterface _comPort = AppState.comPort;
+  private MAVLinkInterface _comPort => AppState.comPort;
 
   private readonly List<ParamRow> _all = new();
 

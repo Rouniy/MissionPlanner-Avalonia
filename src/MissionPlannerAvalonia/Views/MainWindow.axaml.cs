@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using MissionPlannerAvalonia.ViewModels;
 
 namespace MissionPlannerAvalonia.Views;
@@ -149,6 +150,20 @@ public partial class MainWindow : Window {
 
   private void OnConnectionOptions(object? sender, RoutedEventArgs e) =>
       ConnectionOptionsWindow.OpenWindow();
+
+  private async void OnConnectionList(object? sender, RoutedEventArgs e) {
+    var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions {
+      Title = "Open Mission Planner Connection List",
+      AllowMultiple = false,
+      FileTypeFilter = [new FilePickerFileType("Connection list") {
+        Patterns = ["*.txt", "*.list", "*.connections", "*"],
+      }],
+    });
+    string? path = files.Count > 0 ? files[0].TryGetLocalPath() : null;
+    if (!string.IsNullOrWhiteSpace(path) && Vm is { } vm) {
+      await vm.Connection.ImportConnectionListAsync(path);
+    }
+  }
 
   private void OnDownloadLogs(object? sender, RoutedEventArgs e) => LogDownloadWindow.OpenWindow();
 
