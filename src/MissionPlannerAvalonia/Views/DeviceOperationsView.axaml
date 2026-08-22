@@ -56,9 +56,13 @@
     </Border>
 
     <StackPanel Grid.Row="5" Orientation="Horizontal" Spacing="8">
-      <Button Content="Read Registers" Command="{Binding ReadCommand}" IsEnabled="{Binding !Busy}" />
-      <Button Content="ICM20948 Write/Read Test" Command="{Binding TestIcm20948Command}"
+      <Button x:Name="UseActiveTargetButton" Content="Use Active Target"
+              Command="{Binding UseActiveTargetCommand}"
               IsEnabled="{Binding !Busy}" />
+      <Button Content="Read Registers" Command="{Binding ReadCommand}"
+              IsEnabled="{Binding CanOperate}" />
+      <Button Content="ICM20948 Write/Read Test" Command="{Binding TestIcm20948Command}"
+              IsEnabled="{Binding CanOperate}" />
       <ProgressBar IsVisible="{Binding Busy}" IsIndeterminate="True" Width="120" Height="5"
                    VerticalAlignment="Center" />
     </StackPanel>
