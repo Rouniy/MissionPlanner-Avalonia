@@ -28,11 +28,17 @@ public partial class FlightDataView : UserControl {
     InitializeComponent();
     _flightDataLayout = this.FindControl<Avalonia.Controls.Grid>("FlightDataLayoutGrid");
     RestoreMainSplitterDistance();
+    _hudHost = this.FindControl<ContentControl>("HudHost");
     _hud = this.FindControl<HudControl>("Hud");
     if (_hud != null) {
       _hud.IndicatorClicked += OnHudIndicatorClicked;
       _hud.CustomPaint += OnPluginHudPaint;
+      _hud.DoubleTapped += OnHudDoubleTapped;
     }
+    _quickHost = this.FindControl<ContentControl>("QuickHost");
+    _quickGrid = this.FindControl<ItemsControl>("QuickGrid");
+    _detachHudMenuItem = this.FindControl<MenuItem>("DetachHudMenuItem");
+    _detachQuickMenuItem = this.FindControl<MenuItem>("DetachQuickMenuItem");
     _recordHudMenuItem = this.FindControl<MenuItem>("RecordHudMenuItem");
     _stopHudRecordingMenuItem = this.FindControl<MenuItem>("StopHudRecordingMenuItem");
     _hudCaptureTimer = new DispatcherTimer {
@@ -73,8 +79,10 @@ public partial class FlightDataView : UserControl {
     DetachedFromVisualTree += (_, _) => {
       _displayViewSubscribed = false;
       Services.DisplayViewService.Changed -= OnDisplayViewChanged;
+      RestoreDetachedPanels();
       _ = StopHudRecordingAsync(showResult: false);
     };
+    DataContextChanged += (_, _) => SyncDetachedWindowDataContexts();
     ApplyGaugeSettings();
   }
 
@@ -196,12 +204,186 @@ public partial class FlightDataView : UserControl {
   private readonly LivePlot? _tuningPlot;
   private readonly TabControl? _fdTabs;
   private readonly Avalonia.Controls.Grid? _flightDataLayout;
+  private readonly ContentControl? _hudHost;
   private readonly HudControl? _hud;
+  private readonly ContentControl? _quickHost;
+  private readonly ItemsControl? _quickGrid;
+  private readonly MenuItem? _detachHudMenuItem;
+  private readonly MenuItem? _detachQuickMenuItem;
   private readonly MenuItem? _recordHudMenuItem;
   private readonly MenuItem? _stopHudRecordingMenuItem;
   private readonly DispatcherTimer _hudCaptureTimer;
   private HudFrameRecorder? _hudRecorder;
   private FlightDataViewModel? _mapVm;
+  private Window? _hudWindow;
+  private Window? _quickWindow;
+
+  internal bool IsHudDetached => _hudWindow != null;
+  internal bool IsQuickDetached => _quickWindow != null;
+
+  private void OnHudDoubleTapped(object? sender, TappedEventArgs e) {
+    if (_hudWindow == null) {
+      DetachHud();
+      e.Handled = true;
+    }
+  }
+
+  private void OnToggleHudDetached(object? sender, RoutedEventArgs e) {
+    if (_hudWindow == null) {
+      DetachHud();
+    } else {
+      RestoreHud();
+    }
+  }
+
+  private void OnToggleQuickDetached(object? sender, RoutedEventArgs e) {
+    if (_quickWindow == null) {
+      DetachQuick();
+    } else {
+      RestoreQuick();
+    }
+  }
+
+  internal Window? DetachHud(bool showWindow = true) {
+    if (_hudWindow != null) {
+      if (showWindow && _hudWindow.IsVisible) {
+        _hudWindow.Activate();
+      }
+      return _hudWindow;
+    }
+    if (_hudHost == null || _hud == null || !ReferenceEquals(_hudHost.Content, _hud)) {
+      return null;
+    }
+
+    _hudWindow = CreateDetachedWindow(
+        _hudHost, _hud, "Flight Data — HUD", 720, 480, RestoreHud);
+    UpdateDetachedMenuHeaders();
+    if (showWindow && !TryShowDetachedWindow(_hudWindow, RestoreHud)) {
+      return null;
+    }
+    return _hudWindow;
+  }
+
+  internal Window? DetachQuick(bool showWindow = true) {
+    if (_quickWindow != null) {
+      if (showWindow && _quickWindow.IsVisible) {
+        _quickWindow.Activate();
+      }
+      return _quickWindow;
+    }
+    if (_quickHost == null || _quickGrid == null
+        || !ReferenceEquals(_quickHost.Content, _quickGrid)) {
+      return null;
+    }
+
+    _quickWindow = CreateDetachedWindow(
+        _quickHost, _quickGrid, "Flight Data — Quick", 340, 500, RestoreQuick);
+    UpdateDetachedMenuHeaders();
+    if (showWindow && !TryShowDetachedWindow(_quickWindow, RestoreQuick)) {
+      return null;
+    }
+    return _quickWindow;
+  }
+
+  private Window CreateDetachedWindow(
+      ContentControl host,
+      Control panel,
+      string title,
+      double width,
+      double height,
+      Action restore) {
+    var restoreButton = new Button {
+      Content = title + " is open in a separate window. Click to dock it again.",
+      HorizontalAlignment = HorizontalAlignment.Center,
+      VerticalAlignment = VerticalAlignment.Center,
+      Margin = new Thickness(16),
+    };
+    restoreButton.Click += (_, _) => restore();
+
+    // Clear the original logical parent before assigning the same live control to a Window.
+    host.Content = restoreButton;
+    var window = new Window {
+      Title = title,
+      Width = width,
+      Height = height,
+      MinWidth = 260,
+      MinHeight = 220,
+      DataContext = DataContext,
+      Content = panel,
+      Background = title.EndsWith("HUD", StringComparison.Ordinal) ? Avalonia.Media.Brushes.Black : null,
+      WindowStartupLocation = WindowStartupLocation.CenterOwner,
+    };
+    window.Closed += (_, _) => restore();
+    return window;
+  }
+
+  private bool TryShowDetachedWindow(Window window, Action restore) {
+    try {
+      if (TopLevel.GetTopLevel(this) is Window owner) {
+        window.Show(owner);
+      } else {
+        window.Show();
+      }
+      return true;
+    } catch (Exception ex) {
+      restore();
+      _ = Services.Dialogs.Alert("Flight Data panel", "Could not open a separate window: " + ex.Message);
+      return false;
+    }
+  }
+
+  private void RestoreHud() {
+    Window? window = _hudWindow;
+    _hudWindow = null;
+    if (window != null) {
+      window.Content = null;
+    }
+    if (_hudHost != null && _hud != null) {
+      _hudHost.Content = _hud;
+    }
+    if (window?.IsVisible == true) {
+      window.Close();
+    }
+    UpdateDetachedMenuHeaders();
+  }
+
+  private void RestoreQuick() {
+    Window? window = _quickWindow;
+    _quickWindow = null;
+    if (window != null) {
+      window.Content = null;
+    }
+    if (_quickHost != null && _quickGrid != null) {
+      _quickHost.Content = _quickGrid;
+    }
+    if (window?.IsVisible == true) {
+      window.Close();
+    }
+    UpdateDetachedMenuHeaders();
+  }
+
+  internal void RestoreDetachedPanels() {
+    RestoreHud();
+    RestoreQuick();
+  }
+
+  private void SyncDetachedWindowDataContexts() {
+    if (_hudWindow != null) {
+      _hudWindow.DataContext = DataContext;
+    }
+    if (_quickWindow != null) {
+      _quickWindow.DataContext = DataContext;
+    }
+  }
+
+  private void UpdateDetachedMenuHeaders() {
+    if (_detachHudMenuItem != null) {
+      _detachHudMenuItem.Header = _hudWindow == null ? "Undock HUD" : "Dock HUD";
+    }
+    if (_detachQuickMenuItem != null) {
+      _detachQuickMenuItem.Header = _quickWindow == null ? "Undock Quick" : "Dock Quick";
+    }
+  }
 
   private async void OnStartHudRecording(object? sender, RoutedEventArgs e) {
     if (_hud == null) {

@@ -23,64 +23,65 @@
     </Grid.ColumnDefinitions>
     <Grid Grid.Column="{Binding HudColumn}" RowDefinitions="*,4,*">
       <Border Grid.Row="0" Background="Black">
-        <ctl:HudControl
-          x:Name="Hud"
-          Roll="{Binding Roll}"
-          Pitch="{Binding Pitch}"
-          Yaw="{Binding Yaw}"
-          Alt="{Binding Alt}"
-          AirSpeed="{Binding AirSpeed}"
-          GroundSpeed="{Binding GroundSpeed}"
-          VerticalSpeed="{Binding VerticalSpeed}"
-          SatCount="{Binding SatCount}"
-          GpsFixType="{Binding GpsFixType}"
-          Armed="{Binding Armed}"
-          PrearmOk="{Binding PrearmOk}"
-          Mode="{Binding Mode}"
-          BatteryVoltage="{Binding BatteryVoltage}"
-          BatteryRemaining="{Binding BatteryRemaining}"
-          OverlayEnabled="{Binding HudOverlayEnabled}"
-          ShowIcons="{Binding HudShowIcons}"
-          Russian="{Binding HudRussian}"
-          BatteryCells="{Binding HudBatteryCells}"
-          GroundBrown="{Binding HudGroundBrown}"
-          SixteenByNine="{Binding HudSixteenByNine}"
-          NavBearing="{Binding NavBearing}"
-          CurrentAmps="{Binding BatCurrent}"
-          CustomItemsText="{Binding HudCustomText}"
-          WindDir="{Binding WindDir}"
-          WindVel="{Binding WindVel}"
-          Aoa="{Binding Aoa}"
-          Ssa="{Binding Ssa}"
-          XTrackError="{Binding XTrackError}"
-          TurnRate="{Binding TurnRate}"
-          WpDist="{Binding WpDist}"
-          WpNo="{Binding WpNo}"
-          BatteryVoltage2="{Binding BatteryVoltage2}"
-          BatteryRemaining2="{Binding BatteryRemaining2}"
-          CurrentAmps2="{Binding BatCurrent2}"
-          ThrottlePercent="{Binding ThrottlePercent}"
-          Failsafe="{Binding Failsafe}"
-          SafetyActive="{Binding SafetyActive}"
-          LinkQuality="{Binding LinkQuality}"
-          TargetAlt="{Binding TargetAlt}"
-          TargetSpeed="{Binding TargetSpeed}"
-          DisplayHeading="{Binding HudHeading}"
-          DisplaySpeed="{Binding HudSpeed}"
-          DisplayAlt="{Binding HudAlt}"
-          DisplayRollPitch="{Binding HudRollPitch}"
-          DisplayGps="{Binding HudGps}"
-          DisplayBattery="{Binding HudBattery}"
-          DisplayBattery2="{Binding HudBattery2}"
-          DisplayAoa="{Binding HudAoa}"
-          DisplayXTrack="{Binding HudXTrack}"
-          DisplayConnection="{Binding HudConnection}"
-          DisplayEkf="{Binding HudEkf}"
-          DisplayVibe="{Binding HudVibe}"
-          DisplayPrearm="{Binding HudPrearm}"
-        >
-          <ctl:HudControl.ContextMenu>
-            <ContextMenu>
+        <ContentControl x:Name="HudHost">
+          <ctl:HudControl
+            x:Name="Hud"
+            Roll="{Binding Roll}"
+            Pitch="{Binding Pitch}"
+            Yaw="{Binding Yaw}"
+            Alt="{Binding Alt}"
+            AirSpeed="{Binding AirSpeed}"
+            GroundSpeed="{Binding GroundSpeed}"
+            VerticalSpeed="{Binding VerticalSpeed}"
+            SatCount="{Binding SatCount}"
+            GpsFixType="{Binding GpsFixType}"
+            Armed="{Binding Armed}"
+            PrearmOk="{Binding PrearmOk}"
+            Mode="{Binding Mode}"
+            BatteryVoltage="{Binding BatteryVoltage}"
+            BatteryRemaining="{Binding BatteryRemaining}"
+            OverlayEnabled="{Binding HudOverlayEnabled}"
+            ShowIcons="{Binding HudShowIcons}"
+            Russian="{Binding HudRussian}"
+            BatteryCells="{Binding HudBatteryCells}"
+            GroundBrown="{Binding HudGroundBrown}"
+            SixteenByNine="{Binding HudSixteenByNine}"
+            NavBearing="{Binding NavBearing}"
+            CurrentAmps="{Binding BatCurrent}"
+            CustomItemsText="{Binding HudCustomText}"
+            WindDir="{Binding WindDir}"
+            WindVel="{Binding WindVel}"
+            Aoa="{Binding Aoa}"
+            Ssa="{Binding Ssa}"
+            XTrackError="{Binding XTrackError}"
+            TurnRate="{Binding TurnRate}"
+            WpDist="{Binding WpDist}"
+            WpNo="{Binding WpNo}"
+            BatteryVoltage2="{Binding BatteryVoltage2}"
+            BatteryRemaining2="{Binding BatteryRemaining2}"
+            CurrentAmps2="{Binding BatCurrent2}"
+            ThrottlePercent="{Binding ThrottlePercent}"
+            Failsafe="{Binding Failsafe}"
+            SafetyActive="{Binding SafetyActive}"
+            LinkQuality="{Binding LinkQuality}"
+            TargetAlt="{Binding TargetAlt}"
+            TargetSpeed="{Binding TargetSpeed}"
+            DisplayHeading="{Binding HudHeading}"
+            DisplaySpeed="{Binding HudSpeed}"
+            DisplayAlt="{Binding HudAlt}"
+            DisplayRollPitch="{Binding HudRollPitch}"
+            DisplayGps="{Binding HudGps}"
+            DisplayBattery="{Binding HudBattery}"
+            DisplayBattery2="{Binding HudBattery2}"
+            DisplayAoa="{Binding HudAoa}"
+            DisplayXTrack="{Binding HudXTrack}"
+            DisplayConnection="{Binding HudConnection}"
+            DisplayEkf="{Binding HudEkf}"
+            DisplayVibe="{Binding HudVibe}"
+            DisplayPrearm="{Binding HudPrearm}"
+          >
+            <ctl:HudControl.ContextMenu>
+              <ContextMenu>
               <MenuItem Header="Video">
                 <MenuItem Header="Record Video Stream" Command="{Binding RecordVideoCommand}" />
                 <MenuItem Header="Stop Record" Command="{Binding StopVideoCommand}" />
@@ -103,6 +104,9 @@
                           CommandParameter="herelink" />
                 <MenuItem Header="GStreamer Stop" Command="{Binding StopVideoCommand}" />
               </MenuItem>
+              <MenuItem x:Name="DetachHudMenuItem" Header="Undock HUD"
+                        Click="OnToggleHudDetached" />
+              <Separator />
               <MenuItem Header="Set Aspect Ratio" Command="{Binding ToggleHudAspectCommand}" />
               <MenuItem Header="User Items" Command="{Binding HudUserItemsCommand}" />
               <MenuItem Header="Russian Hud" ToggleType="CheckBox" IsChecked="{Binding HudRussian, Mode=TwoWay}" />
@@ -125,9 +129,10 @@
                 <MenuItem Header="Prearm Status" ToggleType="CheckBox" IsChecked="{Binding HudPrearm, Mode=TwoWay}" />
                 <MenuItem Header="AOA" ToggleType="CheckBox" IsChecked="{Binding HudAoa, Mode=TwoWay}" />
               </MenuItem>
-            </ContextMenu>
-          </ctl:HudControl.ContextMenu>
-        </ctl:HudControl>
+              </ContextMenu>
+            </ctl:HudControl.ContextMenu>
+          </ctl:HudControl>
+        </ContentControl>
       </Border>
 
       <GridSplitter
@@ -144,32 +149,36 @@
         SelectedIndex="{Binding SelectedActionTabIndex, Mode=TwoWay}"
       >
         <TabItem Header="Quick">
-          <ItemsControl x:Name="QuickGrid" ItemsSource="{Binding QuickItems}" Margin="2"
-                        DoubleTapped="OnQuickViewDoubleTapped">
-            <ItemsControl.ContextMenu>
-              <ContextMenu>
-                <MenuItem Header="Set View Count…" Command="{Binding ConfigureQuickViewLayoutCommand}"
-                          IsVisible="{Binding QuickViewEditable}" />
-              </ContextMenu>
-            </ItemsControl.ContextMenu>
-            <ItemsControl.ItemsPanel>
-              <ItemsPanelTemplate>
-                <UniformGrid Columns="{Binding $parent[ItemsControl].DataContext.QuickColumns}" />
-              </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="vm:QuickItem">
-                <Border Classes="qv" Background="{Binding BackgroundBrush}">
-                  <ctl:QuickView
-                    Number="{Binding Number}"
-                    Desc="{Binding Desc}"
-                    NumberColor="{Binding Brush}"
-                    DescriptionColor="{Binding LabelBrush}"
-                  />
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
+          <ContentControl x:Name="QuickHost">
+            <ItemsControl x:Name="QuickGrid" ItemsSource="{Binding QuickItems}" Margin="2"
+                          DoubleTapped="OnQuickViewDoubleTapped">
+              <ItemsControl.ContextMenu>
+                <ContextMenu>
+                  <MenuItem Header="Set View Count…" Command="{Binding ConfigureQuickViewLayoutCommand}"
+                            IsVisible="{Binding QuickViewEditable}" />
+                  <MenuItem x:Name="DetachQuickMenuItem" Header="Undock Quick"
+                            Click="OnToggleQuickDetached" />
+                </ContextMenu>
+              </ItemsControl.ContextMenu>
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <UniformGrid Columns="{Binding $parent[ItemsControl].DataContext.QuickColumns}" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:QuickItem">
+                  <Border Classes="qv" Background="{Binding BackgroundBrush}">
+                    <ctl:QuickView
+                      Number="{Binding Number}"
+                      Desc="{Binding Desc}"
+                      NumberColor="{Binding Brush}"
+                      DescriptionColor="{Binding LabelBrush}"
+                    />
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ContentControl>
         </TabItem>
 
         <TabItem Header="Actions">
