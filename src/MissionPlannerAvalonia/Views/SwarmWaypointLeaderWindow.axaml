@@ -1,0 +1,129 @@
+<Window
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  xmlns:controls="using:MissionPlannerAvalonia.Controls"
+  x:Class="MissionPlannerAvalonia.Views.SwarmWaypointLeaderWindow"
+  x:DataType="vm:SwarmWaypointLeaderViewModel"
+  Title="Swarm Waypoint Leader (Beta)"
+  Width="1320"
+  Height="790"
+  MinWidth="1040"
+  MinHeight="650"
+  WindowStartupLocation="CenterOwner"
+  Background="{DynamicResource MpControlBg}">
+  <Grid Margin="14" RowDefinitions="Auto,Auto,Auto,*,Auto,Auto" RowSpacing="10">
+    <Border Grid.Row="0" Background="#5A2B20" BorderBrush="#FF9B66" BorderThickness="1"
+            CornerRadius="4" Padding="10">
+      <TextBlock Foreground="#FFD4B8" TextWrapping="Wrap"
+                 Text="BETA / USE AT OWN RISK — port of official Mission Planner WaypointLeader. The ground master is observed only. The air master and explicitly enabled ArduCopter followers can be switched to GUIDED, armed, taken off and commanded at 10 Hz; RTL_ALT and WPNAV_ACCEL/WP_ACC are changed when available. A stale/replaced modem, changed mission, invalid role or incomplete group validation stops the complete batch." />
+    </Border>
+
+    <Grid Grid.Row="1" ColumnDefinitions="Auto,300,Auto,300,Auto,*" ColumnSpacing="8">
+      <TextBlock Text="Ground master" VerticalAlignment="Center" />
+      <ComboBox Grid.Column="1" ItemsSource="{Binding Vehicles}"
+                SelectedItem="{Binding SelectedGroundMaster, Mode=TwoWay}">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="vm:WaypointLeaderVehicleItem">
+            <TextBlock Text="{Binding Label}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+      <TextBlock Grid.Column="2" Text="Air master" VerticalAlignment="Center" />
+      <ComboBox Grid.Column="3" ItemsSource="{Binding Vehicles}"
+                SelectedItem="{Binding SelectedAirMaster, Mode=TwoWay}">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="vm:WaypointLeaderVehicleItem">
+            <TextBlock Text="{Binding Label}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+      <Button Grid.Column="4" Content="Refresh Vehicles" Command="{Binding RefreshCommand}" />
+      <TextBlock Grid.Column="5" Text="{Binding Mission}" TextWrapping="Wrap"
+                 VerticalAlignment="Center" Foreground="{DynamicResource MpText}" />
+    </Grid>
+
+    <Grid Grid.Row="2"
+          ColumnDefinitions="Auto,85,Auto,85,Auto,85,Auto,85,Auto,85,Auto,Auto,*"
+          ColumnSpacing="6">
+      <TextBlock Text="Spacing m" VerticalAlignment="Center" />
+      <NumericUpDown Grid.Column="1" Value="{Binding SeparationM, Mode=TwoWay}"
+                     Minimum="2" Maximum="500" Increment="1" FormatString="0.0" />
+      <TextBlock Grid.Column="2" Text="Lead m" VerticalAlignment="Center" />
+      <NumericUpDown Grid.Column="3" Value="{Binding LeadM, Mode=TwoWay}"
+                     Minimum="-500" Maximum="5000" Increment="1" FormatString="0.0" />
+      <TextBlock Grid.Column="4" Text="Off path m" VerticalAlignment="Center" />
+      <NumericUpDown Grid.Column="5" Value="{Binding OffPathTriggerM, Mode=TwoWay}"
+                     Minimum="1" Maximum="5000" Increment="1" FormatString="0.0" />
+      <TextBlock Grid.Column="6" Text="Alt sep m" VerticalAlignment="Center" />
+      <NumericUpDown Grid.Column="7" Value="{Binding AltitudeSeparationM, Mode=TwoWay}"
+                     Minimum="1" Maximum="100" Increment="1" FormatString="0.0" />
+      <TextBlock Grid.Column="8" Text="Nav accel m/s²" VerticalAlignment="Center" />
+      <NumericUpDown Grid.Column="9" Value="{Binding NavigationAccelerationMps2, Mode=TwoWay}"
+                     Minimum="0.1" Maximum="100" Increment="0.1" FormatString="0.0" />
+      <CheckBox Grid.Column="10" Content="V formation" IsChecked="{Binding VFormation}" />
+      <CheckBox Grid.Column="11" Content="Altitude interleave"
+                IsChecked="{Binding AltitudeInterleave}" />
+      <StackPanel Grid.Column="12" Orientation="Horizontal" HorizontalAlignment="Right"
+                  VerticalAlignment="Center" Spacing="4">
+        <TextBlock Text="Mode:" />
+        <TextBlock Text="{Binding Mode}" Foreground="{DynamicResource MpAccentBrush}" />
+      </StackPanel>
+    </Grid>
+
+    <Grid Grid.Row="3" ColumnDefinitions="3*,2*" ColumnSpacing="10">
+      <DataGrid x:Name="WaypointLeaderVehicleGrid" ItemsSource="{Binding Vehicles}"
+                AutoGenerateColumns="False" GridLinesVisibility="Horizontal"
+                CanUserReorderColumns="False">
+        <DataGrid.Columns>
+          <DataGridCheckBoxColumn Header="Use" Binding="{Binding Included, Mode=TwoWay}"
+                                  Width="48" />
+          <DataGridTextColumn Header="Order" Binding="{Binding Order, Mode=TwoWay}"
+                              Width="58" />
+          <DataGridTextColumn Header="Endpoint" Binding="{Binding Endpoint}" IsReadOnly="True"
+                              Width="140" />
+          <DataGridTextColumn Header="Sys" Binding="{Binding SystemId}" IsReadOnly="True"
+                              Width="42" />
+          <DataGridTextColumn Header="Comp" Binding="{Binding ComponentId}" IsReadOnly="True"
+                              Width="48" />
+          <DataGridTextColumn Header="Role" Binding="{Binding Role}" IsReadOnly="True"
+                              Width="125" />
+          <DataGridTextColumn Header="Firmware" Binding="{Binding Firmware}" IsReadOnly="True"
+                              Width="90" />
+          <DataGridTextColumn Header="Live" Binding="{Binding LiveStatus}" IsReadOnly="True"
+                              Width="155" />
+          <DataGridTextColumn Header="Mission position" Binding="{Binding PathPosition}"
+                              IsReadOnly="True" Width="130" />
+          <DataGridTextColumn Header="Commanded target" Binding="{Binding Target}"
+                              IsReadOnly="True" Width="*" />
+        </DataGrid.Columns>
+      </DataGrid>
+      <Border Grid.Column="1" BorderBrush="{DynamicResource MpBorderBrush}"
+              BorderThickness="1" CornerRadius="4">
+        <controls:WaypointLeaderProfileControl x:Name="WaypointLeaderProfile"
+                                                Profile="{Binding Profile}"
+                                                Items="{Binding Vehicles}" />
+      </Border>
+    </Grid>
+
+    <Grid Grid.Row="4" ColumnDefinitions="Auto,Auto,Auto,Auto,*" ColumnSpacing="8"
+          IsEnabled="{Binding !Busy}">
+      <Button x:Name="WaypointLeaderRunButton" Content="{Binding RunButtonText}"
+              Command="{Binding ToggleRunCommand}" MinWidth="180" />
+      <Button Grid.Column="1" Content="Reset State" Command="{Binding ResetModeCommand}"
+              IsEnabled="{Binding CanRequestMode}" />
+      <Button Grid.Column="2" Content="Return Along Mission"
+              Command="{Binding ReturnToHomeCommand}" IsEnabled="{Binding CanRequestMode}" />
+      <Button Grid.Column="3" Content="Abandon → Altitudes + RTL"
+              Command="{Binding AbandonMissionCommand}" IsEnabled="{Binding CanRequestMode}" />
+      <TextBlock Grid.Column="4" Text="Stop only stops this GCS command stream; use the explicit return/RTL actions when required."
+                 TextWrapping="Wrap" VerticalAlignment="Center" HorizontalAlignment="Right" />
+    </Grid>
+
+    <Grid Grid.Row="5" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+      <TextBlock Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center"
+                 Foreground="{DynamicResource MpAccentBrush}" />
+      <Button Grid.Column="1" Content="Close" Click="OnClose" MinWidth="90" />
+    </Grid>
+  </Grid>
+</Window>

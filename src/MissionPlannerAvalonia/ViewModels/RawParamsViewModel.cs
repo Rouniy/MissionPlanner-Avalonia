@@ -575,12 +575,28 @@ public partial class RawParamsViewModel : ViewModelBase, IDisposable {
       return;
     }
 
+    int received = _comPort.MAV.param.TotalReceived;
+    int reported = _comPort.MAV.param.TotalReported;
+    if (!CanExposeLiveParameters(received, reported)) {
+      // PARAM_VALUE packets update MAVState incrementally. Keep the editor empty until the exact
+      // selected vehicle has supplied a complete list, otherwise a partial response can look like
+      // a valid configuration and invite unsafe writes.
+      LoadFrom([]);
+      Status = reported == 0
+          ? $"Waiting for parameters from {_comPort.MAV.sysid}:{_comPort.MAV.compid}…"
+          : $"Loading parameters from {_comPort.MAV.sysid}:{_comPort.MAV.compid} "
+            + $"({received} / {reported}); values remain hidden until complete.";
+      return;
+    }
+
     LoadFromMav();
-    Status = _comPort.MAV.param.Count == 0
-        ? $"Waiting for parameters from {_comPort.MAV.sysid}:{_comPort.MAV.compid}…"
-        : $"Loaded {_comPort.MAV.param.Count} parameters from "
-          + $"{_comPort.MAV.sysid}:{_comPort.MAV.compid}.";
+    Status = $"Loaded {_comPort.MAV.param.Count} parameters from "
+        + $"{_comPort.MAV.sysid}:{_comPort.MAV.compid}.";
   }
+
+  internal static bool CanExposeLiveParameters(int received, int reported) =>
+      GCSViews.ConfigurationView.ConfigParamLoadingViewModel.HasAllParameters(
+          received, reported);
 
   private ParameterTarget? CaptureCurrentTarget() => IsConnected
       ? new ParameterTarget(_comPort, _comPort.MAV.sysid, _comPort.MAV.compid)
