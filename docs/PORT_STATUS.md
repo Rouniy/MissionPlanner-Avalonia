@@ -14,7 +14,9 @@ first-class release targets and still require runtime acceptance on their native
 | Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 898 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/WaypointLeader/FollowLeader/Sequence/Translation-RESX `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
-`say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
+`say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
+(`spd-say -w`, with a Festival fallback). Speech requests are serialized through a bounded,
+duplicate-coalescing queue; Planner Settings includes an audible backend test and result status.
 
 ## Upstream baseline
 
@@ -516,7 +518,7 @@ native-platform acceptance testing.
   roots; the extracted application tree remains byte-for-byte unchanged. A portable test plugin
   and its private managed dependency were loaded from the isolated user directory and completed
   `Init`, `Loaded` and `Loop`; repeated failures in a second plugin disabled only that loop.
-- System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
+- System runtime integrations installed: libVLC, speech-dispatcher-espeak-ng and serial `dialout` membership.
 
 The most recent Debian artifact is
 `out/packages/missionplanner-avalonia_1.3.83-20260822.d6f17d4_amd64.deb`

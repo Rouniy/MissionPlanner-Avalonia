@@ -57,9 +57,11 @@
       <StackPanel Orientation="Horizontal" Spacing="10">
         <CheckBox Content="Enable Speech" IsChecked="{Binding EnableSpeech, Mode=TwoWay}" />
         <ComboBox Classes="md" ItemsSource="{Binding SpeechOptions}" SelectedItem="{Binding SpeechLevel}" />
+        <Button Name="SpeechTest" Content="Test Speech" Command="{Binding TestSpeechCommand}" />
         <Button Name="VarioToggle" Content="{Binding VarioButtonText}" Command="{Binding ToggleVarioCommand}" />
         <TextBlock Classes="lbl" Text="{Binding VarioStatus}" VerticalAlignment="Center" />
       </StackPanel>
+      <TextBlock Name="SpeechBackendStatus" Classes="lbl" Text="{Binding SpeechStatus}" TextWrapping="Wrap" />
       <WrapPanel IsVisible="{Binding SpeechSubOptionsVisible}">
         <CheckBox Content="Armed Only" IsChecked="{Binding SpeechArmedOnly, Mode=TwoWay}" Margin="0,0,14,0" />
         <CheckBox Content="Waypoint" IsChecked="{Binding SpeechWaypoint, Mode=TwoWay}" Margin="0,0,14,0" />

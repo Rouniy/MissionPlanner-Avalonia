@@ -51,11 +51,11 @@ installed 10.0.301 SDK is not required.
 
 ```bash
 sudo apt-get update
-sudo apt-get install dotnet-sdk-10.0 libvlc5 vlc-plugin-base speech-dispatcher
+sudo apt-get install dotnet-sdk-10.0 libvlc5 vlc-plugin-base speech-dispatcher-espeak-ng
 sudo usermod -aG dialout "$USER"
 ```
 
-Log out and back in after adding `dialout`. `libvlc` is needed for video and `speech-dispatcher`
+Log out and back in after adding `dialout`. `libvlc` is needed for video and `speech-dispatcher-espeak-ng`
 for spoken warnings. Add `xvfb` for headless GUI smoke tests and `dotnet-sdk-aot-10.0` only when
 experimenting with NativeAOT.
 
@@ -112,7 +112,7 @@ make linux-deb
 Artifacts are written to `out/packages/`. The `.deb` is intended for Ubuntu 24.04 / Linux Mint 22
 and compatible amd64 distributions. It is self-contained, so a .NET runtime is not required on the
 target machine. APT installs the native GUI, ICU, OpenSSL and libVLC dependencies declared by the
-package; `speech-dispatcher` is recommended for spoken warnings.
+package; `speech-dispatcher-espeak-ng` is recommended for spoken warnings.
 
 ```bash
 sudo apt install ./out/packages/missionplanner-avalonia_*.deb

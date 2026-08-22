@@ -70,15 +70,20 @@ public class AudioVarioTests {
   }
 
   [AvaloniaFact]
-  public void PlannerViewExposesBoundVarioToggle() {
+  public void PlannerViewExposesBoundAudioControls() {
     using var viewModel = new ConfigPlannerViewModel();
     var view = new ConfigPlannerView { DataContext = viewModel };
     Avalonia.Threading.Dispatcher.UIThread.RunJobs();
 
-    var button = view.FindControl<Button>("VarioToggle");
-    Assert.NotNull(button);
-    Assert.Same(viewModel.ToggleVarioCommand, button.Command);
-    Assert.Equal("Start Vario", button.Content);
+    var vario = view.FindControl<Button>("VarioToggle");
+    Assert.NotNull(vario);
+    Assert.Same(viewModel.ToggleVarioCommand, vario.Command);
+    Assert.Equal("Start Vario", vario.Content);
+
+    var speechTest = view.FindControl<Button>("SpeechTest");
+    Assert.NotNull(speechTest);
+    Assert.Same(viewModel.TestSpeechCommand, speechTest.Command);
+    Assert.NotNull(view.FindControl<TextBlock>("SpeechBackendStatus"));
   }
 
   private sealed class BlockingTonePlayer : IVarioTonePlayer {
