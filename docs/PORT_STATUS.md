@@ -522,10 +522,10 @@ native-platform acceptance testing.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 915-test source on 2026-08-22. Package metadata,
+- The `.deb` target is rebuilt from the current 921-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
-  resources were verified; all 397 packaged-file checksums match after extraction, including the
-  portable plugin API and byte-for-byte pinned 8,443,722-byte `airports.csv`.
+  resources were verified; all 405 packaged-file checksums match after extraction, including the
+  portable plugin API, BLE dependency licenses and byte-for-byte pinned 8,443,722-byte `airports.csv`.
 - `lintian --fail-on error,warning` passes without diagnostics. The extracted x86-64 ELF apphost
   reaches the normal event loop under Xvfb and has no unresolved direct library dependencies.
   Complete and checkpoint-only HUD AVI samples are recognized as 25 fps MJPEG by `ffprobe`.
@@ -541,10 +541,11 @@ native-platform acceptance testing.
   scans; no Nordic UART modem was in range for a traffic test.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.37f54ec_amd64.deb`
-(54,087,520 bytes; SHA-256
-`d0974fa2a188906ca124948ebcaa4a2ac1a0df9b696790022d9ff04dd1e812b0`), built from the current
-915-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, synchronized
+`out/packages/missionplanner-avalonia_1.3.83-20260822.cad738b_amd64.deb`
+(54,189,078 bytes; SHA-256
+`21ec3fa5bfa99086eb472699b887bb1b8c17c8fbb70b040db2eed5cbe6af6d5c`), built from commit
+`cad738b` and the current 921-test source including the portable plugin host, HUD-to-MJPEG/AVI
+recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
 interactive MAVLink
@@ -563,7 +564,8 @@ Flight Data splitter, session-only/latest-wins vehicle parameter loading, single
 connections, independent multi-link Connection List support and composite upstream/date/commit
 versioning, non-blocking physical-device loss/reconnect, the native official-compatible
 Translation / RESX Editor, bounded Linux speech-dispatcher/espeak-ng playback with an audible
-operator test, the native live SRTM/imagery 3D Terrain View from official `OpenGLtest2`, plus the
+operator test, the managed BlueZ/D-Bus Nordic UART BLE transport, the native live SRTM/imagery 3D
+Terrain View from official `OpenGLtest2`, plus the
 fail-closed official
 Plane/Copter/Rover leader/follower Formation, including the opt-in ArduPlane attitude/PID path, and
 ArduPlane/Copter/Rover Follow Path workflows, the official Copter WaypointLeader state machine and
@@ -571,8 +573,8 @@ the official FollowLeader and Sequence layout/step workflows, immediate complete
 clearing across device switches, and reject-by-default privacy warnings on location/parameter log
 exports identified during the current CodeQL triage.
 Its APT version is
-`1:1.3.83+20260822.r214.37f54ec`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r214` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r217.cad738b`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r217` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
