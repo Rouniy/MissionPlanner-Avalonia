@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using DotSpatial.Projections;
 using MissionPlanner.Utilities;
 using NetTopologySuite.Features;
@@ -68,6 +69,11 @@ internal sealed record ShapefilePolygonImport(
     IReadOnlyList<ImportedGeoPoint> Points,
     string? ProjectionName,
     int FeatureCount);
+
+internal sealed record ShapefilePolyExportResult(
+    IReadOnlyList<string> Files,
+    int PointCount,
+    string? ProjectionName);
 
 internal static class ShapefileImportService {
   private static readonly ProjectionInfo _wgs84 =
@@ -135,6 +141,39 @@ internal static class ShapefileImportService {
       featureCount++;
     }
     return new ShapefilePolygonImport(points, source.Projection?.Name, featureCount);
+  }
+
+  internal static ShapefilePolyExportResult ExportPolyFiles(
+      string path, CancellationToken cancellationToken = default) {
+    ShapefileSource source = ReadSource(path);
+    string directory = Path.GetDirectoryName(Path.GetFullPath(path))
+        ?? throw new InvalidOperationException("The shapefile has no parent directory.");
+    var files = new List<string>();
+    int pointCount = 0;
+
+    foreach (ShapefileRecord record in source.Records) {
+      cancellationToken.ThrowIfCancellationRequested();
+      if (record.Geometry.IsEmpty) {
+        continue;
+      }
+      ImportedGeoPoint[] points = record.Geometry.Coordinates
+          .Select(coordinate => Transform(
+              coordinate.X, coordinate.Y,
+              double.IsFinite(coordinate.Z) ? coordinate.Z : 0,
+              source.Projection))
+          .Where(IsValid)
+          .ToArray();
+      if (points.Length == 0) {
+        continue;
+      }
+
+      string output = Path.Combine(directory, $"poly-{files.Count + 1}.poly");
+      WritePolyAtomic(output, points, cancellationToken);
+      files.Add(output);
+      pointCount += points.Length;
+    }
+
+    return new ShapefilePolyExportResult(files, pointCount, source.Projection?.Name);
   }
 
   internal static ImportedMapOverlay ReadOverlay(string path) {
@@ -255,6 +294,34 @@ internal static class ShapefileImportService {
     double[] altitude = { z };
     Reproject.ReprojectPoints(xy, altitude, source, _wgs84, 0, 1);
     return new ImportedGeoPoint(xy[1], xy[0], altitude[0]);
+  }
+
+  private static void WritePolyAtomic(
+      string output, IReadOnlyList<ImportedGeoPoint> points,
+      CancellationToken cancellationToken) {
+    string temporary = output + $".{Guid.NewGuid():N}.tmp";
+    try {
+      using (var stream = new FileStream(
+                 temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+      using (var writer = new StreamWriter(stream, new UTF8Encoding(false))) {
+        writer.NewLine = "\r\n";
+        writer.WriteLine("#Shap to Poly - Mission Planner");
+        foreach (ImportedGeoPoint point in points) {
+          cancellationToken.ThrowIfCancellationRequested();
+          writer.Write(point.Lat.ToString(CultureInfo.InvariantCulture));
+          writer.Write('\t');
+          writer.WriteLine(point.Lng.ToString(CultureInfo.InvariantCulture));
+        }
+      }
+      cancellationToken.ThrowIfCancellationRequested();
+      File.Move(temporary, output, overwrite: true);
+    } finally {
+      try {
+        File.Delete(temporary);
+      } catch {
+        // The destination is already complete; a failed best-effort temp cleanup is non-fatal.
+      }
+    }
   }
 
   internal static void AddGeometry(

@@ -342,6 +342,11 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   selected provider cache, validates coordinates and decodes every image before replacing an
   existing tile. Provider caches remain isolated; invalid paths, corrupt/oversized images and
   duplicates are counted without entering the cache, and a long import is cancellable.
+- Developer Tools ports the official hidden `Shp to Poly` workflow. It writes the same
+  `poly-1.poly`, `poly-2.poly`, … files next to the selected shapefile, preserves SHP feature and
+  coordinate order, retains closing vertices and emits invariant `latitude<TAB>longitude` text.
+  Case-insensitive `.prj` sidecars are reprojected to WGS84 through the existing managed reader;
+  replacement is explicit and atomic instead of silently truncating an existing output.
 - The hidden official `OpenGLtest2` developer workflow is now a native 3D Terrain View reachable
   from Tools and Developer Tools. A cancellable SRTM mesh is draped with the selected map imagery
   through the same online/cache policy, while a bounded 64-tile atlas prevents an extreme range or
@@ -681,7 +686,7 @@ Mission Planner functional-parity gap.
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
 | BLE transport | macOS; Linux/Windows hardware acceptance | Linux uses the port-native managed BlueZ/D-Bus Nordic UART transport and no longer needs a SimpleBLE `.so`; adapter discovery is verified, while end-to-end traffic still needs a Nordic UART modem. Upstream's Windows SimpleBLE path remains hardware-unverified. macOS still needs a CoreBluetooth or maintained native integration. |
-| Developer utility handler audit | All | The safe portable subset of `temp.cs`, including the Translation / RESX Editor and live 3D terrain/imagery view, is native. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration, PX4Flow live image assembly and local map-tile import are also port-native. Remaining upstream handlers are reviewed individually: already exposed, obsolete and unsafe handlers are classified instead of being presented as missing user functionality. |
+| Developer utility handler audit | All | The safe portable subset of `temp.cs`, including the Translation / RESX Editor and live 3D terrain/imagery view, is native. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration, PX4Flow live image assembly, local map-tile import and SHP-to-POLY conversion are also port-native. Remaining upstream handlers are reviewed individually: already exposed, obsolete and unsafe handlers are classified instead of being presented as missing user functionality. |
 
 ## Optional runtime experiment
 
