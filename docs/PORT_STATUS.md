@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 694 tests verified; the device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` passed lintian, checksum and Xvfb smoke checks; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 700 tests verified; the MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` passed lintian, checksum and Xvfb smoke checks; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -272,6 +272,12 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   Esri imagery.
 - Moving Base is available from Advanced Tools with serial, TCP client/host and UDP client/host NMEA
   input, persisted rate/settings, optional rally-point updates, raw logging and a live map marker.
+- Developer Tools now ports the official `SerialOutputMD` workflow as MicroDrone Downlink. It emits
+  the same `#1` and `#4`-`#9` record families at 10 Hz, with the official baud choices, decimal
+  additive/XOR checksum and legacy ECEF conversion. Numeric formatting is culture-independent and
+  GPS time uses UTC. Output is bound to the exact active modem, system ID and component ID; changing
+  any of them closes the serial output and requires an explicit restart instead of silently sending
+  another vehicle's telemetry. Serial errors and window shutdown also cancel and close the sender.
 - Planner map tools can prefetch either the visible area or a buffered waypoint path across a selected
   zoom range into the shared offline cache. Auto-WP Text uses the cross-platform vector path backend
   and selected distance/altitude units instead of requiring the Windows-only stick font/GDI path.
@@ -355,10 +361,10 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 694 passed, 0 failed.
+- Automated tests: 700 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
-- The `.deb` target was rebuilt from the current 694-test source on 2026-08-22. Package metadata,
+- The `.deb` target was rebuilt from the current 700-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 396 packaged-file checksums match after extraction, including the
   byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -372,10 +378,11 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.06bd88e_amd64.deb`
-(53,868,478 bytes; SHA-256
-`c2b4b6e6f016d99dda4c296a74b90686d76831d37555e6521fbe156aa9758a06`), built from the current
-694-test source including target-safe official DEVICE_OP and ArduPilot Default Settings workflows,
+`out/packages/missionplanner-avalonia_1.3.83-20260822.36fe428_amd64.deb`
+(53,873,134 bytes; SHA-256
+`765fe5dacba060d78a6b006661ef574febb8b9d0a42f14f6c47de36fc94745fc`), built from the current
+700-test source including target-safe official MicroDrone, DEVICE_OP and ArduPilot Default Settings
+workflows,
 camera feedback/overlap/gimbal overlays, managed SHP/DXF/GeoPackage
 planner import, local GeoTIFF/DTED elevation sources,
 styled KML/KMZ vector/GroundOverlay layers, Flight Data overlay copying, corrected translucent-red
@@ -386,8 +393,8 @@ Flight Data splitter, session-only/latest-wins vehicle parameter loading, single
 connections, independent multi-link Connection List support and composite upstream/date/commit
 versioning.
 Its APT version is
-`1:1.3.83+20260822.r153.06bd88e`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r153` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r156.36fe428`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r156` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -442,7 +449,7 @@ not remove required Windows-native files from `win-x64` builds.
 | HUD frame recording | All | "Record Video Stream" records the libVLC stream and the upstream 4:3/16:9 HUD aspect toggle is ported. The separate upstream HUD-to-AVI frame-capture path remains absent. The current upstream `dropOutToolStripMenuItem_Click` handler is empty and is not counted as a functional gap. |
 | Flight Data map extras | All | Mission/Home/current-WP, fence, rally, Guided target, POIs, camera feedback with latest footprints and opt-in overlap count, live terrain-projected gimbal target, ADS-B/AIS/OA_DB traffic, airports, RF propagation/elevation/distance overlays and mission-distance progress are ported. The current upstream `ProximityControl` launch in `FlightData` is commented out; the port already provides a live Proximity radar tab, so it is not counted as a missing map workflow. |
 | Log tooling extras | All | Interactive DataFlash graphing, upstream expressions/preset alternatives/MODE overlays, log message/parameter inspection, MAVLink Inspector "Graph It", the recursive LogIndex with cache-only map thumbnails, offline three-compass sphere/ellipsoid MagFit and the upstream-named SCP workflow (actually SFTP over SSH) are ported. The SFTP page lists/downloads selected or all BIN logs, creates text LOG/KML outputs, applies GPS-time names and safely deletes selected/all remote logs with host-key pinning; passwords are never persisted and an inherited plaintext `LogDownloadscppath` is erased during migration. OSD video rendering from tlog remains absent. |
-| Remaining developer utilities | All | The safe portable subset of `temp.cs` is now a native Developer Tools page. Translation/resource editor, OpenGL 3D terrain view and MicroDrones serial downlink still need dedicated Avalonia implementations. Device Operations, Vehicle Default Settings, local GeoTIFF/DTED configuration and PX4Flow live image assembly are already port-native. |
+| Remaining developer utilities | All | The safe portable subset of `temp.cs` is now a native Developer Tools page. Translation/resource editor and the OpenGL 3D terrain view still need dedicated Avalonia implementations. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration and PX4Flow live image assembly are already port-native. |
 
 ## Intentionally disabled or replaced
 

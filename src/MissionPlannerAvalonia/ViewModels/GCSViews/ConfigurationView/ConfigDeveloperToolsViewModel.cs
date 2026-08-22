@@ -26,6 +26,7 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
     Action("Decode MAVLink Packet", () => _ = DecodePacketAsync());
     Action("Decode Hardware ID", () => _ = DecodeHardwareIdAsync());
     Action("MAVLink Device Operations", () => Views.DeviceOperationsWindow.OpenWindow());
+    Action("MicroDrone Downlink", () => Views.MicrodroneDownlinkWindow.OpenWindow());
     Action("Probe MAVLink Camera", () => _ = ProbeCameraAsync());
     Action("Embed Defaults in APJ", () => _ = EmbedDefaultsAsync());
     Action("Split DataFlash Log", () => _ = SplitDataFlashAsync());

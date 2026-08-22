@@ -1,0 +1,57 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  mc:Ignorable="d"
+  d:DesignWidth="560"
+  d:DesignHeight="390"
+  x:Class="MissionPlannerAvalonia.Views.MicrodroneDownlinkView"
+  x:DataType="vm:MicrodroneDownlinkViewModel"
+  Background="{DynamicResource MpControlBg}"
+>
+  <StackPanel Margin="16" Spacing="10">
+    <TextBlock Text="MicroDrone Downlink" FontSize="18" Foreground="#DDD" />
+    <TextBlock Foreground="#AAA" TextWrapping="Wrap"
+               Text="Ports Mission Planner's developer SerialOutputMD workflow. It emits the official #1 and #4–#9 MicroDrone downlink records at 10 Hz over a serial port." />
+
+    <Border Background="{DynamicResource MpInputBg}" CornerRadius="4" Padding="10">
+      <TextBlock Text="{Binding SourceDescription}" Foreground="{DynamicResource MpAccentBrush}"
+                 TextWrapping="Wrap" />
+    </Border>
+
+    <Grid ColumnDefinitions="100,*,Auto" RowDefinitions="Auto,Auto" RowSpacing="8">
+      <TextBlock Grid.Row="0" Grid.Column="0" Text="Serial port" Foreground="#DDD"
+                 VerticalAlignment="Center" />
+      <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding Ports}"
+                SelectedItem="{Binding SelectedPort}" IsEnabled="{Binding CanEditSettings}" />
+      <Button Grid.Row="0" Grid.Column="2" x:Name="RefreshMicrodronePortsButton"
+              Content="Refresh" Command="{Binding RefreshPortsCommand}" Margin="6,0,0,0"
+              IsEnabled="{Binding CanEditSettings}" />
+
+      <TextBlock Grid.Row="1" Grid.Column="0" Text="Baud" Foreground="#DDD"
+                 VerticalAlignment="Center" />
+      <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding Bauds}"
+                SelectedItem="{Binding SelectedBaud}" IsEnabled="{Binding CanEditSettings}" />
+    </Grid>
+
+    <StackPanel Orientation="Horizontal" Spacing="8">
+      <Button x:Name="ToggleMicrodroneOutputButton" Content="{Binding ConnectButtonText}"
+              Command="{Binding ToggleConnectCommand}" IsEnabled="{Binding !Busy}" MinWidth="90" />
+      <ProgressBar IsVisible="{Binding Busy}" IsIndeterminate="True" Width="120" Height="5"
+                   VerticalAlignment="Center" />
+    </StackPanel>
+
+    <Border Background="Black" BorderBrush="{DynamicResource MpBg}" BorderThickness="1"
+            Padding="10" MinHeight="100">
+      <StackPanel Spacing="5">
+        <TextBlock Text="{Binding Status}" Foreground="{DynamicResource MpAccentBrush}"
+                   TextWrapping="Wrap" />
+        <TextBlock Text="Last complete record:" Foreground="#AAA" />
+        <TextBlock Text="{Binding LastLine}" Foreground="#DDD" FontFamily="Consolas,monospace"
+                   TextWrapping="Wrap" />
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>
