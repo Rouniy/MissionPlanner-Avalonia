@@ -1,0 +1,70 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  mc:Ignorable="d"
+  d:DesignWidth="650"
+  d:DesignHeight="500"
+  x:Class="MissionPlannerAvalonia.Views.MavlinkSerialTcpBridgeView"
+  x:DataType="vm:MavlinkSerialTcpBridgeViewModel"
+  Background="{DynamicResource MpControlBg}"
+>
+  <StackPanel Margin="16" Spacing="10">
+    <TextBlock Text="MAVLink Serial TCP Bridge" FontSize="18" Foreground="#DDD" />
+    <TextBlock Foreground="#AAA" TextWrapping="Wrap"
+               Text="Ports Mission Planner's MAVLinkSerialPort developer workflow. One TCP client can read and write an autopilot UART through SERIAL_CONTROL; the UART is released when the client disconnects or the bridge stops." />
+
+    <Border Background="{DynamicResource MpInputBg}" CornerRadius="4" Padding="10">
+      <TextBlock Text="{Binding TargetDescription}" Foreground="{DynamicResource MpAccentBrush}"
+                 TextWrapping="Wrap" />
+    </Border>
+
+    <Grid ColumnDefinitions="150,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8"
+          IsEnabled="{Binding CanEditSettings}">
+      <TextBlock Grid.Row="0" Grid.Column="0" Text="Autopilot UART" Foreground="#DDD"
+                 VerticalAlignment="Center" />
+      <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding Devices}"
+                SelectedItem="{Binding SelectedDevice}" />
+
+      <TextBlock Grid.Row="1" Grid.Column="0" Text="UART baud" Foreground="#DDD"
+                 VerticalAlignment="Center" />
+      <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding BaudRates}"
+                SelectedItem="{Binding SelectedBaud}" />
+
+      <TextBlock Grid.Row="2" Grid.Column="0" Text="TCP listen port" Foreground="#DDD"
+                 VerticalAlignment="Center" />
+      <NumericUpDown Grid.Row="2" Grid.Column="1" Value="{Binding ListenPort}"
+                     Minimum="1" Maximum="65535" Increment="1" FormatString="0" />
+    </Grid>
+
+    <CheckBox x:Name="AllowRemoteSerialBridgeClientsCheckBox"
+              Content="Allow remote TCP clients (listen on all IPv4 interfaces)"
+              IsChecked="{Binding AllowRemoteClients}" IsEnabled="{Binding CanEditSettings}"
+              ToolTip.Tip="Unencrypted and unauthenticated. Leave disabled for a localhost-only listener." />
+
+    <Border Background="#402828" BorderBrush="#9B5555" BorderThickness="1" CornerRadius="4"
+            Padding="10">
+      <TextBlock Foreground="#E4B7B7" TextWrapping="Wrap"
+                 Text="SERIAL_CONTROL has no target-system field. The bridge therefore refuses shared telemetry links containing more than one MAVLink system, is blocked while armed, and stops after any modem/vehicle selection change." />
+    </Border>
+
+    <StackPanel Orientation="Horizontal" Spacing="8">
+      <Button x:Name="ToggleMavlinkSerialTcpBridgeButton" Content="{Binding ConnectButtonText}"
+              Command="{Binding ToggleCommand}" IsEnabled="{Binding !Busy}" MinWidth="100" />
+      <ProgressBar IsVisible="{Binding Busy}" IsIndeterminate="True" Width="120" Height="5"
+                   VerticalAlignment="Center" />
+    </StackPanel>
+
+    <Border Background="Black" BorderBrush="{DynamicResource MpBg}" BorderThickness="1"
+            Padding="10" MinHeight="100">
+      <StackPanel Spacing="6">
+        <TextBlock Text="{Binding Status}" Foreground="{DynamicResource MpAccentBrush}"
+                   TextWrapping="Wrap" />
+        <TextBlock Text="{Binding Counters}" Foreground="#DDD" FontFamily="Consolas,monospace"
+                   TextWrapping="Wrap" />
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</UserControl>
