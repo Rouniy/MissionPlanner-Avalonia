@@ -17,12 +17,16 @@
 
     <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,8,0,8">
       <ComboBox
+        x:Name="DroneCanInterfaceSelector"
         ItemsSource="{Binding BusOptions}"
         SelectedIndex="{Binding SelectedBusIndex}"
+        IsEnabled="{Binding CanChangeInterface}"
         Width="160"
         MinHeight="28"
       />
-      <Button Content="{Binding ConnectLabel}" Command="{Binding ToggleConnectCommand}" />
+      <Button x:Name="DroneCanConnectButton" Content="{Binding ConnectLabel}"
+              Command="{Binding ToggleConnectCommand}"
+              IsEnabled="{Binding CanToggleConnection}" />
       <Button Content="Refresh" Command="{Binding RefreshCommand}" />
       <Button Content="Filter" Command="{Binding FilterCommand}" />
       <Button Content="Stats" Command="{Binding StatsCommand}" />
