@@ -48,6 +48,15 @@ public partial class FlightDataView : UserControl {
     UpdateHudRecordingMenu(recording: false);
     _mapVideoLayout = this.FindControl<Avalonia.Controls.Grid>("MapVideoLayout");
     _fdMap = this.FindControl<MapView>("FdMap");
+    _noFlyOverlay = _fdMap == null
+        ? null
+        : new NoFlyOverlayCoordinator(
+            _fdMap.SetNoFlyLayer,
+            status => {
+              if (DataContext is FlightDataViewModel vm) {
+                vm.StatusText = status;
+              }
+            });
     _gimbalVideoFullHost = this.FindControl<ContentControl>("GimbalVideoFullHost");
     _gimbalVideoMiniLayout = this.FindControl<Avalonia.Controls.Grid>("GimbalVideoMiniLayout");
     _gimbalVideoMiniHost = this.FindControl<ContentControl>("GimbalVideoMiniHost");
@@ -80,11 +89,13 @@ public partial class FlightDataView : UserControl {
       if (_fdTabs != null) {
         ApplyTabSettings(_fdTabs);
       }
+      _noFlyOverlay?.Activate();
       BindGimbalVideoPresenter();
     };
     DetachedFromVisualTree += (_, _) => {
       _displayViewSubscribed = false;
       Services.DisplayViewService.Changed -= OnDisplayViewChanged;
+      _noFlyOverlay?.Deactivate();
       UnsubscribeGimbalVideoPresenter();
       CloseGimbalVideo();
       RestoreDetachedPanels();
@@ -212,6 +223,7 @@ public partial class FlightDataView : UserControl {
   }
 
   private readonly MapView? _fdMap;
+  private readonly NoFlyOverlayCoordinator? _noFlyOverlay;
   private readonly Avalonia.Controls.Grid? _mapVideoLayout;
   private readonly LivePlot? _tuningPlot;
   private readonly TabControl? _fdTabs;

@@ -210,6 +210,9 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
   private bool _showNoFly;
 
   [ObservableProperty]
+  private bool _showHongKongNoFly;
+
+  [ObservableProperty]
   private bool _paramsBg;
 
   [ObservableProperty]
@@ -310,6 +313,7 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
     ShowTfr = s.GetBoolean("showtfr", ShowTfr);
     AutoParamCommit = s.GetBoolean("autoParamCommit", AutoParamCommit);
     ShowNoFly = s.GetBoolean("ShowNoFly", ShowNoFly);
+    ShowHongKongNoFly = s.GetBoolean("hknfzforceshow", ShowHongKongNoFly);
     ParamsBg = s.GetBoolean("Params_BG", ParamsBg);
     SlowMachine = s.GetBoolean("SlowMachine", SlowMachine);
     GdiPlus = s.GetBoolean("CHK_GDIPlus", GdiPlus);
@@ -736,6 +740,12 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
     Services.NoFlyOverlay.NotifyVisibilityChanged();
 
     if (value) MapFollowPlane = false;
+  }
+
+  partial void OnShowHongKongNoFlyChanged(bool value) {
+    if (_loading) return;
+    Settings.Instance["hknfzforceshow"] = value.ToString();
+    Services.NoFlyOverlay.NotifyVisibilityChanged();
   }
 
   partial void OnParamsBgChanged(bool value) {

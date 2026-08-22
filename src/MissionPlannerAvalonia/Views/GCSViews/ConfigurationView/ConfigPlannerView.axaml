@@ -151,6 +151,10 @@
         <WrapPanel>
           <CheckBox Content="Show Airports" IsChecked="{Binding ShowAirports, Mode=TwoWay}" Margin="0,0,12,0" />
           <CheckBox Content="Show No-Fly Zones" IsChecked="{Binding ShowNoFly, Mode=TwoWay}" Margin="0,0,12,0" />
+          <CheckBox Content="Hong Kong eSUA zones (network opt-in)"
+                    IsChecked="{Binding ShowHongKongNoFly, Mode=TwoWay}"
+                    ToolTip.Tip="Downloads the official Hong Kong Civil Aviation Department eSUA no-fly feed only when Show No-Fly Zones is enabled. The response is cached for 12 hours."
+                    Margin="0,0,12,0" />
           <CheckBox Content="Show TFR" IsChecked="{Binding ShowTfr, Mode=TwoWay}" Margin="0,0,12,0" />
           <CheckBox Content="Enable external ADS-B receiver" IsChecked="{Binding EnableAdsb, Mode=TwoWay}"
                     ToolTip.Tip="Receive dump1090/RTL1090 or an ADS-B HTTP API; MAVLink ADS-B/AIS remains visible independently"
