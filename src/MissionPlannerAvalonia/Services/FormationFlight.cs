@@ -65,6 +65,9 @@ internal sealed record FormationVehicleSource(
   internal bool SupportsWaypointLeaderFlight => IsAutopilot &&
       State.cs.firmware == Firmwares.ArduCopter2;
 
+  internal bool SupportsFollowLeaderFlight => IsAutopilot &&
+      State.cs.firmware == Firmwares.ArduCopter2;
+
   internal string Label => $"{Endpoint} — {Id.SystemId}:{Id.ComponentId}";
 }
 

@@ -78,9 +78,13 @@ public partial class RawParamsView : UserControl {
         }
     );
     var path = file?.TryGetLocalPath();
-    if (path != null) {
-      Vm.SaveParamFile(path);
+    if (path == null || !await Services.Dialogs.ConfirmDangerous(
+            "Export vehicle parameters",
+            Services.Dialogs.SensitiveExportWarning,
+            "EXPORT PARAMETERS")) {
+      return;
     }
+    Vm.SaveParamFile(path);
   }
 
   private async System.Threading.Tasks.Task<string?> PickOpen(string title) {

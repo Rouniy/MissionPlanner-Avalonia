@@ -80,6 +80,10 @@ public partial class MavlinkLogConvertViewModel : ViewModelBase {
     if (_tlogPath == null || IsBusy) {
       return;
     }
+    if (!await ConfirmSensitiveExport(label)) {
+      Status = $"{label} export cancelled.";
+      return;
+    }
     var dest = await PickSaveAsync(Path.GetFileNameWithoutExtension(_tlogPath) + "." + ext, ext);
     if (dest == null) {
       return;
@@ -109,6 +113,10 @@ public partial class MavlinkLogConvertViewModel : ViewModelBase {
     if (_tlogPath == null || IsBusy) {
       return;
     }
+    if (!await ConfirmSensitiveExport(label)) {
+      Status = $"{label} export cancelled.";
+      return;
+    }
     var output = await PickSaveAsync(
         Path.GetFileNameWithoutExtension(_tlogPath) + "." + extension, extension);
     if (output == null) {
@@ -132,6 +140,10 @@ public partial class MavlinkLogConvertViewModel : ViewModelBase {
     if (_tlogPath == null || IsBusy) {
       return;
     }
+    if (!await ConfirmSensitiveExport("Matlab")) {
+      Status = "Matlab export cancelled.";
+      return;
+    }
     IsBusy = true;
     Status = "Converting to Matlab…";
     try {
@@ -144,6 +156,10 @@ public partial class MavlinkLogConvertViewModel : ViewModelBase {
       IsBusy = false;
     }
   }
+
+  private static Task<bool> ConfirmSensitiveExport(string label) =>
+      Dialogs.ConfirmDangerous(
+          $"Export {label}", Dialogs.SensitiveExportWarning, "EXPORT FILE");
 
   private static List<(double lat, double lng, double alt, DateTime time)> ReadTlogTrack(string path) {
     var track = new List<(double lat, double lng, double alt, DateTime time)>();

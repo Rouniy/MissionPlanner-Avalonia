@@ -1,0 +1,7 @@
+name: MissionPlanner Avalonia CodeQL configuration
+
+# UnoUI.Wasm is an unused upstream sample application. It is neither referenced by the
+# Avalonia project nor copied into any published package, so its ASP.NET web.config must not
+# create web-server alerts for this desktop application.
+paths-ignore:
+  - external/MissionPlanner/ExtLibs/uno/UnoUI/UnoUI.Wasm/**

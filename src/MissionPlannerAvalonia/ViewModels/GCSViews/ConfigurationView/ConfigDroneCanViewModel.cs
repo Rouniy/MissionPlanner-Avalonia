@@ -942,6 +942,17 @@ public partial class ConfigDroneCanViewModel : ViewModelBase, IDisposable {
       NodeStatus = TargetChangedMessage;
       return;
     }
+    if (!await Services.Dialogs.ConfirmDangerous(
+            "Export DroneCAN parameters",
+            Services.Dialogs.SensitiveExportWarning,
+            "EXPORT PARAMETERS")) {
+      NodeStatus = "Parameter export cancelled.";
+      return;
+    }
+    if (!IsSelectionCurrent(selection)) {
+      NodeStatus = TargetChangedMessage;
+      return;
+    }
 
     var table = new Hashtable();
     foreach (var parameter in _allNodeParams) {
