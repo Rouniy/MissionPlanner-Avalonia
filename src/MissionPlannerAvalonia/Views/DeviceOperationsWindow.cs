@@ -16,6 +16,7 @@ public sealed class DeviceOperationsWindow : Window {
     var viewModel = new DeviceOperationsViewModel();
     Content = new DeviceOperationsView { DataContext = viewModel };
     DataContext = viewModel;
+    Closed += (_, _) => viewModel.Dispose();
   }
 
   public static void OpenWindow() {
