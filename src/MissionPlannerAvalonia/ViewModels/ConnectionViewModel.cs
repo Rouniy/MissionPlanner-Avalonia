@@ -96,24 +96,51 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     Settings.Instance[PortBaudKey(SelectedPort!)] = value.ToString();
   }
 
-  partial void OnSelectedVehicleChanged(MavSystemChoice? value) {
-    if (_updatingVehicleChoices || value == null || value.Link.BaseStream?.IsOpen != true) {
+  partial void OnSelectedVehicleChanged(MavSystemChoice? oldValue, MavSystemChoice? newValue) {
+    if (_updatingVehicleChoices) {
       return;
     }
 
     AppState.ParameterLoads.CancelCurrent();
+    // A parameter list belongs to one explicit selection only. Discard both the previous target
+    // and any cached values on the target being selected before changing the active MAV pointer.
+    // Clearing the old target also means returning to it always requires a new live read.
+    ResetParameterSelection(oldValue, newValue);
+    AppState.RaiseConnectionChanged();
+    if (newValue == null) {
+      Status = "No vehicle selected. Parameter values are hidden.";
+      return;
+    }
+    if (newValue.Link.BaseStream?.IsOpen != true) {
+      Status = $"Connection {newValue.Endpoint} is no longer available.";
+      return;
+    }
+
     Interlocked.Exchange(ref _selectionSwitchInProgress, 1);
     try {
-      if (!AppState.Connections.SetActive(value.Link)) {
-        Status = $"Connection {value.Endpoint} is no longer available.";
+      if (!AppState.Connections.SetActive(newValue.Link)) {
+        Status = $"Connection {newValue.Endpoint} is no longer available.";
         return;
       }
     } finally {
       Interlocked.Exchange(ref _selectionSwitchInProgress, 0);
     }
-    value.Link.sysidcurrent = value.SysId;
-    value.Link.compidcurrent = value.CompId;
-    LoadSelectedVehicleParameters(value);
+    newValue.Link.sysidcurrent = newValue.SysId;
+    newValue.Link.compidcurrent = newValue.CompId;
+    LoadSelectedVehicleParameters(newValue);
+  }
+
+  internal static void ResetParameterSelection(
+      MavSystemChoice? previous, MavSystemChoice? next) {
+    if (previous != null) {
+      ResetSelectedVehicleParameters(
+          previous.Link.MAVlist[previous.SysId, previous.CompId]);
+    }
+    if (next != null && (previous == null ||
+        !ReferenceEquals(previous.Link, next.Link) ||
+        previous.SysId != next.SysId || previous.CompId != next.CompId)) {
+      ResetSelectedVehicleParameters(next.Link.MAVlist[next.SysId, next.CompId]);
+    }
   }
 
   public ConnectionViewModel() {
@@ -493,6 +520,11 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
           choice.Link.BaseStream?.IsOpen != true ||
           choice.Link.sysidcurrent != choice.SysId || choice.Link.compidcurrent != choice.CompId) {
         return;
+      }
+      if (error != null) {
+        // PARAM_VALUE processing can populate the shared list incrementally before the upstream
+        // reader reports a timeout/error. Never expose that partial result as a valid list.
+        ResetSelectedVehicleParameters(mav);
       }
       Status = error == null
           ? $"Selected {choice.Label}. {mav.param.Count} params."

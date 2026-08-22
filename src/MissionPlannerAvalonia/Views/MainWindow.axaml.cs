@@ -209,4 +209,7 @@ public partial class MainWindow : Window {
 
   private void OnFollowPathControl(object? sender, RoutedEventArgs e) =>
       SwarmFollowPathWindow.OpenWindow();
+
+  private void OnWaypointLeaderControl(object? sender, RoutedEventArgs e) =>
+      SwarmWaypointLeaderWindow.OpenWindow();
 }

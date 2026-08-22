@@ -101,6 +101,56 @@ public class ConnectionHealthTests {
   }
 
   [Fact]
+  public void Switching_vehicle_discards_both_previous_and_target_parameter_sessions() {
+    using var firstLink = new MAVLinkInterface();
+    using var secondLink = new MAVLinkInterface();
+    var previous = new MavSystemChoice(firstLink, 7, 1, "UDP:14550", "old modem");
+    var next = new MavSystemChoice(secondLink, 8, 1, "UDP:14551", "new modem");
+    foreach (MavSystemChoice choice in new[] { previous, next }) {
+      var mav = choice.Link.MAVlist[choice.SysId, choice.CompId];
+      mav.param.Add(new MAVLink.MAVLinkParam(
+          $"OLD_{choice.SysId}", choice.SysId, MAVLink.MAV_PARAM_TYPE.REAL32));
+      mav.param.TotalReported = 1;
+      mav.param_types[$"OLD_{choice.SysId}"] = MAVLink.MAV_PARAM_TYPE.REAL32;
+    }
+
+    ConnectionViewModel.ResetParameterSelection(previous, next);
+
+    foreach (MavSystemChoice choice in new[] { previous, next }) {
+      var mav = choice.Link.MAVlist[choice.SysId, choice.CompId];
+      Assert.Empty(mav.param);
+      Assert.Equal(0, mav.param.TotalReported);
+      Assert.Empty(mav.param_types);
+    }
+  }
+
+  [Fact]
+  public void Clearing_a_transient_empty_selection_discards_the_previous_parameters() {
+    using var link = new MAVLinkInterface();
+    var previous = new MavSystemChoice(link, 9, 1, "UDP:14550", "old modem");
+    var mav = link.MAVlist[previous.SysId, previous.CompId];
+    mav.param.Add(new MAVLink.MAVLinkParam(
+        "OLD_VALUE", 1, MAVLink.MAV_PARAM_TYPE.REAL32));
+    mav.param.TotalReported = 1;
+
+    ConnectionViewModel.ResetParameterSelection(previous, null);
+
+    Assert.Empty(mav.param);
+    Assert.Equal(0, mav.param.TotalReported);
+  }
+
+  [Theory]
+  [InlineData(0, 0, false)]
+  [InlineData(0, 10, false)]
+  [InlineData(9, 10, false)]
+  [InlineData(10, 10, true)]
+  [InlineData(11, 10, true)]
+  public void Parameter_editor_exposes_only_a_complete_live_list(
+      int received, int reported, bool expected) {
+    Assert.Equal(expected, RawParamsViewModel.CanExposeLiveParameters(received, reported));
+  }
+
+  [Fact]
   public void Starting_a_new_session_clears_parameters_for_every_known_vehicle() {
     using var comPort = new MAVLinkInterface();
     foreach (var id in new byte[] { 7, 8 }) {

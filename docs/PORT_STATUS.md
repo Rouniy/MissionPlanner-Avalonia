@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 806 tests verified; the portable-plugin-host/HUD-recording/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link/Formation/FollowPath `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 842 tests verified; the portable-plugin-host/HUD-recording/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link/Formation/FollowPath/WaypointLeader `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -157,10 +157,26 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   a replaced modem, plan edits and leader GPS jumps over 500 m stop the stream; LAND and DISARM stop
   it before issuing their bulk command. Plane targets use the official guided mission-item path and
   require at least 30 m separation, while Copter/Rover use global-relative-altitude position targets.
+- Tools > Swarm Waypoint Leader restores the larger official beta workflow launched from upstream
+  `temp.cs`. One exact ground master is observed without receiving commands; one ArduCopter air
+  master supplies the downloaded waypoint/spline profile and leads an explicitly checked,
+  uniquely ordered Copter follower set. The native window includes line/V formation and altitude
+  interleave settings, the live mission-altitude graph, path/off-path status and the upstream
+  staged takeoff → fly-to-user → follow-user → return-along-mission → separated-altitude RTL state
+  machine at 10 Hz. It preserves the official `RTL_ALT`/`RTL_ALT_M` and
+  `WPNAV_ACCEL`/`WP_ACC` writes, while requiring reject-by-default confirmation before flight and
+  before reset, return or abandon actions. Every tick revalidates exact link/sysid/component,
+  complete group telemetry, firmware, position and the confirmed mission signature before sending
+  a batch; modem replacement, stale telemetry or a mission edit therefore fails closed. The
+  upstream 0.1 m path expansion is represented by exact compact segments and interpolation, and
+  landing-altitude targets are immutable rather than accidentally accumulating on timer ticks.
 - Parameter lists are deliberately session-only: neither the port nor the compiled upstream
   `MAVState` writes a reusable vehicle-parameter cache. Disconnecting, beginning a new connection or
-  selecting another MAVLink system or modem clears the applicable values/types/count immediately
-  and keeps configuration fields behind the loading overlay until a complete live list arrives. Post-connect
+  selecting another MAVLink system or modem clears both the previous and newly selected
+  values/types/count immediately, including the selector's transient empty state. The Raw
+  Parameters editor stays empty while `PARAM_VALUE` packets form a partial list and configuration
+  fields remain behind the loading overlay until a complete live list arrives; a failed read clears
+  any partial values again. Post-connect
   reads are globally serialized and latest-wins cancellable, so a silent UDP modem cannot hold the
   next selected device behind an unbounded retry. Connected configuration view models are recreated
   on target/list changes, preventing controls from retaining another device's values. After a live
@@ -530,7 +546,7 @@ not remove required Windows-native files from `win-x64` builds.
 | --- | --- | --- |
 | Legacy Mission Planner plugin compatibility | All | Portable DLL discovery, dependency loading, `Init`/`Loaded`/`Loop`/`Exit`, enable/disable UI, current MAVLink/settings access, Flight Data actions and HUD overlays are native and operational. Existing DLLs compiled against Mission Planner's WinForms executable are not binary-compatible; their UI must be adapted to Avalonia and rebuilt. Loose `.cs` runtime compilation is intentionally not treated as DLL compatibility. |
 | Optional native GDAL/OGR map drivers | All | GeoPackage feature layers, SHP and DXF are available through managed cross-platform readers. The generic native OGR/GDAL driver path for additional formats remains absent. |
-| Swarm / formation flight | All | The official Copter/Rover leader/follower Formation controller, interactive native grid and bulk flight actions are ported with multi-link identity and fail-closed telemetry checks. The official ArduPlane/Copter/Rover FollowPath trail controller is also ported with exact follower order, interpolated newest-first trail positions and fail-closed multi-link checks. The separate experimental ArduPlane attitude/PID Formation branch and FollowLeader/Sequence swarm modes remain to be ported and tested. |
+| Swarm / formation flight | All | The official Copter/Rover leader/follower Formation controller, interactive native grid and bulk flight actions are ported with multi-link identity and fail-closed telemetry checks. The official ArduPlane/Copter/Rover FollowPath trail controller is also ported with exact follower order, interpolated newest-first trail positions and fail-closed multi-link checks. The official WaypointLeader Copter workflow is ported with distinct ground/air masters, ordered multi-link followers, compact mission profile, collision override and its complete takeoff/follow/return/separated-RTL state machine. The separate experimental ArduPlane attitude/PID Formation branch and FollowLeader/Sequence swarm modes remain to be ported and tested. |
 | Signed beta application updates | All | Stable signed updates work. The Beta Updates control is disabled until this project publishes and signs a separate beta manifest/channel. |
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
