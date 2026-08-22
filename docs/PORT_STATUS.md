@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 996 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 1009 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/Hong-Kong-NoFly/GeoTIFF/DTED/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
@@ -557,7 +557,13 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 - Password protection of the Setup and Config screens is enforced: enabling the option prompts for
   a password (stored as the upstream salted hash) and both screens require it once per session.
 - The `ShowNoFly` planner option now auto-loads every KML/KMZ from the `NoFly/` folder in the
-  user data directory as a map overlay when the planner opens.
+  user data directory on both operational maps. The official Hong Kong CAD eSUA GeoJSON feed is
+  available through a separate explicit network opt-in and uses the same translucent-blue fill and
+  purple outline as pinned Mission Planner. The port does not make upstream's hidden Cloudflare IP
+  geolocation request. Downloads are cancellable and size/feature/coordinate bounded; Polygon,
+  MultiPolygon and interior rings are validated before an atomic 12-hour XDG-cache replacement,
+  with a previously valid stale cache retained across network failures. The live feed check on
+  2026-08-23 returned 284 features and 71,220 coordinate tuples.
 - The serial link and telemetry logs are closed on application exit, so the tlog tail is no longer
   lost when the window is closed while connected.
 - The inherited global `MissionPlanner.Utilities.Settings` store is safe under concurrent UI and
@@ -586,7 +592,7 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 996 passed, 0 failed, including Settings concurrency/null-reset stress,
+- Automated tests: 1009 passed, 0 failed, including Settings concurrency/null-reset stress,
   WMS/WMTS capabilities and tile addressing, raw/Socket.IO WebSocket protocol, fragmentation,
   reconnect and bounded-close integration, real
   loopback-UDP Moving Base input, blocking serial cancellation, exact multi-modem target isolation
@@ -603,6 +609,9 @@ native-platform acceptance testing.
   Firmware-archive tests cover mirror fallback, exact-URL deduplication, bounded parallelism,
   HTTPS-first legacy handling, partial availability, hashes, XML/path hardening, size limits,
   non-overwrite behavior, cancellation cleanup and atomic publication.
+  Hong Kong NoFly tests cover Polygon/MultiPolygon parsing, holes, WGS84 validation, the official
+  alpha/color style, fresh/stale caches, network failure, cancellation cleanup, atomic publication,
+  concurrent-load serialization and layer replacement on both Flight Planner and Flight Data.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop; the packaged Ctrl+X action opens
   the bound Map Tile Cache import UI and Ctrl+F shows the native SHP-to-POLY, Adjust Barometer
@@ -611,7 +620,7 @@ native-platform acceptance testing.
   its safe defaults were visually verified.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 996-test source on 2026-08-23. Package metadata,
+- The `.deb` target is rebuilt from the current 1009-test source on 2026-08-23. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 401 packaged-file checksums match after extraction, including the
   portable plugin API, BLE dependency licenses and byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -630,10 +639,10 @@ native-platform acceptance testing.
   scans; no Nordic UART modem was in range for a traffic test.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260823.6119e03_amd64.deb`
-(54,263,400 bytes; SHA-256
-`daf9f232be0bf9f732b2b0153a325fcd9afd2f917fb203ea0844bf7d4034e345`), built from commit
-`6119e03` and the current 996-test source including the portable plugin host, HUD-to-MJPEG/AVI
+`out/packages/missionplanner-avalonia_1.3.83-20260823.5a1ad70_amd64.deb`
+(54,269,730 bytes; SHA-256
+`c7148daa78024cb36558e7495bdc51e287ecf8ccd594f745449433d7995ea2ae`), built from commit
+`5a1ad70` and the current 1009-test source including the portable plugin host, HUD-to-MJPEG/AVI
 recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
@@ -649,7 +658,8 @@ target-safe official barometric-altitude pressure adjustment,
 the target-safe official MAVLink `SERIAL_CONTROL` TCP bridge,
 the cancellable atomic official firmware-archive workflow with HTTPS-first legacy handling and hashes,
 styled KML/KMZ vector/GroundOverlay layers, Flight Data overlay copying, corrected translucent-red
-airport disks, Rally Points actions, switchable Planner docking, the interactive verified-host-key
+airport disks, opt-in official Hong Kong CAD eSUA zones with bounded atomic caching on both maps,
+Rally Points actions, switchable Planner docking, the interactive verified-host-key
 SSH terminal, secure SFTP DataFlash download/delete workflow, the recursive flight Log Index with
 map thumbnails, offline sphere/ellipsoid MagFit, live Traditional Heli visualization, the movable
 Flight Data splitter and detachable live HUD/Quick windows, session-only/latest-wins vehicle
@@ -671,8 +681,8 @@ exports identified during the current CodeQL triage, plus concurrent global-sett
 serialized settings-file writes, and a cancellable bounded WebSocket transport with explicit
 raw-WebSocket/Socket.IO protocol separation and reconnect lifecycle ownership.
 Its APT version is
-`1:1.3.83+20260823.r255.6119e03`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r255` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260823.r258.5a1ad70`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r258` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -737,6 +747,7 @@ Mission Planner functional-parity gap.
 | --- | --- |
 | Embedded Mission Planner HTTP/KML/MJPEG server | Not compiled on any target. Do not restore the older server implementation; any replacement needs the current authentication and anti-DoS model. GeoRef emits a portable static `location.kml` instead of the old loopback network link. |
 | TFR download/overlay | Current Mission Planner disabled its Jepptech-backed background download on 2020-09-30 when the service ended (`b26095f9a`) and later removed the parser/Flight Data handler. The port retains the compatible `showtfr` preference but does not invent a replacement feed and incorrectly present it as upstream parity. |
+| European dynamic no-fly feed | The pinned Mission Planner `eunfz.cs` implementation has an empty download URL and is not operational upstream. [EASA currently directs operators](https://www.easa.europa.eu/en/light/topics/geo-zones-know-where-fly-your-drone) to each national aviation authority's geographical-zone source, so the port does not invent a unified feed and present it as official parity. |
 | Support Proxy | Not ported on any target until authentication, explicit consent and networking are designed and reviewed. |
 | Original WinForms/Windows driver-install UI | Not part of the Avalonia UI. Use native OS driver handling and add board-specific cross-platform DFU implementations where required. |
 | Legacy CLI firmware/log paths and AC3.3-era terminal flows | Obsolete for supported firmware and intentionally not exposed. |
