@@ -77,6 +77,17 @@ for unwanted in libusb-1.0.dll simpleble-c.dll simpleble.dll; do
   fi
 done
 
+# Microsoft.Data.Sqlite carries a prebuilt native SQLite library with a full ELF symbol table.
+# Debian treats that as an unstripped release object. Remove only non-runtime symbols from the
+# temporary Linux publish copy; the NuGet cache and Windows/macOS assets remain untouched.
+if [[ -f "$PUBLISH_TEMP/libe_sqlite3.so" ]]; then
+  if ! command -v strip >/dev/null 2>&1; then
+    echo "binutils strip is required to package libe_sqlite3.so." >&2
+    exit 1
+  fi
+  strip --strip-unneeded "$PUBLISH_TEMP/libe_sqlite3.so"
+fi
+
 # NuGet packages can carry host checkout permissions (including writable or executable
 # managed assemblies). Normalize the release tree; only the ELF apphost is executed.
 find "$PUBLISH_TEMP" -type d -exec chmod 0755 {} +

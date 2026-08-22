@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 660 tests verified; the camera-overlay/SHP/DXF/KML-GroundOverlay/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` passed lintian, checksum and Xvfb smoke checks; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 671 tests verified; the camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` passed lintian, checksum and Xvfb smoke checks; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -163,6 +163,12 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   instantiates the official `TerrainFollow`, receives `TERRAIN_REQUEST` through the shared reader and
   sends 4×4 `TERRAIN_DATA` grids from the cross-platform SRTM cache. This inherited workflow was
   already active and is no longer incorrectly listed as absent.
+- Setup > Advanced > Elevation Sources restores the official local DEM workflow and `GDALImageDir`
+  setting without requiring a native GDAL installation. It recursively indexes GeoTIFF and
+  DTED0/1/2 files in the background at startup, reports per-file coverage/errors, supports progress
+  cancellation and preserves the official GeoTIFF -> DTED -> downloaded-SRTM altitude priority.
+  Changing an already active DEM directory is staged for restart so stale and new terrain indexes
+  cannot be mixed invisibly in one session.
 - `Load Waypoints on connect` now opens the planner and reads the mission, while `Params Background
   Load` performs a cancellable live parameter-protocol read without holding the connect UI open.
 - Flight Planner can read and write mission, fence and rally storage through ArduPilot's MAVFTP
@@ -244,6 +250,10 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   also replace the drawn polygon or render mixed point/line/polygon overlays. ESRI `.prj` reprojection,
   `.cpg` encodings and case-insensitive Linux sidecars are supported. DXF Line, Polyline, LwPolyline
   and MLine entities render with their source colours in longitude/latitude or a signed UTM zone.
+- GeoPackage feature overlays are imported through a managed, cross-platform reader rather than the
+  optional native OGR runtime. Standard GeoPackage geometry headers, points, lines, polygons,
+  collections, quoted table names and declared coordinate-system reprojection are supported. As in
+  official Mission Planner, imported vector geometry appears in both Flight Planner and Flight Data.
 - Flight Planner and Flight Data use the same persisted map provider and update together. Google,
   OpenStreetMap, Esri and Bing have distinct tile sources; the Bing selector no longer silently serves
   Esri imagery.
@@ -332,12 +342,12 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 660 passed, 0 failed.
+- Automated tests: 671 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
-- The `.deb` target was rebuilt from the current 660-test source on 2026-08-22. Package metadata,
+- The `.deb` target was rebuilt from the current 671-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
-  resources were verified; all 391 packaged-file checksums match after extraction, including the
+  resources were verified; all 396 packaged-file checksums match after extraction, including the
   byte-for-byte pinned 8,443,722-byte `airports.csv`.
 - `lintian --fail-on error,warning` passes without diagnostics. The extracted x86-64 ELF apphost
   reaches the normal event loop under Xvfb and has no unresolved direct library dependencies.
@@ -349,10 +359,11 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.5e18ecd_amd64.deb`
-(53,011,788 bytes; SHA-256
-`f849caa22a1ca7b9a313377bb89cbfdafb2dbde1a271df3c0dfc82619e629f8a`), built from the current
-660-test source including camera feedback/overlap/gimbal overlays, managed SHP/DXF planner import,
+`out/packages/missionplanner-avalonia_1.3.83-20260822.2114272_amd64.deb`
+(53,862,420 bytes; SHA-256
+`4b54184f1e73ab7d0c585ac995f5579e513703a6797813939a305394e632f7a0`), built from the current
+671-test source including camera feedback/overlap/gimbal overlays, managed SHP/DXF/GeoPackage
+planner import, local GeoTIFF/DTED elevation sources,
 styled KML/KMZ vector/GroundOverlay layers, Flight Data overlay copying, corrected translucent-red
 airport disks, Rally Points actions, switchable Planner docking, the interactive verified-host-key
 SSH terminal, secure SFTP DataFlash download/delete workflow, the recursive flight Log Index with
@@ -361,8 +372,8 @@ Flight Data splitter, session-only/latest-wins vehicle parameter loading, single
 connections, independent multi-link Connection List support and composite upstream/date/commit
 versioning.
 Its APT version is
-`1:1.3.83+20260822.r143.5e18ecd`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r143` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r147.2114272`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r147` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
@@ -403,8 +414,7 @@ not remove required Windows-native files from `win-x64` builds.
 | Area | Affected targets | Current state and direction |
 | --- | --- | --- |
 | Full Mission Planner plugin loader | All | Discovery, lifecycle and WinForms plugin hosting are absent. Keep the new portable action/HUD hooks and add a cross-platform plugin host separately. |
-| GeoPackage and optional GDAL map import | All | Managed SHP mission/polygon/overlay import and colour-preserving DXF overlays are ported. The optional native OGR/GDAL GeoPackage workflow remains absent. |
-| Extra elevation sources | All | Local SRTM profiles and the official vehicle `TERRAIN_DATA` service work. DTED/GeoTIFF elevation sources remain absent. |
+| Optional native GDAL/OGR map drivers | All | GeoPackage feature layers, SHP and DXF are available through managed cross-platform readers. The generic native OGR/GDAL driver path for additional formats remains absent. |
 | MAVLink Camera Protocol v2 remaining UI | All | Announced `VIDEO_STREAM_INFORMATION` streams can be selected and remembered, and photo, recording and zoom commands are wired to detected camera components. The legacy mount camera-target map overlay is ported; the upstream combined gimbal/video overlay recorder remains absent. |
 | Swarm / formation flight | All | The upstream swarm controllers and UI are absent. The control logic is portable, but needs a new multi-vehicle foundation and Avalonia safety UI. |
 | Grid v2 / SimpleGrid variants | All | The alternative upstream/plugin grid workflows remain absent. |
@@ -418,7 +428,7 @@ not remove required Windows-native files from `win-x64` builds.
 | HUD frame recording | All | "Record Video Stream" records the libVLC stream and the upstream 4:3/16:9 HUD aspect toggle is ported. The separate upstream HUD-to-AVI frame-capture path remains absent. The current upstream `dropOutToolStripMenuItem_Click` handler is empty and is not counted as a functional gap. |
 | Flight Data map extras | All | Mission/Home/current-WP, fence, rally, Guided target, POIs, camera feedback with latest footprints and opt-in overlap count, live terrain-projected gimbal target, ADS-B/AIS/OA_DB traffic, airports, RF propagation/elevation/distance overlays and mission-distance progress are ported. The current upstream `ProximityControl` launch in `FlightData` is commented out; the port already provides a live Proximity radar tab, so it is not counted as a missing map workflow. |
 | Log tooling extras | All | Interactive DataFlash graphing, upstream expressions/preset alternatives/MODE overlays, log message/parameter inspection, MAVLink Inspector "Graph It", the recursive LogIndex with cache-only map thumbnails, offline three-compass sphere/ellipsoid MagFit and the upstream-named SCP workflow (actually SFTP over SSH) are ported. The SFTP page lists/downloads selected or all BIN logs, creates text LOG/KML outputs, applies GPS-time names and safely deletes selected/all remote logs with host-key pinning; passwords are never persisted and an inherited plaintext `LogDownloadscppath` is erased during migration. OSD video rendering from tlog remains absent. |
-| Remaining developer utilities | All | The safe portable subset of `temp.cs` is now a native Developer Tools page. Translation/resource editor, OpenGL 3D terrain view, MicroDrones serial downlink, vehicle default-settings loader, DevopsUI and custom GDAL/DEM browser still need dedicated Avalonia implementations. PX4Flow live image assembly is already port-native. |
+| Remaining developer utilities | All | The safe portable subset of `temp.cs` is now a native Developer Tools page. Translation/resource editor, OpenGL 3D terrain view, MicroDrones serial downlink, vehicle default-settings loader and DevopsUI still need dedicated Avalonia implementations. Local GeoTIFF/DTED configuration and PX4Flow live image assembly are already port-native. |
 
 ## Intentionally disabled or replaced
 

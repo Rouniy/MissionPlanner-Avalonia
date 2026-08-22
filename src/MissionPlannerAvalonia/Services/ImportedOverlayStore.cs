@@ -20,6 +20,12 @@ internal static class ImportedOverlayStore {
           Array.Empty<ImportedOverlayMarker>(),
           Array.Empty<ImportedOverlayRaster>()));
 
+  internal static void CopyVectorGeometryToFlightData(ImportedMapOverlay source) =>
+      SetFlightData(new ImportedMapOverlay(
+          source.Routes.ToArray(),
+          source.Markers.ToArray(),
+          Array.Empty<ImportedOverlayRaster>()));
+
   private static void SetFlightData(ImportedMapOverlay overlay) {
     _flightData = overlay ?? throw new ArgumentNullException(nameof(overlay));
     FlightDataChanged?.Invoke();

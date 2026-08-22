@@ -458,7 +458,7 @@ public partial class FlightPlannerView : UserControl {
   };
 
   private static readonly FilePickerFileType _mapOverlayType = new("Map overlays") {
-    Patterns = new[] { "*.kml", "*.kmz", "*.shp", "*.dxf" },
+    Patterns = new[] { "*.kml", "*.kmz", "*.shp", "*.dxf", "*.gpkg" },
   };
 
   private void WireViewModel() {
@@ -800,6 +800,7 @@ public partial class FlightPlannerView : UserControl {
       Services.ImportedMapOverlay overlay = await Task.Run(() => extension switch {
         ".dxf" => Services.DxfOverlayReader.Read(path, signedUtmZone),
         ".shp" => Services.ShapefileImportService.ReadOverlay(path),
+        ".gpkg" => Services.GeoPackageOverlayReader.Read(path),
         ".kml" or ".kmz" => Services.KmlMissionReader.ReadOverlay(path),
         _ => throw new InvalidDataException("Unsupported map overlay format."),
       });
@@ -812,7 +813,12 @@ public partial class FlightPlannerView : UserControl {
       Map.ShowMapOverlay(overlay);
       Map.ZoomToMapOverlay();
       bool copiedToFlightData = false;
-      if (extension is ".kml" or ".kmz"
+      if (extension == ".gpkg") {
+        // Official Mission Planner adds GeoPackage points, lines and polygons to both
+        // Flight Planner and Flight Data without a second prompt.
+        Services.ImportedOverlayStore.CopyVectorGeometryToFlightData(overlay);
+        copiedToFlightData = true;
+      } else if (extension is ".kml" or ".kmz"
           && await Services.Dialogs.Confirm("Map Overlay",
               "Do you want to load this into the Flight Data screen?")) {
         // Official Mission Planner copies KML polygons/routes, but not point markers or

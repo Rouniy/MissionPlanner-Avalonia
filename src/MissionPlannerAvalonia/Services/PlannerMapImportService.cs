@@ -257,7 +257,7 @@ internal static class ShapefileImportService {
     return new ImportedGeoPoint(xy[1], xy[0], altitude[0]);
   }
 
-  private static void AddGeometry(
+  internal static void AddGeometry(
       Geometry geometry,
       string name,
       ProjectionInfo? projection,
