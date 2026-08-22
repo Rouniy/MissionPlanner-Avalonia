@@ -1,0 +1,86 @@
+<Window
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  x:Class="MissionPlannerAvalonia.Views.SwarmFollowPathWindow"
+  x:DataType="vm:SwarmFollowPathViewModel"
+  Title="Swarm Follow Path (Beta)"
+  Width="1180"
+  Height="680"
+  MinWidth="920"
+  MinHeight="560"
+  WindowStartupLocation="CenterOwner"
+  Background="{DynamicResource MpControlBg}">
+  <Grid Margin="14" RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="10">
+    <Border Grid.Row="0" Background="#5A2B20" BorderBrush="#FF9B66" BorderThickness="1"
+            CornerRadius="4" Padding="10">
+      <TextBlock Foreground="#FFD4B8" TextWrapping="Wrap"
+                 Text="BETA / USE AT OWN RISK — port of official Mission Planner FollowPath. Explicitly selected ArduPlane/Copter/Rover followers receive 5 Hz GUIDED targets at ordered distances along the recorded leader trail. A stale, missing or replaced modem/vehicle, GPS jump, plan edit or insufficient group validation stops or withholds the entire target batch. ArduPlane followers require at least 30 m separation." />
+    </Border>
+
+    <Grid Grid.Row="1" ColumnDefinitions="Auto,300,Auto,Auto,110,*" ColumnSpacing="8">
+      <TextBlock Text="Leader" VerticalAlignment="Center" />
+      <ComboBox Grid.Column="1" ItemsSource="{Binding Vehicles}"
+                SelectedItem="{Binding SelectedLeader, Mode=TwoWay}">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="vm:FollowPathVehicleItem">
+            <TextBlock Text="{Binding Label}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+      <Button Grid.Column="2" Content="Refresh Vehicles" Command="{Binding RefreshCommand}" />
+      <TextBlock Grid.Column="3" Text="Separation m" VerticalAlignment="Center" />
+      <NumericUpDown Grid.Column="4" Value="{Binding SeparationM, Mode=TwoWay}"
+                     Minimum="1" Maximum="500" Increment="1" FormatString="0.0" />
+      <TextBlock Grid.Column="5" Margin="8,0,0,0" VerticalAlignment="Center"
+                 Foreground="{DynamicResource MpText}"
+                 Text="Target distance = Order × Separation; order values must be unique." />
+    </Grid>
+
+    <DataGrid x:Name="FollowPathVehicleGrid" Grid.Row="2" ItemsSource="{Binding Vehicles}"
+              AutoGenerateColumns="False" GridLinesVisibility="Horizontal"
+              CanUserReorderColumns="False">
+      <DataGrid.Columns>
+        <DataGridCheckBoxColumn Header="Use" Binding="{Binding Included, Mode=TwoWay}"
+                                Width="55" />
+        <DataGridTextColumn Header="Order" Binding="{Binding Order, Mode=TwoWay}"
+                            Width="65" />
+        <DataGridTextColumn Header="Endpoint" Binding="{Binding Endpoint}" IsReadOnly="True"
+                            Width="170" />
+        <DataGridTextColumn Header="Sys" Binding="{Binding SystemId}" IsReadOnly="True"
+                            Width="48" />
+        <DataGridTextColumn Header="Comp" Binding="{Binding ComponentId}" IsReadOnly="True"
+                            Width="52" />
+        <DataGridTextColumn Header="Role" Binding="{Binding Role}" IsReadOnly="True"
+                            Width="130" />
+        <DataGridTextColumn Header="Firmware" Binding="{Binding Firmware}" IsReadOnly="True"
+                            Width="100" />
+        <DataGridTextColumn Header="Live status" Binding="{Binding LiveStatus}" IsReadOnly="True"
+                            Width="170" />
+        <DataGridTextColumn Header="Current commanded target" Binding="{Binding Target}"
+                            IsReadOnly="True" Width="*" />
+      </DataGrid.Columns>
+    </DataGrid>
+
+    <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*"
+          ColumnSpacing="8" IsEnabled="{Binding !Busy}">
+      <Button x:Name="FollowPathRunButton" Content="{Binding RunButtonText}"
+              Command="{Binding ToggleRunCommand}" MinWidth="150" />
+      <Button Grid.Column="1" Content="Arm Followers" Command="{Binding ArmFollowersCommand}" />
+      <Button Grid.Column="2" Content="Disarm Followers"
+              Command="{Binding DisarmFollowersCommand}" />
+      <Button Grid.Column="3" Content="Take Off" Command="{Binding TakeoffFollowersCommand}" />
+      <NumericUpDown Grid.Column="4" Value="{Binding TakeoffAltitudeM, Mode=TwoWay}"
+                     Minimum="1" Maximum="10000" Increment="1" FormatString="0.0"
+                     Width="90" ToolTip.Tip="Takeoff altitude in metres" />
+      <Button Grid.Column="5" Content="LAND Followers" Command="{Binding LandFollowersCommand}"
+              HorizontalAlignment="Left" />
+    </Grid>
+
+    <Grid Grid.Row="4" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+      <TextBlock Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center"
+                 Foreground="{DynamicResource MpAccentBrush}" />
+      <Button Grid.Column="1" Content="Close" Click="OnClose" MinWidth="90" />
+    </Grid>
+  </Grid>
+</Window>
