@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
+using MissionPlanner;
 using MissionPlanner.ArduPilot;
 using MissionPlanner.ArduPilot.Mavlink;
 using MissionPlanner.Utilities;
@@ -43,6 +44,7 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
     Action("Download MAVFTP File", () => _ = DownloadMavFtpFileAsync());
     Action("Restore Parameters (Recovery)", () => _ = RestoreParametersAsync());
     Action("Set QNH", () => _ = SetQnhAsync());
+    Action("Adjust Barometer Altitude", () => _ = AdjustBarometerAltitudeAsync());
     Action("Force Accel Calibrated", () => _ = ForceCalibrationAsync(accelerometer: true));
     Action("Force Compass Calibrated", () => _ = ForceCalibrationAsync(accelerometer: false));
     Action("Reboot Vehicle", () => _ = RebootVehicleAsync());
@@ -398,6 +400,94 @@ public sealed class ConfigDeveloperToolsViewModel : ActionPageViewModel, IDispos
     await RunVehicleToolAsync("Set QNH", () =>
         _comPort.setParam(_comPort.MAV.sysid, _comPort.MAV.compid, parameter, value, true));
   }
+
+  private async Task AdjustBarometerAltitudeAsync() {
+    if (!RequireSafeVehicle("Barometer altitude adjustment")) {
+      return;
+    }
+
+    var target = _comPort.MAV;
+    byte targetSysId = target.sysid;
+    byte targetCompId = target.compid;
+    string parameter = target.param.ContainsKey("GND_ABS_PRESS")
+        ? "GND_ABS_PRESS"
+        : "BARO1_GND_PRESS";
+    if (!target.param.ContainsKey(parameter)) {
+      AppendLog("Barometer altitude adjustment: read vehicle parameters first; neither " +
+                "GND_ABS_PRESS nor BARO1_GND_PRESS is currently available.");
+      return;
+    }
+
+    double currentPressure = target.param[parameter].Value;
+    string? input = await Dialogs.InputBox(
+        "Adjust Barometer Altitude",
+        "Altitude correction in metres (-100 to 100). Mission Planner applies 11.1 Pa per metre.",
+        "0");
+    if (input == null) {
+      return;
+    }
+    bool parsed = double.TryParse(input, NumberStyles.Float, CultureInfo.CurrentCulture,
+                      out double altitudeOffset)
+                  || double.TryParse(input, NumberStyles.Float, CultureInfo.InvariantCulture,
+                      out altitudeOffset);
+    if (!parsed || !TryCalculateBarometerPressure(
+            currentPressure, altitudeOffset, out double targetPressure)) {
+      AppendLog("Barometer altitude adjustment: enter a finite offset from -100 to 100 metres; " +
+                "the resulting pressure must remain between 80000 and 120000 Pa.");
+      return;
+    }
+    if (Math.Abs(altitudeOffset) < 1e-9) {
+      AppendLog("Barometer altitude adjustment: zero offset; no parameter was changed.");
+      return;
+    }
+
+    string currentText = currentPressure.ToString("0.###", CultureInfo.InvariantCulture);
+    string offsetText = altitudeOffset.ToString("+0.###;-0.###", CultureInfo.InvariantCulture);
+    string targetText = targetPressure.ToString("0.###", CultureInfo.InvariantCulture);
+    if (!await Dialogs.ConfirmDangerous(
+            "Adjust Barometer Altitude",
+            $"Write {parameter} from {currentText} Pa to {targetText} Pa using an altitude " +
+            $"correction of {offsetText} m?\n\nThis deliberately changes the vehicle's stored " +
+            "barometric reference. Use normal calibration unless you specifically need this " +
+            "Mission Planner recovery/developer operation.",
+            "Write pressure")) {
+      return;
+    }
+    if (!IsConnected || !IsSelectedVehicleTarget(
+            _comPort, target, targetSysId, targetCompId) || target.cs.armed) {
+      AppendLog("Barometer altitude adjustment: the selected vehicle changed, disconnected, or " +
+                "became armed while the confirmation was open; nothing was written.");
+      return;
+    }
+
+    await RunVehicleToolAsync("Barometer altitude adjustment", () => {
+      if (!IsConnected || !IsSelectedVehicleTarget(
+              _comPort, target, targetSysId, targetCompId) || target.cs.armed) {
+        throw new InvalidOperationException(
+            "selected vehicle changed, disconnected, or became armed before the write");
+      }
+      return _comPort.setParam(targetSysId, targetCompId, parameter, targetPressure, true);
+    });
+  }
+
+  internal static bool TryCalculateBarometerPressure(
+      double currentPressurePa, double altitudeOffsetMetres, out double targetPressurePa) {
+    targetPressurePa = double.NaN;
+    if (!double.IsFinite(currentPressurePa) || !double.IsFinite(altitudeOffsetMetres)
+        || altitudeOffsetMetres is < -100 or > 100) {
+      return false;
+    }
+
+    // Official temp.cs uses current pressure + offset * 11.1. Its adjacent comment relates
+    // 338.6388 Pa to 30.48 m (100 ft), which confirms that the control value is metres.
+    targetPressurePa = currentPressurePa + altitudeOffsetMetres * 11.1;
+    return targetPressurePa is >= 80000 and <= 120000;
+  }
+
+  internal static bool IsSelectedVehicleTarget(
+      MAVLinkInterface link, MAVState target, byte sysId, byte compId) =>
+      link.sysidcurrent == sysId && link.compidcurrent == compId
+      && ReferenceEquals(link.MAV, target);
 
   private async Task ForceCalibrationAsync(bool accelerometer) {
     string target = accelerometer ? "accelerometer" : "compass";
