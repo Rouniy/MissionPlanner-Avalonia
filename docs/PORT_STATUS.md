@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 915 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 921 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
@@ -138,6 +138,13 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   rates per physical port and expose the active MAVLink system/component selector. AUTO scan now has
   visible progress and cancellation and records the actual detected port/rate instead of persisting
   the synthetic `AUTO` endpoint.
+- Linux Bluetooth LE now ports the official Nordic UART transport without the upstream
+  Windows-native SimpleBLE binary. Port refresh performs a cancellable BlueZ/D-Bus LE scan for the
+  official service/characteristic UUIDs, exposes stable name/address endpoints and connects them as
+  a buffered MAVLink serial stream. Opening, reads and writes are bounded; GATT writes are serialized
+  and chunked; early notifications are retained; remote disconnect and user cancellation wake blocked
+  operations so a missing modem cannot hold the connection UI. Repeated scans reuse the process-wide
+  adapter subscription rather than leaking a new D-Bus property watcher.
 - The official Connection List workflow is restored for `tcp://host:port`, `udp://host:port`,
   `udpcl://host:port` and `serial:port:baud` files. Independent MAVLink interfaces are opened with
   bounded parallelism, per-line telemetry logs, reader/heartbeat/stream-request lifecycles and
@@ -509,7 +516,8 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 915 passed, 0 failed; the full suite also passed three immediate stress reruns.
+- Automated tests: 921 passed, 0 failed; the preceding 915-test suite also passed three immediate
+  stress reruns before the six BLE transport regressions were added.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
@@ -528,7 +536,9 @@ native-platform acceptance testing.
   roots; the extracted application tree remains byte-for-byte unchanged. A portable test plugin
   and its private managed dependency were loaded from the isolated user directory and completed
   `Init`, `Loaded` and `Loop`; repeated failures in a second plugin disabled only that loop.
-- System runtime integrations installed: libVLC, speech-dispatcher-espeak-ng and serial `dialout` membership.
+- System runtime integrations installed: libVLC, speech-dispatcher-espeak-ng, BlueZ and serial
+  `dialout` membership. The real Bluetooth adapter completed three consecutive managed D-Bus LE
+  scans; no Nordic UART modem was in range for a traffic test.
 
 The most recent Debian artifact is
 `out/packages/missionplanner-avalonia_1.3.83-20260822.37f54ec_amd64.deb`
@@ -608,7 +618,7 @@ not remove required Windows-native files from `win-x64` builds.
 | Signed beta application updates | All | Stable signed updates work. The Beta Updates control is disabled until this project publishes and signs a separate beta manifest/channel. |
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
-| BLE transport | Linux/macOS; Windows unverified | Upstream supplies Windows SimpleBLE binaries. Linux needs a `.so`; macOS needs a dylib/framework integration. Windows path remains packaged but needs hardware testing. |
+| BLE transport | macOS; Linux/Windows hardware acceptance | Linux uses the port-native managed BlueZ/D-Bus Nordic UART transport and no longer needs a SimpleBLE `.so`; adapter discovery is verified, while end-to-end traffic still needs a Nordic UART modem. Upstream's Windows SimpleBLE path remains hardware-unverified. macOS still needs a CoreBluetooth or maintained native integration. |
 | NativeAOT runtime | All | Linux links to a 66 MB ELF but fails in log4net `Assembly.GetCallingAssembly()`; MAVLink/XML/fastJSON also require dynamic code. Experimental only. |
 | Flight Data map extras | All | Mission/Home/current-WP, fence, rally, Guided target, POIs, camera feedback with latest footprints and opt-in overlap count, live terrain-projected gimbal target, ADS-B/AIS/OA_DB traffic, airports, RF propagation/elevation/distance overlays and mission-distance progress are ported. The current upstream `ProximityControl` launch in `FlightData` is commented out; the port already provides a live Proximity radar tab, so it is not counted as a missing map workflow. |
 | Developer utility parity | All | The safe portable subset of `temp.cs`, including the Translation / RESX Editor and live 3D terrain/imagery view, is native. Device Operations, Vehicle Default Settings, MicroDrone serial downlink, local GeoTIFF/DTED configuration and PX4Flow live image assembly are also port-native. |
@@ -656,7 +666,9 @@ currently has no prebuilt launcher binary in this port.
 The root build overrides vulnerable versions inherited from the upstream project without modifying
 the submodule: log4net 3.3.2, SharpCompress 0.48.0 and SkiaSharp/SkiaSharp native assets 2.88.6.
 The SSH port uses SSH.NET 2026.0.0 and BouncyCastle.Cryptography 2.7.0 instead of upstream's
-vulnerable SSH.NET 2020.0.2 dependency. A current `dotnet list package --vulnerable
+vulnerable SSH.NET 2020.0.2 dependency. Linux.Bluetooth's vulnerable Tmds.DBus 0.20.0 declaration
+is explicitly overridden with the compatible CVE-2026-39959-fixed 0.92.0 release. A current
+`dotnet list package --vulnerable
 --include-transitive` audit reports no vulnerable package in the Avalonia application graph.
 The seven CodeQL findings reviewed in this synchronization and their code-level mitigations or
 reachability decisions are recorded in [`CODEQL_TRIAGE.md`](CODEQL_TRIAGE.md). Two unused-web-sample

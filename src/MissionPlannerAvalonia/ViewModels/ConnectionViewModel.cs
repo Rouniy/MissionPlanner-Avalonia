@@ -60,7 +60,8 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   private bool _hasVehicleChoices;
 
   public bool CanEditConnection => !IsConnected;
-  public bool CanEditBaud => !IsConnected && IsSerialEndpoint(SelectedPort);
+  public bool CanEditBaud => !IsConnected && IsSerialEndpoint(SelectedPort) &&
+      !IsBleEndpoint(SelectedPort);
   public bool VehicleSelectorVisible => HasVehicleChoices;
 
   [ObservableProperty]
@@ -91,7 +92,8 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   }
 
   partial void OnSelectedBaudChanged(int value) {
-    if (_initializing || value <= 0 || !IsSerialEndpoint(SelectedPort)) {
+    if (_initializing || value <= 0 || !IsSerialEndpoint(SelectedPort) ||
+        IsBleEndpoint(SelectedPort)) {
       return;
     }
     Settings.Instance[PortBaudKey(SelectedPort!)] = value.ToString();
@@ -761,6 +763,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private void RefreshPorts() {
+    int bleGeneration = Interlocked.Increment(ref _bleRefreshGeneration);
     var cur = SelectedPort;
     Ports.Clear();
     Ports.Add("AUTO");
@@ -778,6 +781,79 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     }
 
     SelectedPort = Ports.Contains(cur ?? "") ? cur : Ports.FirstOrDefault(p => p != "AUTO");
+
+    if (OperatingSystem.IsLinux()) {
+      const string scanning = "Scanning Bluetooth LE devices…";
+      Status = scanning;
+      CancellationTokenSource scanCancellation =
+          CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+      CancellationTokenSource? previous;
+      lock (_bleRefreshSync) {
+        previous = _bleRefreshCancellation;
+        _bleRefreshCancellation = scanCancellation;
+      }
+      try {
+        previous?.Cancel();
+      } catch (ObjectDisposedException) {
+      }
+      _ = RefreshBlePortsAsync(bleGeneration, scanning, scanCancellation);
+    }
+  }
+
+  private readonly object _bleRefreshSync = new();
+  private int _bleRefreshGeneration;
+  private CancellationTokenSource? _bleRefreshCancellation;
+
+  private async Task RefreshBlePortsAsync(
+      int generation, string scanningStatus, CancellationTokenSource cancellation) {
+    CancellationToken cancellationToken = cancellation.Token;
+    try {
+      IReadOnlyList<Services.BleDeviceInfo> devices =
+          await Services.LinuxBleSerial.DiscoverAsync(
+              TimeSpan.FromSeconds(4), cancellationToken).ConfigureAwait(false);
+      await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => {
+        if (generation != Volatile.Read(ref _bleRefreshGeneration) ||
+            cancellationToken.IsCancellationRequested) {
+          return;
+        }
+        foreach (Services.BleDeviceInfo device in devices) {
+          if (!Ports.Contains(device.Endpoint)) {
+            int networkStart = Ports.IndexOf("TCP");
+            Ports.Insert(networkStart >= 0 ? networkStart : Ports.Count, device.Endpoint);
+          }
+        }
+        if (Status == scanningStatus) {
+          Status = devices.Count == 0
+              ? "No Nordic UART BLE devices found."
+              : $"Found {devices.Count} Nordic UART BLE device(s).";
+        }
+      });
+    } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+    } catch (Exception ex) {
+      await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => {
+        if (generation == Volatile.Read(ref _bleRefreshGeneration) && Status == scanningStatus) {
+          Status = "Bluetooth LE scan unavailable: " + ex.Message;
+        }
+      });
+    } finally {
+      lock (_bleRefreshSync) {
+        if (ReferenceEquals(_bleRefreshCancellation, cancellation)) {
+          _bleRefreshCancellation = null;
+        }
+      }
+      cancellation.Dispose();
+    }
+  }
+
+  private void CancelBleRefresh() {
+    CancellationTokenSource? cancellation;
+    lock (_bleRefreshSync) {
+      cancellation = _bleRefreshCancellation;
+    }
+    try {
+      cancellation?.Cancel();
+    } catch (ObjectDisposedException) {
+    }
   }
 
   private static readonly string[] _internalPorts = ["Bluetooth-Incoming-Port", "debug-console"];
@@ -795,10 +871,14 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       !string.IsNullOrWhiteSpace(port) && port is not "AUTO" and not "TCP" and not "UDP"
           and not "UDPCl" and not "WS";
 
+  internal static bool IsBleEndpoint(string? port) =>
+      !string.IsNullOrWhiteSpace(port) &&
+      port.StartsWith(Services.BleEndpoint.Prefix, StringComparison.OrdinalIgnoreCase);
+
   internal static string PortBaudKey(string port) => port.Replace(" ", "_") + "_BAUD";
 
   private static int SavedBaudForPort(string? port, int fallback) {
-    if (!IsSerialEndpoint(port)) {
+    if (!IsSerialEndpoint(port) || IsBleEndpoint(port)) {
       return fallback;
     }
     int saved = Settings.Instance.GetInt32(PortBaudKey(port!), fallback);
@@ -993,6 +1073,9 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       _connectGate.Release();
       return;
     }
+    if (IsBleEndpoint(sel)) {
+      CancelBleRefresh();
+    }
 
     try {
       if (!await WaitForPreviousTransportAsync()) {
@@ -1117,7 +1200,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
         AppState.Connections.SetActive(_comPort);
         Settings.Instance.ComPort = endpoint;
         Settings.Instance.BaudRate = SelectedBaud.ToString();
-        if (IsSerialEndpoint(endpoint)) {
+        if (IsSerialEndpoint(endpoint) && !IsBleEndpoint(endpoint)) {
           Settings.Instance[PortBaudKey(endpoint)] = SelectedBaud.ToString();
         }
         Status = backgroundParamLoad
@@ -1229,6 +1312,13 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
         }
 
       default:
+        if (IsBleEndpoint(sel)) {
+          if (!OperatingSystem.IsLinux()) {
+            throw new PlatformNotSupportedException(
+                "This saved BLE endpoint uses the Linux BlueZ transport. Refresh the port list on this platform.");
+          }
+          return new Services.LinuxBleSerial(sel) { BaudRate = SelectedBaud };
+        }
         return new SerialPort {
           PortName = sel,
           BaudRate = SelectedBaud,

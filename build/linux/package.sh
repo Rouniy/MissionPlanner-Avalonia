@@ -112,6 +112,7 @@ build_tar() {
   cp "$SCRIPT_DIR/missionplanner-avalonia.png" "$tar_app/"
   cp "$ROOT_DIR/LICENSE" "$tar_app/"
   cp "$ROOT_DIR/NOTICE.md" "$tar_app/"
+  cp -a "$ROOT_DIR/LICENSES" "$tar_app/"
   chmod 0755 "$tar_app/MissionPlannerAvalonia" "$tar_app/install.sh"
 
   rm -f -- "$TAR_PATH"
@@ -153,6 +154,7 @@ build_deb() {
     "$deb_root/usr/share/icons/hicolor/256x256/apps/missionplanner-avalonia.png"
   cp "$SCRIPT_DIR/debian/copyright" "$doc_dir/copyright"
   cp "$ROOT_DIR/NOTICE.md" "$doc_dir/NOTICE.md"
+  cp -a "$ROOT_DIR/LICENSES" "$doc_dir/"
   cp "$SCRIPT_DIR/debian/lintian-overrides" \
     "$deb_root/usr/share/lintian/overrides/missionplanner-avalonia"
   cp "$SCRIPT_DIR/debian/postinst" "$deb_root/DEBIAN/postinst"
