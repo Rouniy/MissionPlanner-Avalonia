@@ -200,8 +200,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     Services.DisplayViewService.Changed -= OnDisplayViewChanged;
     _timer.Stop();
     _tlog.Close();
-    _videoWindow?.Close();
-    _video?.Dispose();
+    CloseVideoWindow();
   }
 
   private void Pump() {
@@ -3086,6 +3085,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 
   private MissionPlannerAvalonia.Controls.VideoControl? _video;
   private Views.VideoPopupWindow? _videoWindow;
+  internal event Action<Views.GimbalVideoPresentation>? VideoPresentationRequested;
   private byte? _selectedCameraSystemId;
   private byte? _selectedCameraComponentId;
   private byte _selectedCameraStreamId;
@@ -3180,28 +3180,75 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   partial void OnGimbalUseReportedFovChanged(bool value) =>
       SaveGimbalSetting("gimbal_video_reported_fov", value);
 
-  private Views.VideoPopupWindow EnsureVideoWindow() {
+  internal Views.VideoPopupWindow EnsureVideoWindow(bool showWindow = true) {
     var top = (Avalonia.Application.Current?.ApplicationLifetime
                as IClassicDesktopStyleApplicationLifetime)?.MainWindow;
     if (_videoWindow == null) {
-
       _video = new MissionPlannerAvalonia.Controls.VideoControl();
       _videoWindow = new Views.VideoPopupWindow(_video, this);
+      Views.VideoPopupWindow openedWindow = _videoWindow;
+      MissionPlannerAvalonia.Controls.VideoControl openedVideo = _video;
       _videoWindow.Closed += (_, _) => {
         ReleaseGimbalVideoInput();
-        _video?.Dispose();
-        _video = null;
-        _videoWindow = null;
+        openedVideo.Dispose();
+        if (ReferenceEquals(_video, openedVideo)) {
+          _video = null;
+        }
+        if (ReferenceEquals(_videoWindow, openedWindow)) {
+          _videoWindow = null;
+        }
       };
-      if (top != null) {
-        _videoWindow.Show(top);
-      } else {
-        _videoWindow.Show();
-      }
-    } else {
-      _videoWindow.Activate();
+    }
+    if (showWindow) {
+      ShowVideoWindow(_videoWindow, top);
     }
     return _videoWindow;
+  }
+
+  private static void ShowVideoWindow(
+      Views.VideoPopupWindow window,
+      Avalonia.Controls.Window? owner) {
+    if (window.IsVisible) {
+      window.Activate();
+    } else if (owner != null) {
+      window.Show(owner);
+    } else {
+      window.Show();
+    }
+  }
+
+  internal Views.VideoPopupWindow RequestVideoPresentation(
+      Views.GimbalVideoPresentation presentation) {
+    Views.VideoPopupWindow window = EnsureVideoWindow(showWindow: false);
+    Action<Views.GimbalVideoPresentation>? presenter = VideoPresentationRequested;
+    if (presenter != null) {
+      presenter(presentation);
+    } else {
+      var top = (Avalonia.Application.Current?.ApplicationLifetime
+                 as IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+      ShowVideoWindow(window, top);
+    }
+    return window;
+  }
+
+  internal void CloseVideoWindow() {
+    Views.VideoPopupWindow? window = _videoWindow;
+    MissionPlannerAvalonia.Controls.VideoControl? video = _video;
+    if (window != null) {
+      try {
+        window.Close();
+      } catch {
+        // Continue releasing libVLC even if the native window backend is already unavailable.
+      }
+    }
+    if (ReferenceEquals(_video, video)) {
+      video?.Dispose();
+      _video = null;
+    }
+    if (ReferenceEquals(_videoWindow, window)) {
+      _videoWindow = null;
+    }
+    ReleaseGimbalVideoInput();
   }
 
   private static async Task<string?> PromptTextAsync(string title, string label, string initial) {
@@ -3366,7 +3413,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
   }
 
   private void PlayVideoSource(string source) {
-    var win = EnsureVideoWindow();
+    var win = RequestVideoPresentation(Views.GimbalVideoPresentation.PopOut);
     if (!win.Video.IsAvailable) {
       Log(win.Video.Status);
       win.UpdateStatus();
@@ -3824,7 +3871,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 
   [RelayCommand]
   private async Task RecordVideo() {
-    var win = EnsureVideoWindow();
+    var win = RequestVideoPresentation(Views.GimbalVideoPresentation.PopOut);
     var outPath = await PickSaveAsync("Record video to", "ts");
     if (outPath == null) {
       return;

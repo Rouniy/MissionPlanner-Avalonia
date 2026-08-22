@@ -46,7 +46,12 @@ public partial class FlightDataView : UserControl {
     };
     _hudCaptureTimer.Tick += OnHudCaptureTick;
     UpdateHudRecordingMenu(recording: false);
+    _mapVideoLayout = this.FindControl<Avalonia.Controls.Grid>("MapVideoLayout");
     _fdMap = this.FindControl<MapView>("FdMap");
+    _gimbalVideoFullHost = this.FindControl<ContentControl>("GimbalVideoFullHost");
+    _gimbalVideoMiniLayout = this.FindControl<Avalonia.Controls.Grid>("GimbalVideoMiniLayout");
+    _gimbalVideoMiniHost = this.FindControl<ContentControl>("GimbalVideoMiniHost");
+    _gimbalMiniMapHost = this.FindControl<ContentControl>("GimbalMiniMapHost");
     _tuningPlot = this.FindControl<LivePlot>("TuningPlot");
     if (_fdMap != null) {
       _fdMap.ContextMenu = BuildMapMenu(_fdMap);
@@ -75,14 +80,20 @@ public partial class FlightDataView : UserControl {
       if (_fdTabs != null) {
         ApplyTabSettings(_fdTabs);
       }
+      BindGimbalVideoPresenter();
     };
     DetachedFromVisualTree += (_, _) => {
       _displayViewSubscribed = false;
       Services.DisplayViewService.Changed -= OnDisplayViewChanged;
+      UnsubscribeGimbalVideoPresenter();
+      CloseGimbalVideo();
       RestoreDetachedPanels();
       _ = StopHudRecordingAsync(showResult: false);
     };
-    DataContextChanged += (_, _) => SyncDetachedWindowDataContexts();
+    DataContextChanged += (_, _) => {
+      SyncDetachedWindowDataContexts();
+      BindGimbalVideoPresenter();
+    };
     ApplyGaugeSettings();
   }
 
@@ -201,6 +212,7 @@ public partial class FlightDataView : UserControl {
   }
 
   private readonly MapView? _fdMap;
+  private readonly Avalonia.Controls.Grid? _mapVideoLayout;
   private readonly LivePlot? _tuningPlot;
   private readonly TabControl? _fdTabs;
   private readonly Avalonia.Controls.Grid? _flightDataLayout;
@@ -208,6 +220,10 @@ public partial class FlightDataView : UserControl {
   private readonly HudControl? _hud;
   private readonly ContentControl? _quickHost;
   private readonly ItemsControl? _quickGrid;
+  private readonly ContentControl? _gimbalVideoFullHost;
+  private readonly Avalonia.Controls.Grid? _gimbalVideoMiniLayout;
+  private readonly ContentControl? _gimbalVideoMiniHost;
+  private readonly ContentControl? _gimbalMiniMapHost;
   private readonly MenuItem? _detachHudMenuItem;
   private readonly MenuItem? _detachQuickMenuItem;
   private readonly MenuItem? _recordHudMenuItem;
@@ -215,11 +231,19 @@ public partial class FlightDataView : UserControl {
   private readonly DispatcherTimer _hudCaptureTimer;
   private HudFrameRecorder? _hudRecorder;
   private FlightDataViewModel? _mapVm;
+  private FlightDataViewModel? _gimbalVideoVm;
   private Window? _hudWindow;
   private Window? _quickWindow;
+  private Window? _gimbalVideoWindow;
+  private Control? _gimbalVideoPanel;
+  private bool _gimbalVideoPresenterSubscribed;
+  private bool _gimbalShowMiniMap = true;
+  private GimbalVideoPresentation? _gimbalVideoPresentation;
 
   internal bool IsHudDetached => _hudWindow != null;
   internal bool IsQuickDetached => _quickWindow != null;
+  internal GimbalVideoPresentation? CurrentGimbalVideoPresentation =>
+      _gimbalVideoPresentation;
 
   private void OnHudDoubleTapped(object? sender, TappedEventArgs e) {
     if (_hudWindow == null) {
@@ -382,6 +406,268 @@ public partial class FlightDataView : UserControl {
     }
     if (_detachQuickMenuItem != null) {
       _detachQuickMenuItem.Header = _quickWindow == null ? "Undock Quick" : "Dock Quick";
+    }
+  }
+
+  private void BindGimbalVideoPresenter() {
+    var next = DataContext as FlightDataViewModel;
+    if (!ReferenceEquals(_gimbalVideoVm, next)) {
+      UnsubscribeGimbalVideoPresenter();
+      CloseGimbalVideo();
+      _gimbalVideoVm = next;
+    }
+    if (_displayViewSubscribed
+        && _gimbalVideoVm != null
+        && !_gimbalVideoPresenterSubscribed) {
+      _gimbalVideoVm.VideoPresentationRequested += OnGimbalVideoPresentationRequested;
+      _gimbalVideoPresenterSubscribed = true;
+    }
+  }
+
+  private void UnsubscribeGimbalVideoPresenter() {
+    if (_gimbalVideoVm != null && _gimbalVideoPresenterSubscribed) {
+      _gimbalVideoVm.VideoPresentationRequested -= OnGimbalVideoPresentationRequested;
+    }
+    _gimbalVideoPresenterSubscribed = false;
+  }
+
+  private void OnGimbalVideoPresentationRequested(GimbalVideoPresentation presentation) {
+    if (!Dispatcher.UIThread.CheckAccess()) {
+      Dispatcher.UIThread.Post(() => PresentGimbalVideo(presentation));
+      return;
+    }
+    PresentGimbalVideo(presentation);
+  }
+
+  internal Window? PresentGimbalVideo(
+      GimbalVideoPresentation presentation,
+      bool showWindow = true) {
+    FlightDataViewModel? vm = _gimbalVideoVm ?? DataContext as FlightDataViewModel;
+    if (vm == null) {
+      return null;
+    }
+    if (!ReferenceEquals(_gimbalVideoVm, vm)) {
+      BindGimbalVideoPresenter();
+    }
+
+    VideoPopupWindow window = vm.EnsureVideoWindow(showWindow: false);
+    Control? panel = _gimbalVideoPanel ?? window.Content as Control;
+    if (panel == null) {
+      return null;
+    }
+    panel.ContextMenu ??= BuildGimbalVideoPresentationMenu();
+    return PlaceGimbalVideoPanel(panel, presentation, window, showWindow);
+  }
+
+  internal Window PlaceGimbalVideoPanel(
+      Control panel,
+      GimbalVideoPresentation presentation,
+      Window? popupWindow = null,
+      bool showWindow = false) {
+    ArgumentNullException.ThrowIfNull(panel);
+    popupWindow ??= new Window {
+      Title = "MAVLink Camera / Gimbal Video",
+      Width = 900,
+      Height = 620,
+      Background = Avalonia.Media.Brushes.Black,
+      WindowStartupLocation = WindowStartupLocation.CenterOwner,
+    };
+
+    if (!ReferenceEquals(_gimbalVideoWindow, popupWindow)) {
+      if (_gimbalVideoWindow != null) {
+        _gimbalVideoWindow.Closed -= OnGimbalVideoWindowClosed;
+      }
+      _gimbalVideoWindow = popupWindow;
+      _gimbalVideoWindow.Closed += OnGimbalVideoWindowClosed;
+    }
+    _gimbalVideoPanel = panel;
+    DetachGimbalVideoPanel();
+    RestoreGimbalMap();
+
+    switch (presentation) {
+      case GimbalVideoPresentation.FullSized:
+        if (popupWindow.IsVisible) {
+          popupWindow.Hide();
+        }
+        if (_gimbalVideoFullHost != null) {
+          _gimbalVideoFullHost.Content = panel;
+          _gimbalVideoFullHost.IsVisible = true;
+        }
+        MoveMapToGimbalMiniHost();
+        break;
+      case GimbalVideoPresentation.Mini:
+        if (popupWindow.IsVisible) {
+          popupWindow.Hide();
+        }
+        if (_gimbalVideoMiniHost != null) {
+          _gimbalVideoMiniHost.Content = panel;
+          if (_gimbalVideoMiniLayout != null) {
+            _gimbalVideoMiniLayout.IsVisible = true;
+          }
+        }
+        break;
+      case GimbalVideoPresentation.PopOut:
+        popupWindow.Content = panel;
+        if (showWindow && !TryShowGimbalVideoWindow(popupWindow)) {
+          popupWindow.Content = null;
+          if (_gimbalVideoMiniHost != null) {
+            _gimbalVideoMiniHost.Content = panel;
+            if (_gimbalVideoMiniLayout != null) {
+              _gimbalVideoMiniLayout.IsVisible = true;
+            }
+          }
+          presentation = GimbalVideoPresentation.Mini;
+        }
+        break;
+      default:
+        throw new ArgumentOutOfRangeException(nameof(presentation), presentation, null);
+    }
+    _gimbalVideoPresentation = presentation;
+    return popupWindow;
+  }
+
+  private bool TryShowGimbalVideoWindow(Window window) {
+    try {
+      if (window.IsVisible) {
+        window.Activate();
+      } else if (TopLevel.GetTopLevel(this) is Window owner) {
+        window.Show(owner);
+      } else {
+        window.Show();
+      }
+      return true;
+    } catch (Exception ex) {
+      _ = Services.Dialogs.Alert(
+          "Gimbal Video", "Could not open the video window: " + ex.Message);
+      return false;
+    }
+  }
+
+  private ContextMenu BuildGimbalVideoPresentationMenu() {
+    MenuItem Item(string header, Action action) {
+      var item = new MenuItem { Header = header };
+      item.Click += (_, _) => action();
+      return item;
+    }
+    var showMiniMap = new MenuItem {
+      Header = "Show Mini Map",
+      ToggleType = MenuItemToggleType.CheckBox,
+      IsChecked = _gimbalShowMiniMap,
+    };
+    showMiniMap.Click += (_, _) => {
+      _gimbalShowMiniMap = showMiniMap.IsChecked;
+      UpdateGimbalMiniMapVisibility();
+    };
+    return new ContextMenu {
+      Items = {
+        showMiniMap,
+        Item("Swap with map", () => PresentGimbalVideo(
+            _gimbalVideoPresentation == GimbalVideoPresentation.FullSized
+                ? GimbalVideoPresentation.Mini
+                : GimbalVideoPresentation.FullSized)),
+        new Separator(),
+        Item("Full Sized", () => PresentGimbalVideo(GimbalVideoPresentation.FullSized)),
+        Item("Mini", () => PresentGimbalVideo(GimbalVideoPresentation.Mini)),
+        Item("Pop Out", () => PresentGimbalVideo(GimbalVideoPresentation.PopOut)),
+        new Separator(),
+        Item("Close Video", CloseGimbalVideo),
+      },
+    };
+  }
+
+  private void MoveMapToGimbalMiniHost() {
+    if (_fdMap == null || _mapVideoLayout == null || _gimbalMiniMapHost == null) {
+      return;
+    }
+    _mapVideoLayout.Children.Remove(_fdMap);
+    _gimbalMiniMapHost.Content = _fdMap;
+    _gimbalMiniMapHost.IsVisible = _gimbalShowMiniMap;
+    if (_gimbalShowMiniMap && _gimbalVideoMiniLayout != null) {
+      _gimbalVideoMiniLayout.IsVisible = true;
+    }
+  }
+
+  private void UpdateGimbalMiniMapVisibility() {
+    bool show = _gimbalVideoPresentation == GimbalVideoPresentation.FullSized
+        && _gimbalShowMiniMap
+        && _gimbalMiniMapHost?.Content != null;
+    if (_gimbalMiniMapHost != null) {
+      _gimbalMiniMapHost.IsVisible = show;
+    }
+    if (_gimbalVideoPresentation == GimbalVideoPresentation.FullSized
+        && _gimbalVideoMiniLayout != null) {
+      _gimbalVideoMiniLayout.IsVisible = show;
+    }
+  }
+
+  private void RestoreGimbalMap() {
+    if (_gimbalMiniMapHost != null
+        && ReferenceEquals(_gimbalMiniMapHost.Content, _fdMap)) {
+      _gimbalMiniMapHost.Content = null;
+    }
+    if (_gimbalMiniMapHost != null) {
+      _gimbalMiniMapHost.IsVisible = false;
+    }
+    if (_fdMap != null
+        && _mapVideoLayout != null
+        && !_mapVideoLayout.Children.Contains(_fdMap)) {
+      _mapVideoLayout.Children.Insert(0, _fdMap);
+    }
+  }
+
+  private void DetachGimbalVideoPanel() {
+    Control? panel = _gimbalVideoPanel;
+    if (_gimbalVideoFullHost != null) {
+      if (ReferenceEquals(_gimbalVideoFullHost.Content, panel)) {
+        _gimbalVideoFullHost.Content = null;
+      }
+      _gimbalVideoFullHost.IsVisible = false;
+    }
+    if (_gimbalVideoMiniHost != null
+        && ReferenceEquals(_gimbalVideoMiniHost.Content, panel)) {
+      _gimbalVideoMiniHost.Content = null;
+    }
+    if (_gimbalVideoMiniLayout != null) {
+      _gimbalVideoMiniLayout.IsVisible = false;
+    }
+    if (_gimbalVideoWindow != null
+        && ReferenceEquals(_gimbalVideoWindow.Content, panel)) {
+      _gimbalVideoWindow.Content = null;
+    }
+  }
+
+  private void OnGimbalVideoWindowClosed(object? sender, EventArgs e) {
+    if (sender is not Window window || !ReferenceEquals(window, _gimbalVideoWindow)) {
+      return;
+    }
+    window.Closed -= OnGimbalVideoWindowClosed;
+    DetachGimbalVideoPanel();
+    RestoreGimbalMap();
+    _gimbalVideoWindow = null;
+    _gimbalVideoPanel = null;
+    _gimbalVideoPresentation = null;
+  }
+
+  internal void CloseGimbalVideo() {
+    Window? window = _gimbalVideoWindow;
+    Control? panel = _gimbalVideoPanel;
+    FlightDataViewModel? vm = _gimbalVideoVm;
+    if (window != null) {
+      window.Closed -= OnGimbalVideoWindowClosed;
+    }
+    DetachGimbalVideoPanel();
+    RestoreGimbalMap();
+    _gimbalVideoWindow = null;
+    _gimbalVideoPanel = null;
+    _gimbalVideoPresentation = null;
+    if (window != null && panel != null) {
+      window.Content = panel;
+    }
+    if (vm != null) {
+      vm.CloseVideoWindow();
+    } else if (window != null) {
+      window.Content = null;
+      window.Close();
     }
   }
 
@@ -768,6 +1054,20 @@ public partial class FlightDataView : UserControl {
     menu.Items.Add(Item("Set EKF Origin Here", vm => vm.SetEkfOriginHere(map.LastClickLatLng.Lat, map.LastClickLatLng.Lng)));
     menu.Items.Add(Item("TakeOff", vm => vm.TakeOffHere()));
     menu.Items.Add(Item("Jump To Tag", vm => vm.JumpToTag()));
+    var gimbalVideo = new MenuItem { Header = "Gimbal Video" };
+    gimbalVideo.Items.Add(Item("Full Sized", vm => {
+      vm.RequestVideoPresentation(GimbalVideoPresentation.FullSized);
+      return Task.CompletedTask;
+    }));
+    gimbalVideo.Items.Add(Item("Mini", vm => {
+      vm.RequestVideoPresentation(GimbalVideoPresentation.Mini);
+      return Task.CompletedTask;
+    }));
+    gimbalVideo.Items.Add(Item("Pop Out", vm => {
+      vm.RequestVideoPresentation(GimbalVideoPresentation.PopOut);
+      return Task.CompletedTask;
+    }));
+    menu.Items.Add(gimbalVideo);
     return menu;
   }
 
