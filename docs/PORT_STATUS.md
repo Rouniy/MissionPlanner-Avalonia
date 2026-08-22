@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 703 tests verified; the DroneCAN-session/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` passed lintian, checksum and Xvfb smoke checks; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 706 tests verified; the direct-SLCAN/DroneCAN-session/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -145,7 +145,16 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   vehicle or selected DroneCAN node cancels or invalidates outstanding work; node/parameter/log UI
   is cleared immediately and late callbacks cannot repopulate it, including switch-away-and-back
   races. SLCAN initialization runs off the UI thread, and Disconnect remains available while an
-  unresponsive operation is winding down.
+  unresponsive operation is winding down. The official direct SLCAN workflow is also ported: a
+  native serial-port/host-baud selector opens Lawicel-compatible adapters without a MAVLink link,
+  persists stable removable-device paths, performs the upstream C/S/N/V/O/F initialization and
+  exposes the same optional `C` command on exit. The host handle is always released even when the
+  adapter is deliberately left in SLCAN mode. A selected port cannot be opened while any primary or
+  Connection List MAVLink link still owns the same device, including Linux symlink aliases.
+  `Prepare autopilot SLCAN` reproduces the official CAN1 parameter sequence
+  (`CAN_SLCAN_CPORT`, `CAN_SLCAN_TIMOUT`, `CAN_P1_DRIVER`, optional `CAN_SLCAN_SERNUM=0`) with a
+  disarmed check, explicit warning and exact modem/system/component revision binding. Direct-adapter
+  node sessions remain independent when the operator switches an unrelated MAVLink modem.
 - Full Parameter List includes the upstream-compatible, explicitly confirmed reset-to-default and
   reboot flow. Setup now also exposes the official Mission Planner `DefaultSettings` workflow as a
   dedicated page: it recursively catalogs `.param` profiles below ArduPilot `Tools/Frame_params`,
@@ -359,7 +368,7 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 
 Existing port functionality includes serial/TCP/UDP/UDP-client/WebSocket connections, flight data,
 mission planning, parameter pages, firmware/log tools, simulation launcher, NMEA/mirroring tools,
-maps/KML, DroneCAN over MAVLink, joystick mapping where a backend exists, and libVLC video. These
+maps/KML, DroneCAN over MAVLink or direct SLCAN, joystick mapping where a backend exists, and libVLC video. These
 code paths compile; hardware-specific paths still need native-platform acceptance testing.
 
 ## Linux verification details
@@ -367,7 +376,7 @@ code paths compile; hardware-specific paths still need native-platform acceptanc
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 703 passed, 0 failed.
+- Automated tests: 706 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The `.deb` target was rebuilt from the current 703-test source on 2026-08-22. Package metadata,
@@ -445,7 +454,7 @@ not remove required Windows-native files from `win-x64` builds.
 | MAVLink Camera Protocol v2 remaining UI | All | Announced `VIDEO_STREAM_INFORMATION` streams can be selected and remembered, and photo, recording and zoom commands are wired to detected camera components. The legacy mount camera-target map overlay is ported; the upstream combined gimbal/video overlay recorder remains absent. |
 | Swarm / formation flight | All | The upstream swarm controllers and UI are absent. The control logic is portable, but needs a new multi-vehicle foundation and Avalonia safety UI. |
 | Grid v2 / SimpleGrid variants | All | The alternative upstream/plugin grid workflows remain absent. |
-| Direct DroneCAN SLCAN adapter mode | All, hardware-specific | UI reports unsupported; MAVLink-CAN1/CAN2 works. Direct serial lifecycle needs porting and native testing. |
+| DroneCAN multicast CAN1/CAN2 | All | The current official Mission Planner exposes pydronecan-compatible `239.65.82.0/1:57732` transports with network-interface selection. MAVLink-CAN1/CAN2 and direct serial SLCAN are ported; multicast remains to be translated and tested. |
 | Antenna tracker interfaces other than Maestro | All, hardware-specific | Configuration rejects other drivers; port/test each driver independently. |
 | Signed beta application updates | All | Stable signed updates work. The Beta Updates control is disabled until this project publishes and signs a separate beta manifest/channel. |
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
