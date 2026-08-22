@@ -18,7 +18,10 @@ public class FollowMeWindow : Window {
     Content = _view;
     DataContext = _vm;
 
-    Closed += (_, _) => _vm.Dispose();
+    Closed += async (_, _) => {
+      await _vm.StopAsync();
+      _vm.Dispose();
+    };
   }
 
   public static void OpenWindow() {
