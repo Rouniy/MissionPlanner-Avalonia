@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 891 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/multi-link/Formation/FollowPath/WaypointLeader/FollowLeader/Sequence/Translation-RESX `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 894 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/MicroDrone/device-operations/default-settings/camera-overlay/SHP/DXF/GeoPackage/KML-GroundOverlay/GeoTIFF/DTED/airport-alpha/Rally/docking/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Formation/FollowPath/WaypointLeader/FollowLeader/Sequence/Translation-RESX `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` (`spd-say`, with a Festival fallback).
@@ -274,6 +274,12 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   An armed radio link is kept open through a telemetry fade so it can recover, as in upstream. It also
   restores GCS sysid, serial reset/ESP settings, refreshes Home on an arm transition and closes
   telemetry logs on an unexpected link loss.
+- Physical USB/serial removal and a silent UDP modem can no longer trap the UI inside an upstream
+  driver `Close()`. The dead transport is atomically detached, its logical connection and parameter
+  state are cleared immediately, and OS cleanup continues against only the captured old stream in
+  the background. Port selection, explicit disconnect, multi-link fallback and a new connection all
+  remain available even when that old driver never returns; cancelling an open or foreground
+  parameter read also stops waiting for its synchronous upstream worker.
 - Vehicle terrain serving was re-audited against the pinned source: each opened `MAVLinkInterface`
   instantiates the official `TerrainFollow`, receives `TERRAIN_REQUEST` through the shared reader and
   sends 4×4 `TERRAIN_DATA` grids from the cross-platform SRTM cache. This inherited workflow was
@@ -487,12 +493,12 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 891 passed, 0 failed.
+- Automated tests: 894 passed, 0 failed.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 891-test source on 2026-08-22. Package metadata,
+- The `.deb` target is rebuilt from the current 894-test source on 2026-08-22. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 397 packaged-file checksums match after extraction, including the
   portable plugin API and byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -509,10 +515,10 @@ native-platform acceptance testing.
 - System runtime integrations installed: libVLC, speech-dispatcher and serial `dialout` membership.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260822.84cc50d_amd64.deb`
-(54,057,200 bytes; SHA-256
-`c43aa531c6ea41191b5d992fbfdcac9e1026115b7fb7041044a7ed6858863d81`), built from the current
-891-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, synchronized
+`out/packages/missionplanner-avalonia_1.3.83-20260822.6e6e775_amd64.deb`
+(54,057,362 bytes; SHA-256
+`20bcd64b9cde5806ee21b1306647b86ecd88c5886631eaa4cdcc8e38e296ce8b`), built from the current
+894-test source including the portable plugin host, HUD-to-MJPEG/AVI recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
 interactive MAVLink
@@ -529,15 +535,16 @@ SSH terminal, secure SFTP DataFlash download/delete workflow, the recursive flig
 map thumbnails, offline sphere/ellipsoid MagFit, live Traditional Heli visualization, the movable
 Flight Data splitter, session-only/latest-wins vehicle parameter loading, single-prompt network
 connections, independent multi-link Connection List support and composite upstream/date/commit
-versioning, the native official-compatible Translation / RESX Editor, plus the fail-closed official
+versioning, non-blocking physical-device loss/reconnect, the native official-compatible
+Translation / RESX Editor, plus the fail-closed official
 Copter/Rover leader/follower Formation and
 ArduPlane/Copter/Rover Follow Path workflows, the official Copter WaypointLeader state machine and
 the official FollowLeader and Sequence layout/step workflows, immediate complete-list parameter
 clearing across device switches, and reject-by-default privacy warnings on location/parameter log
 exports identified during the current CodeQL triage.
 Its APT version is
-`1:1.3.83+20260822.r201.84cc50d`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r201` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260822.r204.6e6e775`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r204` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
