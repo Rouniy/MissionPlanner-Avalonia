@@ -26,6 +26,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   private MAVLinkInterface _comPort => _primaryPort;
   private readonly CancellationTokenSource _lifetimeCts = new();
   private readonly Task _lifetimeTask;
+  private readonly Services.MavLinkTransportRelease _transportRelease = new();
 
   internal event Action? Connected;
 
@@ -247,13 +248,8 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   public void Shutdown() {
     StopReader();
     Services.Speech.Stop();
-    try {
-      if (_comPort.BaseStream?.IsOpen == true) {
-        _comPort.Close();
-      }
-    } catch {
-
-    }
+    _ = _transportRelease.Begin(_comPort);
+    AppState.Connections.Primary.MarkClosed();
     CloseLogs();
     AppState.Connections.Dispose();
   }
@@ -275,7 +271,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     int consecutiveErrors = 0;
     while (!ct.IsCancellationRequested) {
 
-      if (_comPort.BaseStream?.IsOpen != true) {
+      if (!AppState.Connections.Primary.IsOpen) {
         HandleLinkLost(self, generation);
         break;
       }
@@ -349,7 +345,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   private async Task HeartbeatLoop(CancellationToken ct) {
     while (!ct.IsCancellationRequested) {
       try {
-        if (_comPort.BaseStream?.IsOpen == true) {
+        if (AppState.Connections.Primary.IsOpen) {
           if (Settings.Instance.GetBoolean("CHK_GCSheartbeat", true)) {
             SendHeartbeat();
           }
@@ -573,6 +569,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     }
     OpenLogs();
     AppState.Connections.Primary.Endpoint = endpoint;
+    AppState.Connections.Primary.MarkOpened();
     AppState.Connections.SetActive(_comPort);
     IsConnected = true;
     ConnectText = "DISCONNECT";
@@ -725,14 +722,15 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
       _readerCts = null;
       _connectedAtUtc = DateTime.MinValue;
-      try {
-        _comPort.Close();
-      } catch {
-      }
-      ResetAllVehicleParameters(_comPort);
-      CloseLogs();
-      AppState.Connections.NotifyClosed(AppState.Connections.Primary);
     }
+
+    // Never hold the reader lock while a driver/socket is closing. Disconnect on the UI thread
+    // must be able to invalidate this generation even if an unplugged device never returns from
+    // Close. Logical state changes are published before the best-effort OS cleanup completes.
+    _ = _transportRelease.Begin(_comPort);
+    ResetAllVehicleParameters(_comPort);
+    CloseLogs();
+    AppState.Connections.NotifyClosed(AppState.Connections.Primary);
     Services.Speech.Stop();
     self.Dispose();
 
@@ -843,18 +841,18 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   [RelayCommand]
   private async Task ToggleConnect() {
     MAVLinkInterface activeLink = AppState.comPort;
-    if (activeLink.BaseStream?.IsOpen == true) {
+    Services.MavLinkConnection? activeConnection = AppState.Connections.Find(activeLink);
+    if (activeConnection?.IsOpen == true) {
       double displayedSpeed = activeLink.MAV.cs.groundspeed * CurrentState.multiplierspeed;
       if (activeLink.MAV.cs.groundspeed > 4 && !await Services.Dialogs.Confirm(
               "Disconnect",
               $"The vehicle is still moving at {displayedSpeed:0.0} {CurrentState.SpeedUnit}. Disconnect anyway?")) {
         return;
       }
-      Services.MavLinkConnection? connection = AppState.Connections.Find(activeLink);
-      if (connection is { IsPrimary: false }) {
+      if (activeConnection is { IsPrimary: false }) {
         AppState.ParameterLoads.CancelCurrent();
-        await AppState.Connections.RemoveAsync(connection);
-        Status = $"Disconnected {connection.Endpoint}.";
+        await AppState.Connections.RemoveAsync(activeConnection);
+        Status = $"Disconnected {activeConnection.Endpoint}.";
         RefreshVehicleChoices();
       } else {
         await DisconnectAsync("Disconnected.");
@@ -866,7 +864,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
   }
 
   internal async Task TryAutoConnectAsync() {
-    if (!AutoConnect || _comPort.BaseStream?.IsOpen == true ||
+    if (!AutoConnect || AppState.Connections.Primary.IsOpen ||
         string.IsNullOrWhiteSpace(SelectedPort)) {
       return;
     }
@@ -934,8 +932,15 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     }
 
     try {
-      if (_comPort.BaseStream?.IsOpen == true) {
+      if (AppState.Connections.Primary.IsOpen) {
         return (false, "Another vehicle connection is already active.");
+      }
+      if (!await WaitForPreviousTransportAsync()) {
+        try {
+          stream.Dispose();
+        } catch {
+        }
+        return (false, PreviousTransportBusyMessage);
       }
       _comPort.BaseStream = stream;
       PrepareForConnection();
@@ -947,10 +952,8 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       AdoptOpenConnection(endpoint);
       return (true, "");
     } catch (Exception ex) {
-      try {
-        _comPort.Close();
-      } catch {
-      }
+      _ = _transportRelease.Begin(_comPort);
+      AppState.Connections.Primary.MarkClosed();
       CloseLogs();
       return (false, ex.Message);
     } finally {
@@ -958,16 +961,11 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     }
   }
 
-  internal async Task DisconnectAsync(string status) {
+  internal Task DisconnectAsync(string status) {
     StopReader();
     Services.Speech.Stop();
     _connectedAtUtc = DateTime.MinValue;
-    await Task.Run(() => {
-      try {
-        _comPort.Close();
-      } catch {
-      }
-    });
+    _ = _transportRelease.Begin(_comPort);
     ResetAllVehicleParameters(_comPort);
     CloseLogs();
     AppState.Connections.NotifyClosed(AppState.Connections.Primary);
@@ -976,6 +974,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     Status = status;
     RefreshVehicleChoices();
     AppState.RaiseConnectionChanged();
+    return Task.CompletedTask;
   }
 
   private async Task ConnectAsync(bool interactive) {
@@ -996,6 +995,10 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     }
 
     try {
+      if (!await WaitForPreviousTransportAsync()) {
+        Status = PreviousTransportBusyMessage;
+        return;
+      }
       ICommsSerial? stream = await BuildStreamAsync(sel, interactive);
       if (stream == null) {
         if (sel != "AUTO" || interactive) {
@@ -1039,14 +1042,9 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       AppState.ActiveConnectReporter = dlg;
       dlg.Set(0, $"Connecting {endpoint}…");
 
-      dlg.Token.Register(() => {
-        _ = Task.Run(() => {
-          try {
-            _comPort.Close();
-          } catch {
-
-          }
-        });
+      using CancellationTokenRegistration cancelRegistration = dlg.Token.Register(() => {
+        _ = _transportRelease.Begin(_comPort);
+        AppState.Connections.Primary.MarkClosed();
         Avalonia.Threading.Dispatcher.UIThread.Post(() => {
           dlg.Close();
           CloseLogs();
@@ -1062,12 +1060,22 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       bool backgroundParamLoad = false;
       try {
 
-        await Task.Run(() => _comPort.Open(getparams: false, skipconnectedcheck: true, showui: true));
+        Task open = Task.Factory.StartNew(
+            () => _comPort.Open(getparams: false, skipconnectedcheck: true, showui: true),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        await open.WaitAsync(dlg.Token);
         if (_comPort.BaseStream.IsOpen && !dlg.CancelRequested &&
             _comPort.MAV.compid != (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_PERIPHERAL) {
           backgroundParamLoad = Settings.Instance.GetBoolean("Params_BG", false);
           if (!backgroundParamLoad) {
-            await Task.Run(() => _comPort.getParamList());
+            Task parameters = Task.Factory.StartNew(
+                () => _comPort.getParamList(),
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+            await parameters.WaitAsync(dlg.Token);
           }
         }
       } catch (Exception ex) {
@@ -1078,11 +1086,8 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
       if (dlg.CancelRequested) {
         dlg.Close();
-        try {
-          _comPort.Close();
-        } catch {
-
-        }
+        _ = _transportRelease.Begin(_comPort);
+        AppState.Connections.Primary.MarkClosed();
         CloseLogs();
         IsConnected = false;
         ConnectText = "CONNECT";
@@ -1093,10 +1098,8 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
       if (openError != null) {
         dlg.Close();
-        try {
-          _comPort.Close();
-        } catch {
-        }
+        _ = _transportRelease.Begin(_comPort);
+        AppState.Connections.Primary.MarkClosed();
         CloseLogs();
         IsConnected = false;
         Status = interactive ? "" : "Auto-connect failed: " + openError.Message;
@@ -1110,6 +1113,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       ConnectText = IsConnected ? "DISCONNECT" : "CONNECT";
       if (IsConnected) {
         AppState.Connections.Primary.Endpoint = endpoint;
+        AppState.Connections.Primary.MarkOpened();
         AppState.Connections.SetActive(_comPort);
         Settings.Instance.ComPort = endpoint;
         Settings.Instance.BaudRate = SelectedBaud.ToString();
@@ -1134,6 +1138,8 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
         dlg.Close();
       } else {
         dlg.Close();
+        _ = _transportRelease.Begin(_comPort);
+        AppState.Connections.Primary.MarkClosed();
         CloseLogs();
         Status = interactive ? "" : $"Auto-connect failed on {endpoint}.";
         if (interactive) {
@@ -1143,10 +1149,8 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       AppState.RaiseConnectionChanged();
     } catch (Exception ex) {
       AppState.ActiveConnectReporter = null;
-      try {
-        _comPort.Close();
-      } catch {
-      }
+      _ = _transportRelease.Begin(_comPort);
+      AppState.Connections.Primary.MarkClosed();
       CloseLogs();
       Status = interactive ? "" : "Auto-connect failed: " + ex.Message;
       IsConnected = false;
@@ -1158,6 +1162,12 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
       _connectGate.Release();
     }
   }
+
+  private const string PreviousTransportBusyMessage =
+      "The previous device is still releasing its OS transport. Port selection remains available; retry shortly.";
+
+  private Task<bool> WaitForPreviousTransportAsync() =>
+      _transportRelease.WaitForCurrentAsync(_comPort, TimeSpan.FromSeconds(1));
 
   private async Task<ICommsSerial?> BuildStreamAsync(string sel, bool interactive) {
     switch (sel) {

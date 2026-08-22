@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using MissionPlanner;
 using MissionPlanner.ArduPilot;
@@ -44,6 +45,84 @@ public class ConnectionHealthTests {
         now, now.AddHours(-1), now.AddSeconds(-5), TimeSpan.FromSeconds(10)));
     Assert.True(ConnectionHealth.IsSilent(
         now, DateTime.MinValue, now.AddSeconds(-11), TimeSpan.FromSeconds(10)));
+  }
+
+  [Fact]
+  public async Task Lost_transport_close_never_blocks_the_disconnect_caller() {
+    using var stream = new BlockingCloseTransport();
+    using var link = new MAVLinkInterface { BaseStream = stream };
+    var release = new MavLinkTransportRelease();
+    var stopwatch = Stopwatch.StartNew();
+    using var replacement = new CommsInjection();
+
+    Task<bool> completion = release.Begin(link);
+    try {
+      stopwatch.Stop();
+      Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(500));
+      await stream.CloseStarted.WaitAsync(TimeSpan.FromSeconds(1));
+      Assert.False(completion.IsCompleted);
+      Assert.False(link.BaseStream.IsOpen);
+      Assert.True(await release.WaitForCurrentAsync(link, TimeSpan.FromMilliseconds(50)));
+
+      stopwatch.Restart();
+      link.BaseStream = replacement;
+      stopwatch.Stop();
+      Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(500));
+      Assert.Same(replacement, link.BaseStream);
+      Assert.True(replacement.IsOpen);
+    } finally {
+      stream.AllowClose();
+    }
+    Assert.True(await completion.WaitAsync(TimeSpan.FromSeconds(1)));
+    Assert.Same(replacement, link.BaseStream);
+    Assert.True(replacement.IsOpen);
+  }
+
+  [Fact]
+  public void Logical_disconnect_is_visible_before_a_blocking_driver_close() {
+    using var stream = new BlockingCloseTransport();
+    using var link = new MAVLinkInterface { BaseStream = stream };
+    using var manager = new MavLinkConnectionManager(link);
+
+    try {
+      Assert.True(manager.Primary.IsOpen);
+
+      manager.NotifyClosed(manager.Primary);
+
+      Assert.False(manager.Primary.IsOpen);
+      Assert.True(stream.IsOpen);
+      Assert.False(stream.CloseStarted.IsCompleted);
+
+      manager.Primary.MarkOpened();
+      Assert.True(manager.Primary.IsOpen);
+    } finally {
+      stream.AllowClose();
+    }
+  }
+
+  [Fact]
+  public async Task Removing_active_modem_falls_back_before_its_driver_close_returns() {
+    using var primaryStream = new CommsInjection();
+    using var primary = new MAVLinkInterface { BaseStream = primaryStream };
+    using var blockedStream = new BlockingCloseTransport();
+    using var blocked = new MAVLinkInterface { BaseStream = blockedStream };
+    using var manager = new MavLinkConnectionManager(primary);
+    MavLinkConnection modem = manager.Add(blocked, new ConnectionListEndpoint(
+        ConnectionListTransport.UdpListener, "0.0.0.0", 14550, "", 0, 1));
+    Assert.True(manager.SetActive(modem));
+
+    try {
+      var stopwatch = Stopwatch.StartNew();
+      Assert.True(await manager.RemoveAsync(modem).WaitAsync(TimeSpan.FromSeconds(1)));
+      stopwatch.Stop();
+
+      Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(500));
+      Assert.Same(primary, manager.Active.Link);
+      Assert.False(modem.IsOpen);
+      await blockedStream.CloseStarted.WaitAsync(TimeSpan.FromSeconds(1));
+    } finally {
+      blockedStream.AllowClose();
+    }
   }
 
   [Fact]
@@ -275,6 +354,61 @@ public class ConnectionHealthTests {
     var releases = new[] { Release("Copter", new Version(major, minor, patch)) };
 
     Assert.Null(VehicleFirmwarePolicy.FindNewerOfficialRelease(current, releases));
+  }
+
+  private sealed class BlockingCloseTransport : ICommsSerial {
+    private readonly ManualResetEventSlim _allowClose = new(false);
+    private readonly TaskCompletionSource _closeStarted = new(
+        TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _open = 1;
+    private int _disposed;
+
+    internal Task CloseStarted => _closeStarted.Task;
+
+    internal void AllowClose() => _allowClose.Set();
+
+    public Stream BaseStream => Stream.Null;
+    public int BaudRate { get; set; } = 115200;
+    public int BytesToRead => 0;
+    public int BytesToWrite => 0;
+    public int DataBits { get; set; } = 8;
+    public bool DtrEnable { get; set; }
+    public bool IsOpen => Volatile.Read(ref _open) != 0;
+    public string PortName { get; set; } = "blocking-test";
+    public int ReadBufferSize { get; set; }
+    public int ReadTimeout { get; set; }
+    public bool RtsEnable { get; set; }
+    public int WriteBufferSize { get; set; }
+    public int WriteTimeout { get; set; }
+
+    public void Close() {
+      if (!IsOpen) {
+        return;
+      }
+      _closeStarted.TrySetResult();
+      _allowClose.Wait();
+      Volatile.Write(ref _open, 0);
+    }
+
+    public void Dispose() {
+      if (Interlocked.Exchange(ref _disposed, 1) != 0) {
+        return;
+      }
+      Close();
+      _allowClose.Dispose();
+    }
+
+    public void DiscardInBuffer() { }
+    public void Open() => Volatile.Write(ref _open, 1);
+    public int Read(byte[] buffer, int offset, int count) => 0;
+    public int ReadByte() => -1;
+    public int ReadChar() => -1;
+    public string ReadExisting() => "";
+    public string ReadLine() => "";
+    public void Write(string text) { }
+    public void Write(byte[] buffer, int offset, int count) { }
+    public void WriteLine(string text) { }
+    public void toggleDTR() { }
   }
 
   private static APFirmware.FirmwareInfo Release(string vehicleType, Version version) =>
