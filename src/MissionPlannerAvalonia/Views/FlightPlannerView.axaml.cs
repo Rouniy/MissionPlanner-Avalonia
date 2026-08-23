@@ -227,8 +227,11 @@ public partial class FlightPlannerView : UserControl {
     menu.Items.Add(terrainDat);
     menu.Items.Add(Item("Enter UTM Coordinate…",
         (vm, lat, lng) => _ = vm.AddWaypointFromUtmAsync(lat, lng)));
-    var trackerHome = Item("Set Tracker Home…",
-        (vm, lat, lng) => _ = vm.SetTrackerHomeAsync(lat, lng));
+    var trackerHome = new MenuItem { Header = "Tracker Home" };
+    trackerHome.Items.Add(Item("Obtain From Module…",
+        (vm, _, _) => _ = vm.SetTrackerHomeFromModuleAsync()));
+    trackerHome.Items.Add(Item("Set Here…",
+        (vm, lat, lng) => _ = vm.SetTrackerHomeAsync(lat, lng)));
     menu.Items.Add(trackerHome);
 
     var missionOnly = new List<Control>();
