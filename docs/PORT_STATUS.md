@@ -676,62 +676,13 @@ native-platform acceptance testing.
   completed three consecutive managed D-Bus LE scans; no Nordic UART modem was in range for a
   traffic test.
 
-The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260823.e68f68f_amd64.deb`
-(54,402,176 bytes; SHA-256
-`e493a51a76a7a9671820a69fe18a91d3f12c626462e4d4c772b5be2d8c5b842e`), built from commit
-`e68f68f` and the current 1044-test source including the cross-platform Nordic UART BLE transport,
-the native Apple-Silicon VLC video runtime and ARM64 release target,
-the macOS IOKit HID joystick backend,
-serialized firmware-archive progress, the signed beta update channel, portable plugin host, HUD-to-MJPEG/AVI
-recording, synchronized
-OSD-video rendering from tlog, the integrated
-Grid v2 boundary editor,
-interactive MAVLink camera/gimbal video control with the official Full Sized/Mini/Pop Out
-presentations and all official
-Maestro/ArduTracker/DegreeTracker serial antenna outputs,
-pydronecan multicast CAN1/CAN2, direct serial SLCAN, target-safe official DroneCAN
-parameter/firmware, MicroDrone, DEVICE_OP
-and ArduPilot Default Settings workflows,
-camera feedback/overlap/gimbal overlays, managed SHP/DXF/GeoPackage
-planner import, the official SHP-to-POLY developer conversion, local GeoTIFF/DTED elevation sources
-and the dynamically loaded native GDAL raster-map provider,
-target-safe official barometric-altitude pressure adjustment,
-the target-safe official MAVLink `SERIAL_CONTROL` TCP bridge,
-the cancellable atomic official firmware-archive workflow with HTTPS-first legacy handling and hashes,
-styled KML/KMZ vector/GroundOverlay layers, Flight Data overlay copying, corrected translucent-red
-airport disks, opt-in official Hong Kong CAD eSUA zones with bounded atomic caching on both maps,
-Rally Points actions, switchable Planner docking, the interactive verified-host-key
-SSH terminal, secure SFTP DataFlash download/delete workflow, the recursive flight Log Index with
-map thumbnails, offline sphere/ellipsoid MagFit, live Traditional Heli visualization, the movable
-Flight Data splitter and detachable live HUD/Quick windows, session-only/latest-wins vehicle
-parameter loading, single-prompt network
-connections, independent multi-link Connection List support and composite upstream/date/commit
-versioning, shared persisted WMS/WMTS maps, the official local map-tile cache import workflow and
-the optional native `GDAL Custom` raster overlay,
-non-blocking physical-device loss/reconnect, the native
-official-compatible
-Translation / RESX Editor, bounded Linux speech-dispatcher/espeak-ng playback with an audible
-operator test, the managed BlueZ/D-Bus and native SimpleBLE Nordic UART transports, the native live SRTM/imagery 3D
-Terrain View from official `OpenGLtest2`, plus the
-fail-closed official
-Plane/Copter/Rover leader/follower Formation, including the opt-in ArduPlane attitude/PID path, and
-ArduPlane/Copter/Rover Follow Path workflows, the official Copter WaypointLeader state machine and
-the official FollowLeader and Sequence layout/step workflows, target-bound and cancellable official
-Follow Me/Moving Base NMEA workflows, immediate complete-list parameter
-clearing across device switches, exact-target cancellable parameter recovery and the complete
-67-handler official developer-form audit, and reject-by-default privacy warnings on location/parameter log
-exports identified during the current CodeQL triage, plus concurrent global-settings storage and
-serialized settings-file writes, and a cancellable bounded WebSocket transport with explicit
-raw-WebSocket/Socket.IO protocol separation and reconnect lifecycle ownership.
-Its APT version is
-`1:1.3.83+20260823.r280.e68f68f`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r280` orders same-day builds before comparing hashes. The matching portable archive
-is `out/packages/MissionPlannerAvalonia-1.3.83-20260823.e68f68f-linux-x64.tar.gz`
-(68,357,775 bytes; SHA-256
-`9e3015f73ff39cd070ec2d6ed04a2d52dbb9210132362c0b550c2b9a497c3cfb`).
-The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
-managed assemblies.
+Release package names and application metadata embed the upstream Mission Planner version, UTC
+build date and short source commit. Debian versions additionally use epoch 1 and the repository
+revision count, preserving upgrade ordering from the earlier CalVer packages and between same-day
+builds. Exact artifact paths, sizes and SHA-256 values are reported with each build instead of being
+pinned here, because a documentation-only commit would immediately make such a record stale. The
+apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are managed
+assemblies.
 
 ## Runtime path behavior
 
