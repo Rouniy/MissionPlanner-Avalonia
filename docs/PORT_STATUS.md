@@ -14,7 +14,7 @@ their native runners.
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC and native SimpleBLE runtime | Cross-publish passed and PE32+ executable/native DLLs inspected; native Windows application and physical BLE-modem acceptance remain pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled official Intel VLC 3.0.23 and pinned x64 SimpleBLE runtime; CI signing/notarization when credentials are configured | Cross-publish passed; the apphost and every bundled native dependency were inspected as x86-64, and all 444 checksummed VLC runtime files, including 343 plugin dylibs, were verified. Full native Intel application and physical-device acceptance remain pending. Also runs on Apple Silicon through Rosetta 2. |
 | macOS ARM64 (`osx-arm64`) | Self-contained `.app`, native Apple-Silicon apphost/dylibs; bundled official ARM64 VLC 3.0.23 and pinned ARM64 SimpleBLE runtime; CI signing/notarization when credentials are configured | Cross-publish passed; the apphost and every bundled native dependency were inspected as ARM64, and all 438 checksummed VLC runtime files, including 337 plugin dylibs, were verified. Native ARM64 CI loads libVLC/SimpleBLE/IOKit, enumerates available hardware and decodes the real MJPEG callback/export pipeline. Full application and physical-device acceptance remain pending. |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 1076 tests verified; the portable-plugin-host/legacy-plugin-ABI/HUD-recording/OSD-tlog-video/Grid-v2-editor/Face-Map/Terrain-DAT-Maker/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/signed-beta-updates/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/Hong-Kong-NoFly/GeoTIFF/DTED/native-GDAL/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/cross-platform-BLE/macOS-ARM64-video `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 1083 tests verified; the portable-plugin-host/legacy-plugin-ABI/HUD-recording/OSD-tlog-video/Grid-v2-editor/Face-Map/Open-Drone-ID/Terrain-DAT-Maker/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/signed-beta-updates/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/Hong-Kong-NoFly/GeoTIFF/DTED/native-GDAL/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/cross-platform-BLE/macOS-ARM64-video `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
@@ -503,6 +503,19 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   and a live map marker. Both workflows bind to the exact modem, system ID and component ID captured
   at start and stop on a target switch; stale/no-fix positions and a busy MAVLink link cannot emit
   Follow Me commands. Valid coordinates on the equator and prime meridian are no longer discarded.
+- Open Drone ID ports the official testing plugin into a native Flight Data tab. Its external
+  operator GPS accepts serial, TCP client/host and UDP client/host NMEA GGA input, validates the
+  checksum/fix and derives the WGS84 altitude from MSL plus geoid separation. The complete Basic ID,
+  System, Self ID and Operator ID configuration is sent in the official 2.5-second rotation after an
+  `OPEN_DRONE_ID_ARM_STATUS` is detected from the autopilot or any of the three ODID transmitter
+  components; fresh operator-position updates use the official 1 Hz path. The tab includes bounded
+  raw/status viewers, five-second GPS and transmitter status handling and the same live `BASE` map
+  position, plus a visible OK/FAIL/EMERGENCY map control. Starting transmission and declaring an
+  emergency are reject-by-default confirmations, and emergency state is deliberately not restored
+  after process restart. Every subscription, NMEA transport and outgoing packet is bound to the
+  exact selected modem/system/component and stops on target loss or switch. A busy MAVLink owner
+  withholds rather than consumes a due message; stale position uses the protocol's zero lat/lon and
+  `-1000` unknown geodetic altitude instead of the old plugin's ambiguous zero altitude.
 - Developer Tools now ports the official `SerialOutputMD` workflow as MicroDrone Downlink. It emits
   the same `#1` and `#4`-`#9` record families at 10 Hz, with the official baud choices, decimal
   additive/XOR checksum and legacy ECEF conversion. Numeric formatting is culture-independent and
@@ -637,7 +650,7 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 1076 passed, 0 failed, including legacy Mission Planner plugin binary loading,
+- Automated tests: 1083 passed, 0 failed, including legacy Mission Planner plugin binary loading,
   lifecycle/host/mission-list ABI, BLE endpoint parsing, native ABI layout,
   platform-backend selection and HID descriptor decoding for signed and unsigned
   axes, Flight Simulation controls, dual sliders, buttons, hats and D-pads; signed beta manifest
@@ -646,7 +659,11 @@ native-platform acceptance testing.
   WMS/WMTS capabilities and tile addressing, raw/Socket.IO WebSocket protocol, fragmentation,
   reconnect and bounded-close integration, real
   loopback-UDP Moving Base input, blocking serial cancellation, exact multi-modem target isolation
-  and reject-by-default command/rally starts, plus live HUD/Quick undock and close-to-redock behavior.
+  and reject-by-default command/rally/Open-Drone-ID starts. Open Drone ID tests additionally cover
+  every wire payload, fixed ASCII fields, WGS84 conversion, protocol unknowns, official scheduling,
+  ARM-status gating, busy-link withholding, all four component subscriptions and target-switch
+  shutdown, plus the native tab/map integration. Live HUD/Quick undock and close-to-redock behavior
+  is also covered.
   Map-cache tests cover the official row/column order, path/range rejection, real JPEG/PNG decoding,
   duplicate handling, replacement in BruTile's persistent cache and the bound Avalonia controls.
   SHP-to-POLY tests cover official multi-feature naming/layout, closed rings, WGS84 reprojection,
@@ -678,7 +695,7 @@ native-platform acceptance testing.
   its safe defaults were visually verified.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 1076-test source on 2026-08-23. Package metadata,
+- The `.deb` target is rebuilt from the current 1083-test source on 2026-08-23. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; every packaged-file checksum matches after extraction, including the
   portable plugin API, HIDSharp/BLE dependency licenses, the SimpleBLE and VLC source/license
@@ -746,7 +763,7 @@ matched official dylibs instead.
 
 ## Remaining cross-platform parity and release work
 
-The current solution/project audit leaves three concrete upstream user workflows to adapt from
+The current solution/project audit leaves two concrete upstream user workflows to adapt from
 source, plus the permanent binary UI-compatibility boundary described below. The handler-level
 audit of the hidden developer form is complete and enforced against the pinned upstream source by
 a test. Sample/test plugins and workflows already ported natively are not counted as gaps. Historical
@@ -756,7 +773,6 @@ Mission Planner functional-parity gap.
 
 | Area | Affected targets | Current state and direction |
 | --- | --- | --- |
-| Open Drone ID plugin | All | The official testing-oriented Remote ID tab, external NMEA-GPS input, status/emergency controls and `OPEN_DRONE_ID_*` transmission backend have not yet been adapted to Avalonia. |
 | GPS Tracker Home module input | All | Setting Tracker Home at a planner coordinate is ported. The official plugin's `Obtain from module` path is tied to an old Windows Garmin USB/SetupAPI driver and an obsolete unsigned Google elevation request; a portable serial/NMEA or HID source with local DEM altitude is still required. |
 | Optional Mission Planner Shortcuts plugin | All | The plugin's Alt-key flight-mode/takeoff/land/RC shortcuts are not registered by the Avalonia host. Equivalent normal actions exist, but shortcut parity needs target/disarm validation and visible safety handling before it can be enabled. |
 | Legacy WinForms plugin UI compatibility | All | Portable DLL discovery, dependency loading, `Init`/`Loaded`/`Loop`/`Exit`, enable/disable UI, current/all-link MAVLink access, settings/device events, mission-list calls, Flight Data actions and HUD overlays are operational. A version-tolerant `MissionPlanner.dll` shim now runs old non-visual .NET Framework binaries without rebuilding. Direct binary compatibility for `System.Windows.Forms`, Windows GMap controls and the original visual `MainV2` surface is not possible in Avalonia; those UI calls must be adapted from source. Loose `.cs` runtime compilation is intentionally not treated as DLL compatibility. |

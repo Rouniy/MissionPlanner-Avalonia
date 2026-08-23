@@ -375,6 +375,10 @@
           </DockPanel>
         </TabItem>
 
+        <TabItem x:Name="tabDroneId" Header="Drone ID">
+          <views:OpenDroneIdView DataContext="{Binding OpenDroneId}" />
+        </TabItem>
+
         <TabItem Header="Gauges">
 
           <Grid Margin="6" RowDefinitions="*,*" ColumnDefinitions="*,*">
@@ -716,6 +720,24 @@
           <CheckBox Content="Tuning" IsChecked="{Binding Tuning}" Foreground="White" />
           <Button Content="Pick…" Click="OnTuningPickClick" Padding="6,2" />
         </StackPanel>
+
+        <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
+                IsVisible="{Binding OpenDroneId.MapStatusVisible}"
+                Background="{Binding OpenDroneId.MapStatusBrush}"
+                CornerRadius="4" Padding="8,5" MinWidth="185">
+          <StackPanel Spacing="4">
+            <TextBlock Text="{Binding OpenDroneId.MapStatusText}" Foreground="White"
+                       FontWeight="SemiBold" HorizontalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="5">
+              <Button Content="Emergency" Padding="6,2" FontSize="10"
+                      Background="#A52A2A" Foreground="White"
+                      Command="{Binding OpenDroneId.DeclareEmergencyCommand}" />
+              <Button Content="Clear" Padding="6,2" FontSize="10"
+                      IsVisible="{Binding OpenDroneId.EmergencyDeclared}"
+                      Command="{Binding OpenDroneId.ClearEmergencyCommand}" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
 
         <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8"
                 Background="#99000000" CornerRadius="4" Padding="6,3">

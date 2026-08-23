@@ -108,6 +108,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
 
   public LogBrowseViewModel TelemetryLogs { get; } = new();
   public LogBrowseViewModel DataFlashLogs { get; } = new();
+  public OpenDroneIdViewModel OpenDroneId { get; } = new();
 
   [ObservableProperty]
   private bool _prearmOk;
@@ -200,6 +201,7 @@ public partial class FlightDataViewModel : ViewModelBase, IDisposable {
     Services.DisplayViewService.Changed -= OnDisplayViewChanged;
     _timer.Stop();
     _tlog.Close();
+    OpenDroneId.Dispose();
     CloseVideoWindow();
   }
 

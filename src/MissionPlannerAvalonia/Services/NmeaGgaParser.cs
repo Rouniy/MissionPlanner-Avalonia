@@ -8,7 +8,17 @@ internal readonly record struct NmeaGgaFix(
     double Longitude,
     double AltitudeM,
     int Satellites,
-    double Hdop);
+    double Hdop,
+    int FixQuality,
+    double? GeoidSeparationM) {
+  /// <summary>
+  /// GGA altitude is mean sea level. Open Drone ID requires WGS84/geodetic altitude,
+  /// which is MSL plus the GGA geoid separation. -1000 is MAVLink's explicit unknown value.
+  /// </summary>
+  internal double GeodeticAltitudeM => GeoidSeparationM is { } separation
+      ? AltitudeM + separation
+      : -1000;
+}
 
 internal static class NmeaGgaParser {
   internal static bool TryParse(string? sentence, out NmeaGgaFix fix, out string error) {
@@ -67,7 +77,18 @@ internal static class NmeaGgaParser {
         out int satellites);
     _ = double.TryParse(fields[8], NumberStyles.Float, CultureInfo.InvariantCulture,
         out double hdop);
-    fix = new NmeaGgaFix(latitude, longitude, altitudeM, satellites, hdop);
+    double? geoidSeparationM = null;
+    if (fields.Length > 11 && !string.IsNullOrWhiteSpace(fields[11])) {
+      if (!double.TryParse(fields[11], NumberStyles.Float, CultureInfo.InvariantCulture,
+              out double separation)
+          || !double.IsFinite(separation)) {
+        error = "GGA geoid separation is invalid.";
+        return false;
+      }
+      geoidSeparationM = separation;
+    }
+    fix = new NmeaGgaFix(
+        latitude, longitude, altitudeM, satellites, hdop, quality, geoidSeparationM);
     error = "";
     return true;
   }
