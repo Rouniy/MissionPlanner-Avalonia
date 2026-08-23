@@ -24,9 +24,19 @@ public class LinuxBleSerialTests {
   }
 
   [Fact]
+  public void Endpoint_round_trips_a_corebluetooth_uuid() {
+    string endpoint = BleEndpoint.Create(
+        "mac radio", "a4dc7196-f8ea-4e0e-b766-6608aadb1fc4");
+
+    Assert.Equal("BLE_mac radio_A4DC7196F8EA4E0EB7666608AADB1FC4", endpoint);
+    Assert.True(BleEndpoint.TryAddress(endpoint, out string address));
+    Assert.Equal("A4DC7196-F8EA-4E0E-B766-6608AADB1FC4", address);
+  }
+
+  [Fact]
   public void Open_keeps_notification_delivered_before_backend_returns() {
     var backend = new FakeBackend { InitialNotification = [1, 2, 3] };
-    using var serial = new LinuxBleSerial(Endpoint, backend);
+    using var serial = new BleSerial(Endpoint, backend);
 
     serial.Open();
     var destination = Enumerable.Repeat((byte)0xee, 7).ToArray();
@@ -41,7 +51,7 @@ public class LinuxBleSerialTests {
   [Fact]
   public void Write_forwards_only_requested_buffer_slice() {
     var backend = new FakeBackend();
-    using var serial = new LinuxBleSerial(Endpoint, backend);
+    using var serial = new BleSerial(Endpoint, backend);
     serial.Open();
 
     serial.Write([10, 11, 12, 13, 14], 1, 3);
@@ -52,7 +62,7 @@ public class LinuxBleSerialTests {
   [Fact]
   public async Task Remote_disconnect_closes_stream_and_wakes_reader() {
     var backend = new FakeBackend();
-    using var serial = new LinuxBleSerial(Endpoint, backend) { ReadTimeout = 5000 };
+    using var serial = new BleSerial(Endpoint, backend) { ReadTimeout = 5000 };
     serial.Open();
     var destination = new byte[1];
     Task<int> pendingRead = Task.Run(() => serial.Read(destination, 0, 1));
@@ -68,7 +78,7 @@ public class LinuxBleSerialTests {
   [Fact]
   public async Task Close_cancels_an_open_that_never_answers() {
     var backend = new FakeBackend { BlockOpen = true };
-    using var serial = new LinuxBleSerial(Endpoint, backend);
+    using var serial = new BleSerial(Endpoint, backend);
     Task open = Task.Run(serial.Open);
     await backend.OpenStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
 

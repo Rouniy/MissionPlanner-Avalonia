@@ -50,6 +50,12 @@ Linux and a native IOKit HID backend on macOS. All three feed the same mapping U
 RC/manual-control sender; physical controller acceptance is tracked separately in the port-status
 document.
 
+Nordic-UART Bluetooth LE connections use managed BlueZ/D-Bus on Linux and the pinned SimpleBLE
+0.7.3 native ABI on Windows and macOS. Windows keeps its upstream SimpleBLE DLLs; checksummed x64
+and arm64 macOS dylibs are fetched from the official SimpleBLE release during publish and bundled
+with the corresponding artifact. Discovery, connection and I/O are cancellable and bounded;
+end-to-end traffic with representative BLE modems remains a native-platform acceptance item.
+
 ## Linux prerequisites
 
 Ubuntu 24.04 / Linux Mint 22 can use the distribution SDK. `global.json` accepts the 10.0.100
@@ -103,7 +109,7 @@ dotnet publish src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj \
 The launcher and native libraries are ELF files. The `.dll` files beside them are normal managed
 .NET assemblies (portable ECMA-335 bytecode), not Windows native libraries. Windows-only native
 `simpleble*.dll` and `libusb-1.0.dll` files inherited from upstream are explicitly removed from
-Linux publish output.
+Linux and macOS publish output, while `win-x64` retains the SimpleBLE runtime it needs.
 
 NativeAOT can be produced experimentally with `-p:EnableNativeAot=true`, but it is not a supported
 release mode on any target: upstream log4net and several reflection/serialization paths are not

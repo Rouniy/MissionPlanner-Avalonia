@@ -785,7 +785,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
     SelectedPort = Ports.Contains(cur ?? "") ? cur : Ports.FirstOrDefault(p => p != "AUTO");
 
-    if (OperatingSystem.IsLinux()) {
+    if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS() || OperatingSystem.IsWindows()) {
       const string scanning = "Scanning Bluetooth LE devices…";
       Status = scanning;
       CancellationTokenSource scanCancellation =
@@ -812,7 +812,7 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
     CancellationToken cancellationToken = cancellation.Token;
     try {
       IReadOnlyList<Services.BleDeviceInfo> devices =
-          await Services.LinuxBleSerial.DiscoverAsync(
+          await Services.BleSerial.DiscoverAsync(
               TimeSpan.FromSeconds(4), cancellationToken).ConfigureAwait(false);
       await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => {
         if (generation != Volatile.Read(ref _bleRefreshGeneration) ||
@@ -1316,11 +1316,12 @@ public partial class ConnectionViewModel : ViewModelBase, IDisposable {
 
       default:
         if (IsBleEndpoint(sel)) {
-          if (!OperatingSystem.IsLinux()) {
+          if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS() &&
+              !OperatingSystem.IsWindows()) {
             throw new PlatformNotSupportedException(
-                "This saved BLE endpoint uses the Linux BlueZ transport. Refresh the port list on this platform.");
+                "Bluetooth LE serial is not supported on this platform.");
           }
-          return new Services.LinuxBleSerial(sel) { BaudRate = SelectedBaud };
+          return new Services.BleSerial(sel) { BaudRate = SelectedBaud };
         }
         return new SerialPort {
           PortName = sel,

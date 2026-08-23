@@ -60,3 +60,9 @@ jobs:
         run: >-
           dotnet test tests/MissionPlannerAvalonia.Tests/MissionPlannerAvalonia.Tests.csproj
           -c Release -m:1 --filter FullyQualifiedName~Mac_backend_loads_iokit
+
+      - name: macOS SimpleBLE load and adapter smoke test
+        if: matrix.os == 'macos-14'
+        run: >-
+          dotnet test tests/MissionPlannerAvalonia.Tests/MissionPlannerAvalonia.Tests.csproj
+          -c Release -m:1 --filter FullyQualifiedName~Mac_native_backend_loads
