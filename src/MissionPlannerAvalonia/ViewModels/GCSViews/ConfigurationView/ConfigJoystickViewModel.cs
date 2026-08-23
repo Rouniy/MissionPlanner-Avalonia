@@ -147,6 +147,9 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
     if (OperatingSystem.IsWindows()) {
       return "Select a joystick and map each RC channel to an axis. This system uses DirectInput.";
     }
+    if (OperatingSystem.IsMacOS()) {
+      return "Select a joystick and map each RC channel to an axis. This system uses the native IOKit HID interface.";
+    }
     return "Select a joystick and map each RC channel to an axis. A native joystick backend is not yet available on this platform.";
   }
 
@@ -156,6 +159,9 @@ public partial class ConfigJoystickViewModel : ViewModelBase, IDisposable {
     }
     if (OperatingSystem.IsWindows()) {
       return "No DirectInput joysticks detected.";
+    }
+    if (OperatingSystem.IsMacOS()) {
+      return "No IOKit HID joysticks or game controllers detected.";
     }
     return "Joystick input is not yet supported on this platform.";
   }

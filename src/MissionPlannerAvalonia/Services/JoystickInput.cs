@@ -16,12 +16,15 @@ using MissionPlanner.Utilities;
 namespace MissionPlannerAvalonia.Services;
 
 internal static class JoystickProvider {
-  public static bool IsSupported => OperatingSystem.IsLinux() || OperatingSystem.IsWindows();
+  public static bool IsSupported =>
+      OperatingSystem.IsLinux() || OperatingSystem.IsMacOS() || OperatingSystem.IsWindows();
 
   public static JoystickBase Create(Func<MAVLinkInterface> currentInterface) {
     JoystickBase joystick = OperatingSystem.IsLinux()
         ? new LinuxJoydevJoystick(currentInterface)
-        : JoystickBase.Create(currentInterface);
+        : OperatingSystem.IsMacOS()
+            ? new MacHidJoystick(currentInterface)
+            : JoystickBase.Create(currentInterface);
 
     // The upstream default opens a synchronous WinForms CustomMessageBox. The Avalonia layer
     // installs its own non-blocking lost-device callback for an active joystick.
@@ -32,6 +35,9 @@ internal static class JoystickProvider {
   public static IReadOnlyList<string> GetDevices() {
     if (OperatingSystem.IsLinux()) {
       return LinuxJoydevJoystick.GetDevices();
+    }
+    if (OperatingSystem.IsMacOS()) {
+      return MacHidJoystick.GetDevices();
     }
     if (OperatingSystem.IsWindows()) {
       return JoystickBase.getDevices().ToList();

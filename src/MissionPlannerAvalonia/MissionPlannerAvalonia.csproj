@@ -64,6 +64,7 @@
     <PackageReference Include="Projektanker.Icons.Avalonia" />
     <PackageReference Include="Projektanker.Icons.Avalonia.FontAwesome" />
     <PackageReference Include="System.IO.Ports" />
+    <PackageReference Include="HidSharp" />
     <PackageReference Include="Linux.Bluetooth" />
     <!-- Linux.Bluetooth declares 0.20.0; pin the compatible reflection API to the first
          CVE-2026-39959-fixed release instead of accepting the vulnerable transitive version. -->
