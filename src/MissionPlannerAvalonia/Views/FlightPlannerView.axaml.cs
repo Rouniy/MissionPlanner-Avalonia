@@ -287,6 +287,7 @@ public partial class FlightPlannerView : UserControl {
     AddMissionOnly(Item("Jump to Start", (vm, _, _) => _ = vm.AddJumpStart()));
     var autowp = new MenuItem { Header = "Auto WP" };
     autowp.Items.Add(Item("Survey (Grid)", (vm, _, _) => OpenSurveyGrid(vm)));
+    autowp.Items.Add(Item("Face Map", (vm, _, _) => OpenFaceMap(vm)));
     autowp.Items.Add(Item("Area", (vm, _, _) => vm.PolygonArea()));
     autowp.Items.Add(Item("Circle", (vm, lat, lng) => _ = vm.CreateWpCircle(lat, lng)));
     var splineCircle = Item("Spline Circle", (vm, lat, lng) => _ = vm.CreateSplineCircle(lat, lng));
@@ -1050,6 +1051,24 @@ public partial class FlightPlannerView : UserControl {
     GridUIWindow.OpenForPolygon(area.polygon, area.home,
         plan => vm.Status = vm.AppendSurveyPlan(plan),
         vm.ReplaceDrawnPolygon);
+  }
+
+  private static void OpenFaceMap(FlightPlannerViewModel vm) {
+    if (string.Equals(vm.DefaultFrame, "Terrain", StringComparison.Ordinal)) {
+      vm.Status = "Face Map does not support Terrain altitude mode. Select Relative or Absolute.";
+      return;
+    }
+
+    List<MissionPlanner.Utilities.PointLatLngAlt> path = vm.DrawnPolygon
+        .Select(point => new MissionPlanner.Utilities.PointLatLngAlt(point)).ToList();
+    var home = vm.HomeLat == 0 && vm.HomeLng == 0
+        ? path.FirstOrDefault() ?? MissionPlanner.Utilities.PointLatLngAlt.Zero
+        : new MissionPlanner.Utilities.PointLatLngAlt(vm.HomeLat, vm.HomeLng, vm.HomeAlt);
+    FaceMapViewModel faceMap = FaceMapWindow.OpenForPath(path, home, vm.DefaultFrameId,
+        plan => vm.Status = vm.AppendSurveyPlan(plan), vm.ReplaceDrawnPolygon);
+    if (path.Count < 3) {
+      faceMap.Status = "Draw at least three face-path points, or load a .facemap file.";
+    }
   }
 
   private Window? OwnerWindow => TopLevel.GetTopLevel(this) as Window;
