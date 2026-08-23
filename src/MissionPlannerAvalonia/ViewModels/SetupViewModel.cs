@@ -78,6 +78,8 @@ public class SetupViewModel : BackstageViewModel {
     Add("CubeID Update", () => new ConfigCubeIDViewModel(), sub: true);
     Add("Sik Radio", () => new SikRadioViewModel(), sub: true,
         visibleWhen: When(profile => profile.displaySikRadio));
+    Add("NV Modem", () => new NvModemViewModel(), sub: true,
+        visibleWhen: When(profile => profile.displaySikRadio));
     Add("CAN GPS Order", () => new ConfigGPSOrderViewModel(), sub: true, requiresConnection: true,
         visibleWhen: When(profile => profile.displayGPSOrder));
     Add("Battery Monitor", () => new ConfigBatteryMonitoringViewModel(), sub: true, requiresConnection: true,

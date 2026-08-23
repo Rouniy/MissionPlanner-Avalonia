@@ -140,13 +140,13 @@ public partial class ConfigRadioInputViewModel : ViewModelBase, IDisposable {
     WriteParam($"RC{ch}_REVERSED", reversed ? 1 : 0);
   }
 
-  [Obsolete]
   private async void WriteParam(string name, double value) {
     if (_startup || !IsConnected || !Has(name)) {
       return;
     }
     try {
-      bool ok = await Task.Run(() => _comPort.setParam(name, value));
+      bool ok = await _comPort.setParamAsync(
+          _comPort.MAV.sysid, _comPort.MAV.compid, name, value);
       if (!ok) {
         Status = $"Failed to write {name}.";
       }

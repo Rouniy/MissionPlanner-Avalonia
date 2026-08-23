@@ -162,7 +162,7 @@ public partial class MAVLinkInspectorViewModel : ViewModelBase, IDisposable {
               "cam_definition_uri") {
             value = Encoding.ASCII.GetString((byte[])arr);
           } else {
-            value = arr.Cast<object>().Aggregate("", (a, b) => a.Length == 0 ? b.ToString() : a + "," + b);
+            value = string.Join(",", arr.Cast<object?>().Select(item => item?.ToString() ?? ""));
           }
         }
 

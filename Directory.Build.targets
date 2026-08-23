@@ -7,7 +7,62 @@
     <PackageReference Update="SkiaSharp" Version="2.88.6"
                       Condition="'$(MSBuildProjectName)' != 'MissionPlannerAvalonia'" />
     <PackageReference Update="SkiaSharp.NativeAssets.Linux" Version="2.88.6" />
+    <!-- The .NET 10 SDK already supplies newer analyzers than this upstream 6.0 package. -->
+    <PackageReference Remove="Microsoft.CodeAnalysis.NetAnalyzers"
+                      Condition="'$(MSBuildProjectName)' == 'MissionPlanner.Comms'" />
   </ItemGroup>
+
+  <!-- A few radio/grid sources are linked directly into the Avalonia projects because the
+       original assemblies are Windows-only. Compile generated copies under the upstream
+       nullable/style rules so diagnostics for those files do not require modifying the pinned
+       submodule or disabling diagnostics for any MissionPlannerAvalonia source file. -->
+  <UsingTask TaskName="PrepareLinkedMissionPlannerSource"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <SourceFile ParameterType="System.String" Required="true" />
+      <DestinationFile ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.IO" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        string source = File.ReadAllText(SourceFile);
+        const string compatibilityHeader =
+            "#nullable disable\n#pragma warning disable IDE0011, IDE0161\n";
+        Directory.CreateDirectory(Path.GetDirectoryName(DestinationFile));
+        File.WriteAllText(DestinationFile, compatibilityHeader + source);
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="GenerateLinkedMissionPlannerCompatibilitySources"
+          BeforeTargets="CoreCompile"
+          Condition="'$(MSBuildProjectName)' == 'MissionPlannerAvalonia'">
+    <PropertyGroup>
+      <_LinkedMissionPlannerSourceRoot>$(MSBuildThisFileDirectory)external/MissionPlanner</_LinkedMissionPlannerSourceRoot>
+      <_LinkedMissionPlannerOutputRoot>$(IntermediateOutputPath)UpstreamCompatibility</_LinkedMissionPlannerOutputRoot>
+    </PropertyGroup>
+    <PrepareLinkedMissionPlannerSource
+        SourceFile="$(_LinkedMissionPlannerSourceRoot)/Radio/Uploader.cs"
+        DestinationFile="$(_LinkedMissionPlannerOutputRoot)/Radio/Uploader.g.cs" />
+    <PrepareLinkedMissionPlannerSource
+        SourceFile="$(_LinkedMissionPlannerSourceRoot)/Radio/IHex.cs"
+        DestinationFile="$(_LinkedMissionPlannerOutputRoot)/Radio/IHex.g.cs" />
+    <PrepareLinkedMissionPlannerSource
+        SourceFile="$(_LinkedMissionPlannerSourceRoot)/Grid/GridData.cs"
+        DestinationFile="$(_LinkedMissionPlannerOutputRoot)/Grid/GridData.g.cs" />
+    <ItemGroup>
+      <Compile Remove="../../external/MissionPlanner/Radio/Uploader.cs" />
+      <Compile Remove="../../external/MissionPlanner/Radio/IHex.cs" />
+      <Compile Remove="../../external/MissionPlanner/Grid/GridData.cs" />
+      <Compile Remove="$(_LinkedMissionPlannerSourceRoot)/Radio/Uploader.cs" />
+      <Compile Remove="$(_LinkedMissionPlannerSourceRoot)/Radio/IHex.cs" />
+      <Compile Remove="$(_LinkedMissionPlannerSourceRoot)/Grid/GridData.cs" />
+      <Compile Include="$(_LinkedMissionPlannerOutputRoot)/Radio/Uploader.g.cs" />
+      <Compile Include="$(_LinkedMissionPlannerOutputRoot)/Radio/IHex.g.cs" />
+      <Compile Include="$(_LinkedMissionPlannerOutputRoot)/Grid/GridData.g.cs" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup Condition="'$(MSBuildProjectName)' == 'MissionPlanner.Utilities'">
     <Compile Include="$(MSBuildThisFileDirectory)src/UpstreamCompat/MonoRuntimeSettingsCompatibility.cs"

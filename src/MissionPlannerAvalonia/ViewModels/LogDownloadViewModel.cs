@@ -147,7 +147,17 @@ public partial class LogDownloadViewModel : ViewModelBase {
     IsBusy = true;
     Status = "Erasing onboard logs…";
     try {
-      await Task.Run(() => _comPort.EraseLog());
+      byte sysid = _comPort.MAV.sysid;
+      byte compid = _comPort.MAV.compid;
+      var request = new MAVLink.mavlink_log_erase_t {
+        target_system = sysid,
+        target_component = compid,
+      };
+      await Task.Run(() => {
+        // Match the upstream compatibility behavior: LOG_ERASE has no acknowledgement.
+        _comPort.sendPacket(request, sysid, compid);
+        _comPort.sendPacket(request, sysid, compid);
+      });
       Logs.Clear();
       SelectedLog = null;
       Progress = 0;
@@ -215,9 +225,9 @@ public partial class LogDownloadViewModel : ViewModelBase {
   private async Task DownloadOne(ushort id, string destination) {
     string? tempPath = null;
     try {
-      using var temp = await _comPort.GetLog(id);
-      tempPath = temp.Name;
-      temp.Position = 0;
+      tempPath = await _comPort.GetLog(_comPort.MAV.sysid, _comPort.MAV.compid, id);
+      await using var temp = new FileStream(
+          tempPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
       await using var output = new FileStream(
           destination, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
       await temp.CopyToAsync(output);

@@ -661,13 +661,11 @@ public class MapView : MapControl {
 
   internal static bool TryGlobalPosition(
       MAVLink.mavlink_mission_item_int_t item, out double lat, out double lng) {
-    var frame = (MAVLink.MAV_FRAME)item.frame;
-    bool global = frame is MAVLink.MAV_FRAME.GLOBAL
-        or MAVLink.MAV_FRAME.GLOBAL_INT
-        or MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT
-        or MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT_INT
-        or MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT
-        or MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT_INT;
+    // MAVLink keeps 5/6/11 as deprecated wire aliases for the three current global frames.
+    bool global = item.frame is (byte)MAVLink.MAV_FRAME.GLOBAL
+        or (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT
+        or (byte)MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT
+        or 5 or 6 or 11;
     lat = item.x / 1e7;
     lng = item.y / 1e7;
     return global && ValidLatLng(lat, lng);

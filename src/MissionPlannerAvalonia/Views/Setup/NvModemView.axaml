@@ -1,0 +1,196 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels.Setup"
+  mc:Ignorable="d"
+  d:DesignWidth="980"
+  d:DesignHeight="760"
+  x:Class="MissionPlannerAvalonia.Views.Setup.NvModemView"
+  x:DataType="vm:NvModemViewModel"
+  Background="{DynamicResource MpControlBg}"
+>
+  <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" Margin="16">
+    <TextBlock Grid.Row="0" Classes="pagetitle" Text="{Binding Title}" />
+    <TextBlock Grid.Row="1" Classes="fieldlbl" Text="{Binding Instructions}"
+               TextWrapping="Wrap" Margin="0,0,0,10" />
+
+    <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="8"
+          Margin="0,0,0,10">
+      <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Modem" VerticalAlignment="Center" />
+      <ComboBox Grid.Column="1" ItemsSource="{Binding Devices}"
+                SelectedItem="{Binding SelectedDevice, Mode=TwoWay}"
+                IsEnabled="{Binding !IsBusy}" MinWidth="320" />
+      <Button Grid.Column="2" Content="Discover" Command="{Binding DiscoverCommand}"
+              IsEnabled="{Binding !IsBusy}" />
+      <Button Grid.Column="3" Content="Refresh selected"
+              Command="{Binding RefreshSelectedCommand}"
+              IsEnabled="{Binding HasSelectedDevice}" />
+      <TextBlock Grid.Column="4" Classes="fieldlbl" Text="{Binding ConnectionText}"
+                 VerticalAlignment="Center" FontWeight="SemiBold" />
+    </Grid>
+
+    <ScrollViewer Grid.Row="3" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Spacing="10">
+        <Expander Header="Selected modem" IsExpanded="True">
+          <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" Margin="8">
+            <TextBlock Grid.Row="0" Grid.Column="0" Classes="fieldlbl"
+                       Text="{Binding IdentityText}" TextWrapping="Wrap" />
+            <TextBlock Grid.Row="0" Grid.Column="1" Classes="fieldlbl"
+                       Text="{Binding ParameterProgress}" Margin="12,0,0,0" />
+            <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Status}"
+                       TextWrapping="Wrap" Margin="0,6,0,0" />
+          </Grid>
+        </Expander>
+
+        <Expander Header="Live radio status" IsExpanded="True">
+          <DataGrid ItemsSource="{Binding RadioStatuses}" AutoGenerateColumns="False"
+                    IsReadOnly="True" GridLinesVisibility="All" MinHeight="100"
+                    CanUserResizeColumns="True">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Radio" Binding="{Binding Radio}" Width="75" />
+              <DataGridTextColumn Header="Chip / role / TX" Binding="{Binding Identity}" Width="180" />
+              <DataGridTextColumn Header="Mode / frequency" Binding="{Binding Mode}" Width="170" />
+              <DataGridTextColumn Header="Lock / RSSI / SNR / quality" Binding="{Binding Link}" Width="260" />
+              <DataGridTextColumn Header="Traffic / errors" Binding="{Binding Traffic}" Width="*" />
+            </DataGrid.Columns>
+          </DataGrid>
+        </Expander>
+
+        <Expander Header="Mission Planner compatible parameters" IsExpanded="True">
+          <Grid RowDefinitions="Auto,310,Auto" Margin="8">
+            <WrapPanel Grid.Row="0" Margin="0,0,0,8">
+              <Button x:Name="LoadParametersButton" Content="Load .param…"
+                      IsEnabled="{Binding CanEdit}" Margin="0,0,8,4" />
+              <Button x:Name="SaveParametersButton" Content="Save .param…"
+                      IsEnabled="{Binding HasParameters}" Margin="0,0,12,4" />
+              <TextBlock Classes="fieldlbl" VerticalAlignment="Center" TextWrapping="Wrap"
+                         Text="Edits and presets are staged locally. Changed values are written only by Save to selected modem." />
+            </WrapPanel>
+
+            <DataGrid Grid.Row="1" x:Name="ParametersGrid" ItemsSource="{Binding Parameters}"
+                      AutoGenerateColumns="False" GridLinesVisibility="All"
+                      CanUserResizeColumns="True" CanUserSortColumns="True">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="Group" Binding="{Binding Group}" IsReadOnly="True" Width="145" />
+                <DataGridTextColumn Header="Parameter" Binding="{Binding Name}" IsReadOnly="True" Width="175" />
+                <DataGridTextColumn Header="Value" Binding="{Binding ValueText, Mode=TwoWay}" Width="130" />
+                <DataGridTextColumn Header="State" Binding="{Binding EditState}" IsReadOnly="True" Width="80" />
+                <DataGridTextColumn Header="Description / values" Binding="{Binding Description}"
+                                    IsReadOnly="True" Width="*" />
+              </DataGrid.Columns>
+            </DataGrid>
+
+            <Grid Grid.Row="2" RowDefinitions="Auto,Auto" Margin="0,8,0,0">
+              <WrapPanel Grid.Row="0">
+                <TextBlock Classes="fieldlbl" Text="Target radio" VerticalAlignment="Center" Margin="0,0,6,4" />
+                <ComboBox ItemsSource="{Binding PresetRadios}"
+                          SelectedItem="{Binding SelectedPresetRadio, Mode=TwoWay}"
+                          IsEnabled="{Binding CanUseNv5Controls}"
+                          MinWidth="110" Margin="0,0,8,4" />
+                <Button Content="Factory" Command="{Binding StageRadioPresetCommand}"
+                        CommandParameter="factory" IsEnabled="{Binding CanUseNv5Controls}" Margin="0,0,5,4" />
+                <Button Content="LoRa" Command="{Binding StageRadioPresetCommand}"
+                        CommandParameter="lora" IsEnabled="{Binding CanUseNv5Controls}" Margin="0,0,5,4" />
+                <Button Content="FLRC" Command="{Binding StageRadioPresetCommand}"
+                        CommandParameter="flrc" IsEnabled="{Binding CanUseNv5Controls}" Margin="0,0,5,4" />
+                <Button Content="1.3 Mbit/s" Command="{Binding StageRadioPresetCommand}"
+                        CommandParameter="flrc13" IsEnabled="{Binding CanUseNv5Controls}" Margin="0,0,5,4" />
+                <Button Content="2.6 Mbit/s" Command="{Binding StageRadioPresetCommand}"
+                        CommandParameter="flrc26" IsEnabled="{Binding CanUseNv5Controls}" Margin="0,0,5,4" />
+                <Button Content="FHSS ON" Command="{Binding StageRadioPresetCommand}"
+                        CommandParameter="fhss_on" IsEnabled="{Binding CanUseNv5Controls}" Margin="0,0,5,4" />
+                <Button Content="FHSS OFF" Command="{Binding StageRadioPresetCommand}"
+                        CommandParameter="fhss_off" IsEnabled="{Binding CanUseNv5Controls}" Margin="0,0,5,4" />
+                <Button Content="FEC ON" Command="{Binding StageRadioPresetCommand}"
+                        CommandParameter="fec_on" IsEnabled="{Binding CanUseNv5Controls}" Margin="0,0,5,4" />
+                <Button Content="FEC OFF" Command="{Binding StageRadioPresetCommand}"
+                        CommandParameter="fec_off" IsEnabled="{Binding CanUseNv5Controls}" Margin="0,0,5,4" />
+                <Button Content="RX ON" Command="{Binding StageRadioPresetCommand}"
+                        CommandParameter="rx" IsEnabled="{Binding CanUseNv5Controls}" Margin="0,0,5,4" />
+                <Button Content="TX ON" Command="{Binding StageRadioPresetCommand}"
+                        CommandParameter="tx" IsEnabled="{Binding CanUseNv5Controls}" Margin="0,0,5,4" />
+              </WrapPanel>
+              <WrapPanel Grid.Row="1">
+                <TextBlock Classes="fieldlbl" Text="Copy from" VerticalAlignment="Center" Margin="0,0,6,0" />
+                <ComboBox ItemsSource="{Binding CopySources}"
+                          SelectedItem="{Binding SelectedCopySource, Mode=TwoWay}"
+                          MinWidth="360" Margin="0,0,8,0" />
+                <Button Content="Copy to target" Command="{Binding CopyRadioSettingsCommand}"
+                        IsEnabled="{Binding CanCopyRadio}" />
+                <TextBlock Classes="fieldlbl" TextWrapping="Wrap" VerticalAlignment="Center"
+                           Margin="12,0,0,0"
+                           Text="Only channel-local RF, role and key settings are copied; network and system identity stay unchanged." />
+              </WrapPanel>
+            </Grid>
+          </Grid>
+        </Expander>
+
+        <Expander Header="Radio encryption key" IsExpanded="True">
+          <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" RowDefinitions="Auto,Auto" Margin="8">
+            <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Radio" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <ComboBox Grid.Column="1" ItemsSource="{Binding KeyRadios}"
+                      SelectedItem="{Binding SelectedKeyRadio, Mode=TwoWay}"
+                      IsEnabled="{Binding CanEdit}" MinWidth="110" Margin="0,0,8,0" />
+            <TextBox Grid.Column="2" Text="{Binding KeyText, Mode=TwoWay}"
+                     Watermark="printable ASCII key" IsEnabled="{Binding CanEdit}" MinWidth="280" />
+            <Button Grid.Column="3" Content="Generate random" Command="{Binding GenerateKeyCommand}"
+                    IsEnabled="{Binding CanGenerateKey}" Margin="8,0,5,0" />
+            <Button Grid.Column="4" Content="SET KEY" Command="{Binding SetKeyCommand}"
+                    IsEnabled="{Binding CanSetKey}" />
+            <TextBlock Grid.Row="1" Grid.ColumnSpan="3" Classes="fieldlbl"
+                       Text="{Binding KeyHint}" TextWrapping="Wrap" Margin="0,6,0,0" />
+            <TextBlock Grid.Row="1" Grid.Column="3" Grid.ColumnSpan="2" Classes="fieldlbl"
+                       Text="{Binding KeyFingerprint}" Margin="8,6,0,0" />
+          </Grid>
+        </Expander>
+
+        <Expander Header="RTSP stream client" IsExpanded="True">
+          <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" Margin="8">
+            <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Media path" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <TextBox Grid.Column="1" Text="{Binding RtspPath, Mode=TwoWay}"
+                     Watermark="/Streaming/Channels/101" IsEnabled="{Binding CanUseRtsp}" />
+            <Button Grid.Column="2" Content="Read path" Command="{Binding ReadRtspCommand}"
+                    IsEnabled="{Binding CanUseRtsp}" Margin="8,0,0,0" />
+            <WrapPanel Grid.Row="1" Grid.ColumnSpan="3" Margin="0,8,0,0">
+              <TextBlock Classes="fieldlbl" Text="Quick settings" VerticalAlignment="Center" Margin="0,0,6,0" />
+              <Button Content="RTSP ON" Command="{Binding StageRtspPresetCommand}"
+                      CommandParameter="on" IsEnabled="{Binding CanUseRtsp}" Margin="0,0,5,0" />
+              <Button Content="RTSP OFF" Command="{Binding StageRtspPresetCommand}"
+                      CommandParameter="off" IsEnabled="{Binding CanUseRtsp}" Margin="0,0,5,0" />
+              <Button Content="RTP packets" Command="{Binding StageRtspPresetCommand}"
+                      CommandParameter="rtp" IsEnabled="{Binding CanUseRtsp}" Margin="0,0,5,0" />
+              <Button Content="Raw H264/H265" Command="{Binding StageRtspPresetCommand}"
+                      CommandParameter="annexb" IsEnabled="{Binding CanUseRtsp}" />
+            </WrapPanel>
+          </Grid>
+        </Expander>
+
+        <Expander Header="Maintenance controls" IsExpanded="True">
+          <WrapPanel Margin="8">
+            <TextBlock Classes="fieldlbl" Text="Command radio" VerticalAlignment="Center" Margin="0,0,6,0" />
+            <ComboBox ItemsSource="{Binding DebugRadios}"
+                      SelectedItem="{Binding SelectedDebugRadio, Mode=TwoWay}"
+                      IsEnabled="{Binding CanUseNv5Controls}" MinWidth="110" Margin="0,0,8,0" />
+            <Button Content="ENABLE TX" Command="{Binding SetTransmitterEnabledCommand}"
+                    CommandParameter="true" IsEnabled="{Binding CanControlTransmitter}" Margin="0,0,5,0" />
+            <Button Content="SUPPRESS TX" Command="{Binding SetTransmitterEnabledCommand}"
+                    CommandParameter="false" IsEnabled="{Binding CanControlTransmitter}" />
+          </WrapPanel>
+        </Expander>
+      </StackPanel>
+    </ScrollViewer>
+
+    <Grid Grid.Row="4" ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,10,0,0">
+      <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Values are kept only for this live tab session and are cleared before every device refresh."
+                 TextWrapping="Wrap" VerticalAlignment="Center" />
+      <Button Grid.Column="1" Content="Discard staged" Command="{Binding CancelChangesCommand}"
+              IsEnabled="{Binding HasPendingChanges}" Margin="8,0,5,0" />
+      <Button Grid.Column="2" Content="Reboot selected" Command="{Binding RebootCommand}"
+              IsEnabled="{Binding CanReboot}" Margin="0,0,5,0" />
+      <Button Grid.Column="3" Content="Save to selected modem" Command="{Binding SaveCommand}"
+              IsEnabled="{Binding CanSave}" />
+    </Grid>
+  </Grid>
+</UserControl>

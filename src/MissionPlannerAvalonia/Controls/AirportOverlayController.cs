@@ -71,7 +71,7 @@ internal sealed class AirportOverlayController : IDisposable {
       QueueUpdateAfterLoad(load);
       return;
     }
-    if (!load.IsCompletedSuccessfully || !load.Result.Available) {
+    if (!AirportService.TryGetLoadedResult(out AirportLoadResult result) || !result.Available) {
       ClearLayer();
       return;
     }

@@ -522,7 +522,7 @@ public sealed class SwarmWaypointLeaderTests {
     return new MAVLink.mavlink_mission_item_int_t {
       seq = (ushort)sequence,
       command = (ushort)command,
-      frame = (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT_INT,
+      frame = 6, // MAV_FRAME_GLOBAL_RELATIVE_ALT_INT
       x = (int)Math.Round(point.Latitude * 1e7),
       y = (int)Math.Round(point.Longitude * 1e7),
       z = (float)altitudeM,

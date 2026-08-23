@@ -30,9 +30,18 @@ internal static class AirportService {
 
   internal static Task<AirportLoadResult> EnsureLoadedAsync() => _loadTask.Value;
 
-  internal static IReadOnlyList<AirportMapItem> GetNearby(double lat, double lng) {
+  internal static bool TryGetLoadedResult(out AirportLoadResult result) {
     Task<AirportLoadResult> load = EnsureLoadedAsync();
-    if (!load.IsCompletedSuccessfully || !load.Result.Available) {
+    if (!load.IsCompletedSuccessfully) {
+      result = default;
+      return false;
+    }
+    result = load.GetAwaiter().GetResult();
+    return true;
+  }
+
+  internal static IReadOnlyList<AirportMapItem> GetNearby(double lat, double lng) {
+    if (!TryGetLoadedResult(out AirportLoadResult load) || !load.Available) {
       return Array.Empty<AirportMapItem>();
     }
 

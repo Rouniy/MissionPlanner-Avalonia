@@ -1,2 +1,10 @@
 <Project>
+  <!-- MissionPlanner is a pinned official dependency. Its legacy and generated sources
+       predate this port's nullable/latest-analyzer policy, and editing the submodule would
+       make upstream updates non-reproducible. Suppression here cannot hide diagnostics in
+       our src/tests projects. Directly linked files are handled by build-only compatibility
+       copies in the repository-level Directory.Build.targets. -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);AsyncFixer01;AsyncifyInvocation;AsyncifyVariable;CS0067;CS0078;CS0108;CS0109;CS0114;CS0168;CS0169;CS0219;CS0414;CS0649;CS0660;CS0661;CS1573;CS1591;CS3002;CS3006;CS3008;CS3027;CS4014;IDE0011;IDE0161</NoWarn>
+  </PropertyGroup>
 </Project>

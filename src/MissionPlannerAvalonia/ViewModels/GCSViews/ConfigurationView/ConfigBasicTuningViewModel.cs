@@ -64,7 +64,6 @@ public partial class ConfigBasicTuningViewModel : ViewModelBase {
 
   private bool Connected => _comPort.BaseStream?.IsOpen == true;
 
-  [Obsolete]
   public ConfigBasicTuningViewModel() {
     Load();
   }
@@ -103,7 +102,6 @@ public partial class ConfigBasicTuningViewModel : ViewModelBase {
      new[] { new SimpleRelation("ACCEL_Z_I", 2) }),
   };
 
-  [Obsolete]
   private void Load() {
     Items.Clear();
     var fw = _comPort.MAV.cs.firmware.ToString();
@@ -138,7 +136,6 @@ public partial class ConfigBasicTuningViewModel : ViewModelBase {
     }
   }
 
-  [Obsolete]
   private async void OnItemChanged(SimplePidItem item) {
     Info = "";
     await WriteOne(item.Name, item.Value);
@@ -147,7 +144,6 @@ public partial class ConfigBasicTuningViewModel : ViewModelBase {
     }
   }
 
-  [Obsolete]
   private async Task WriteOne(string name, double value) {
     if (!Connected) {
       if (_comPort.MAV.param.ContainsKey(name)) {
@@ -160,7 +156,8 @@ public partial class ConfigBasicTuningViewModel : ViewModelBase {
     }
 
     try {
-      bool ok = await Task.Run(() => _comPort.setParam(name, value, true));
+      bool ok = await _comPort.setParamAsync(
+          _comPort.MAV.sysid, _comPort.MAV.compid, name, value, force: true);
       Append((ok ? "set " : "failed ") + name + " "
              + value.ToString("0.######", CultureInfo.InvariantCulture));
     } catch (Exception ex) {
@@ -171,7 +168,6 @@ public partial class ConfigBasicTuningViewModel : ViewModelBase {
   private void Append(string line) => Info += line + "\r\n";
 
   [RelayCommand]
-  [Obsolete]
   private async Task Refresh() {
     if (Connected) {
       await AppState.ParameterLoads.LoadLatestAsync(_comPort.MAV.sysid, _comPort.MAV.compid);

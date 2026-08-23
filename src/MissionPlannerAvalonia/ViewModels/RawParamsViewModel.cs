@@ -282,7 +282,11 @@ public partial class RawParamsViewModel : ViewModelBase, IDisposable {
       await Task.Run(() => {
         // ArduPilot generations use one of these format-version parameters. The upstream
         // Mission Planner intentionally attempts both names for compatibility.
-        _comPort.setParam(new[] { "FORMAT_VERSION", "SYSID_SW_MREV" }, 0);
+        byte sysid = _comPort.MAV.sysid;
+        byte compid = _comPort.MAV.compid;
+        if (!_comPort.setParam(sysid, compid, "FORMAT_VERSION", 0)) {
+          _comPort.setParam(sysid, compid, "SYSID_SW_MREV", 0);
+        }
         System.Threading.Thread.Sleep(1000);
         _comPort.doReboot(false, true);
         _comPort.BaseStream.Close();

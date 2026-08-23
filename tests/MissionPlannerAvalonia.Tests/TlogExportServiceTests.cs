@@ -61,7 +61,7 @@ public class TlogExportServiceTests {
   private static MAVLink.mavlink_mission_item_int_t MissionItem(
       ushort sequence, int x, int y, MAVLink.MAV_CMD command) => new(
       0, 0, 0, 0, x, y, 50, sequence, (ushort)command,
-      1, 1, (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT_INT,
+      1, 1, 6, // MAV_FRAME_GLOBAL_RELATIVE_ALT_INT
       sequence == 0 ? (byte)1 : (byte)0, 1, (byte)MAVLink.MAV_MISSION_TYPE.MISSION);
 
   private static byte[] ParamId(string name) {

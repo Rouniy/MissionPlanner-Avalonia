@@ -241,14 +241,14 @@ public partial class SerialPassThroughViewModel : ViewModelBase, IDisposable {
     }
 
     public string ReadExisting() {
-      var s = _inner.ReadExisting();
-      RxCount += s?.Length ?? 0;
+      string s = _inner.ReadExisting() ?? string.Empty;
+      RxCount += s.Length;
       return s;
     }
 
     public string ReadLine() {
-      var s = _inner.ReadLine();
-      RxCount += s?.Length ?? 0;
+      string s = _inner.ReadLine() ?? string.Empty;
+      RxCount += s.Length;
       return s;
     }
 

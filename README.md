@@ -1,11 +1,28 @@
 # MissionPlanner Avalonia
 
+[![CI](https://github.com/Rouniy/MissionPlanner-Avalonia/actions/workflows/ci.yml/badge.svg)](https://github.com/Rouniy/MissionPlanner-Avalonia/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Rouniy/MissionPlanner-Avalonia/actions/workflows/codeql.yml/badge.svg)](https://github.com/Rouniy/MissionPlanner-Avalonia/actions/workflows/codeql.yml)
+
 A native, cross-platform (macOS / Linux / Windows) port of the **ArduPilot Mission Planner** UI,
 built with **Avalonia (.NET 10)**. The original is Windows-only WinForms; this rebuilds the interface
 while **reusing Mission Planner's flight / protocol / log / param / mission logic unchanged**.
 
 > Independent community port — **not** affiliated with or endorsed by ArduPilot. Based on
 > [Mission Planner](https://github.com/ArduPilot/MissionPlanner) (© Michael Oborne), GPLv3. See `NOTICE.md`.
+
+## Project and upstream links
+
+- Avalonia port: [releases](https://github.com/Rouniy/MissionPlanner-Avalonia/releases) and
+  [issue tracker](https://github.com/Rouniy/MissionPlanner-Avalonia/issues).
+- Official Mission Planner: [website and documentation](https://ardupilot.org/planner/),
+  [support forum](https://discuss.ardupilot.org/c/ground-control-software/mission-planner),
+  [source](https://github.com/ArduPilot/MissionPlanner) and
+  [changelog](https://github.com/ArduPilot/MissionPlanner/blob/master/ChangeLog.txt).
+- The official [Windows MSI](https://firmware.ardupilot.org/Tools/MissionPlanner/MissionPlanner-latest.msi)
+  belongs to upstream Mission Planner; it is not an installer for this Avalonia port.
+
+Please report Avalonia/Linux/macOS/Windows port problems in this repository. General ArduPilot or
+official Mission Planner usage questions belong in the ArduPilot documentation and forum above.
 
 The upstream source is pinned as the `external/MissionPlanner` submodule. The current integration
 baseline is Mission Planner commit `67a3c4f22bd1b38ac499f9756902e04fa4ed8444`.
@@ -60,6 +77,12 @@ and arm64 macOS dylibs are fetched from the official SimpleBLE release during pu
 with the corresponding artifact. Discovery, connection and I/O are cancellable and bounded;
 end-to-end traffic with representative BLE modems remains a native-platform acceptance item.
 
+Setup > NV Modem is a native port of AgroSky GTU's `NV5Settings` for NV4/NV5 radio modems. It
+discovers modems and performs parameter, key, RTSP and maintenance operations through the UDP/TCP/
+UART MAVLink connections already open in Mission Planner; it never opens a second port. Parameter
+values are session-only and cleared on refresh or device change, while the copied parameter
+descriptions remain available in the tab. See [NV Modem](docs/NV_MODEM.md).
+
 ## Linux prerequisites
 
 Ubuntu 24.04 / Linux Mint 22 can use the distribution SDK. `global.json` accepts the 10.0.100
@@ -101,14 +124,9 @@ dotnet run --project src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj -m
 
 `-m:1` avoids an intermittent MSBuild task-host failure seen in the large upstream project graph.
 
-## Linux self-contained artifact
+## Self-contained artifact details
 
-```bash
-dotnet publish src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj \
-  -c Release -r linux-x64 --self-contained true -m:1 \
-  -p:DebugType=none -o out/linux-x64
-./out/linux-x64/MissionPlannerAvalonia
-```
+For the `linux-x64` publish example above, launch `./out/linux-x64/MissionPlannerAvalonia`.
 
 The launcher and native libraries are ELF files. The `.dll` files beside them are normal managed
 .NET assemblies (portable ECMA-335 bytecode), not Windows native libraries. Windows-only native
@@ -175,13 +193,57 @@ ArduPilot whole-degree DAT tiles from the visible map area using the configured 
 sources, reports the exact estimated output size, supports cancellation and atomically replaces only
 complete tiles.
 
+## Network services and privacy
+
+The port keeps the useful network integrations described by official Mission Planner, but only for
+features that are present here. Analytics and the upstream Cloudflare geolocation request are not
+implemented. The main runtime network destinations are:
+
+| Service | Purpose | When it is contacted |
+| --- | --- | --- |
+| GitHub and the port's GitHub Pages feed | Signed stable/beta application updates | Portable builds check at startup; manual checks are in Help. Package-managed installs do not self-update. |
+| `firmware.ardupilot.org`, ArduPilot GitHub/raw content | Vehicle firmware manifests and files, parameter/frame defaults and SITL assets | When a connected firmware version is checked or the operator starts the corresponding download/tool. |
+| Google, Bing, OpenStreetMap, Esri or an operator-supplied WMS/WMTS server | Map imagery | Only for the selected online map provider; cached/local maps remain available offline. |
+| Hong Kong CAD eSUA | Official Hong Kong no-fly polygons | Only when **Show NoFly** and the separate Hong Kong option are enabled; results use a 12-hour disk cache. |
+| NOAA SWPC | K-index space-weather value | A bounded background refresh at application startup. |
+| `adsb.lol` | Optional external ADS-B traffic | Only while the external ADS-B receiver is enabled. |
+| ArduPilot documentation, forum, RFDesign or CubePilot | Help pages and optional vendor firmware | Only after an explicit user action, except the connected-firmware availability check noted above. |
+
+Telemetry links configured by the operator (UDP, TCP, serial, Bluetooth, NTRIP, video and similar)
+necessarily contact their configured device or server. Portable plugins are trusted in-process code
+and may add their own network behavior.
+
+## Offline use
+
+Vehicle connections, cached maps, mission editing, parameter work against a connected vehicle, log
+review and local terrain sources do not require Internet access. Data that can be prepared on one
+machine and copied to the matching runtime directory includes:
+
+| Data | Offline support |
+| --- | --- |
+| Map tiles | Use the map cache manager or copy the cache directory. WMS/WMTS and online basemaps need prior cached tiles. |
+| Elevation | Cached SRTM, local WGS84/EGM96 GeoTIFF and DTED are supported; local sources take priority. |
+| Parameter and log metadata | Bundled fallbacks are included; newer downloaded definitions remain in the cache. Parameter *values* are deliberately never restored from a previous device/session. |
+| No-fly zones | Local KML/KMZ files under the user-data `NoFly` directory work offline; the last Hong Kong eSUA response can be used from cache. |
+| Firmware and SITL | Previously downloaded cache content can be reused; discovering or downloading new versions requires a network connection. |
+
+Unlike the official Windows MSI, this port does not install a serial-driver CA certificate. Linux
+serial access uses the operating system's device permissions; Windows drivers remain an operating-
+system/vendor responsibility.
+
 ## Development
 
 ```bash
 dotnet format whitespace src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj --verify-no-changes --exclude external/
 dotnet format style src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj --verify-no-changes --exclude external/
+dotnet build tests/MissionPlannerAvalonia.Tests/MissionPlannerAvalonia.Tests.csproj \
+  -t:Rebuild -c Release -m:1 --no-restore
 dotnet test tests/MissionPlannerAvalonia.Tests/MissionPlannerAvalonia.Tests.csproj -c Release -m:1
 ```
+
+The rebuild is expected to report zero warnings. The official MissionPlanner submodule remains
+unmodified; its known legacy/generated-source diagnostics are isolated in `external/Directory.Build.props`,
+while warnings in this repository's `src` and `tests` projects remain enabled.
 
 ## License
 

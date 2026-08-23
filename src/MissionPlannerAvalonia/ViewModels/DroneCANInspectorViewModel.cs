@@ -151,7 +151,7 @@ public partial class DroneCANInspectorViewModel : ViewModelBase, IDisposable {
             continue;
           }
 
-          value = arr.Cast<object>().Aggregate("", (a, b) => a.Length == 0 ? b.ToString() : a + "," + b);
+          value = string.Join(",", arr.Cast<object?>().Select(item => item?.ToString() ?? ""));
         } else {
           value = null;
         }

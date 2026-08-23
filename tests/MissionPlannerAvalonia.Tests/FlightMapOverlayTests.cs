@@ -7,11 +7,11 @@ namespace MissionPlannerAvalonia.Tests;
 public class FlightMapOverlayTests {
   [Theory]
   [InlineData(MAVLink.MAV_FRAME.GLOBAL)]
-  [InlineData(MAVLink.MAV_FRAME.GLOBAL_INT)]
+  [InlineData((MAVLink.MAV_FRAME)5)] // MAV_FRAME_GLOBAL_INT
   [InlineData(MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT)]
-  [InlineData(MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT_INT)]
+  [InlineData((MAVLink.MAV_FRAME)6)] // MAV_FRAME_GLOBAL_RELATIVE_ALT_INT
   [InlineData(MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT)]
-  [InlineData(MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT_INT)]
+  [InlineData((MAVLink.MAV_FRAME)11)] // MAV_FRAME_GLOBAL_TERRAIN_ALT_INT
   public void Global_mission_frames_are_renderable(MAVLink.MAV_FRAME frame) {
     var item = Item(frame, 34.1234567, 33.7654321);
 
