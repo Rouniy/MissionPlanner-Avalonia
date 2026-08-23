@@ -13,6 +13,8 @@ internal static class LibVlcBootstrap {
   private static readonly object _initializeSync = new();
   private static int _configured;
   private static int _initialized;
+  private static IntPtr _macVlcCoreHandle;
+  private static IntPtr _macVlcHandle;
 
   public static void Initialize() {
     if (Volatile.Read(ref _initialized) != 0) {
@@ -34,6 +36,7 @@ internal static class LibVlcBootstrap {
         // so retain the exact bundled path for the lifetime of the process.
         Environment.SetEnvironmentVariable("VLC_PLUGIN_PATH", runtime.PluginDirectory);
         Environment.SetEnvironmentVariable("VLC_DATA_PATH", runtime.DataDirectory);
+        PromoteMacLibrariesToGlobalScope(runtime.LibraryDirectory);
         LibVLCSharp.Shared.Core.Initialize(runtime.LibraryDirectory);
       } else {
         LibVLCSharp.Shared.Core.Initialize();
@@ -78,6 +81,36 @@ internal static class LibVlcBootstrap {
         ? new MacVlcRuntimePaths(libraryDirectory, pluginDirectory, dataDirectory)
         : null;
   }
+
+  private static void PromoteMacLibrariesToGlobalScope(string libraryDirectory) {
+    // LibVLCSharp 3.x opens custom macOS libraries with RTLD_LOCAL. The official VLC app's
+    // modules link back to @rpath/libvlccore.dylib, so dyld must be able to reuse the already
+    // loaded core image when libvlccore later opens a codec/access/output plugin. Loading both
+    // images globally first retains the upstream signed binaries and establishes that scope.
+    _macVlcCoreHandle = OpenMacLibrary(
+        Path.Combine(libraryDirectory, "libvlccore.dylib"));
+    _macVlcHandle = OpenMacLibrary(Path.Combine(libraryDirectory, "libvlc.dylib"));
+  }
+
+  private static IntPtr OpenMacLibrary(string path) {
+    const int rtldNow = 0x2;
+    const int rtldGlobal = 0x8;
+    _ = MacDlError();
+    IntPtr handle = MacDlopen(path, rtldNow | rtldGlobal);
+    if (handle != IntPtr.Zero) {
+      return handle;
+    }
+
+    string detail = Marshal.PtrToStringUTF8(MacDlError()) ?? "unknown dyld error";
+    throw new DllNotFoundException($"Unable to load bundled macOS library '{path}': {detail}");
+  }
+
+  [DllImport("/usr/lib/libSystem.B.dylib", EntryPoint = "dlopen")]
+  private static extern IntPtr MacDlopen(
+      [MarshalAs(UnmanagedType.LPUTF8Str)] string path, int mode);
+
+  [DllImport("/usr/lib/libSystem.B.dylib", EntryPoint = "dlerror")]
+  private static extern IntPtr MacDlError();
 
   private static void ConfigureLinuxResolver() {
     if (!OperatingSystem.IsLinux() || Interlocked.Exchange(ref _configured, 1) != 0) {
