@@ -628,6 +628,8 @@ native-platform acceptance testing.
   Parameter-recovery tests cover exact link/system/component/MAVState identity, the official
   ENABLE-first and `_ID` reset order, explicit cancellation, target loss and rejected values. The
   `temp.cs` registry test proves that all 67 pinned click handlers have exactly one closed status.
+  Native-GDAL tests cover platform library discovery, raster intersection and alpha compositing;
+  the installed GDAL 3.8.4 runtime also opens, warps and renders a generated EPSG:3857 GeoTIFF.
 - Clean self-contained `linux-x64` publish: 173 MB including the pinned airport database.
 - Headless Xvfb startup: reaches the normal application event loop; the packaged Ctrl+X action opens
   the bound Map Tile Cache import UI and Ctrl+F shows the native SHP-to-POLY, Adjust Barometer
@@ -651,14 +653,15 @@ native-platform acceptance testing.
   and its private managed dependency were loaded from the isolated user directory and completed
   `Init`, `Loaded` and `Loop`; repeated failures in a second plugin disabled only that loop.
 - System runtime integrations installed: libVLC, speech-dispatcher-espeak-ng, BlueZ and serial
-  `dialout` membership. The real Bluetooth adapter completed three consecutive managed D-Bus LE
-  scans; no Nordic UART modem was in range for a traffic test.
+  `dialout` membership, plus GDAL 3.8.4 for optional local raster maps. The real Bluetooth adapter
+  completed three consecutive managed D-Bus LE scans; no Nordic UART modem was in range for a
+  traffic test.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260823.31ced4b_amd64.deb`
-(54,253,938 bytes; SHA-256
-`3b09d76e098f99e33c922502c25d671bcd71e7ec9617383bcf69086444db04ce`), built from commit
-`31ced4b` and the current 1020-test source including the portable plugin host, HUD-to-MJPEG/AVI
+`out/packages/missionplanner-avalonia_1.3.83-20260823.0b4dabc_amd64.deb`
+(54,283,070 bytes; SHA-256
+`3c25fe205e6d8ea3f9b2713425d39a530e78ea051cd3d0b1f56d643ea21b9c20`), built from commit
+`0b4dabc` and the current 1020-test source including the portable plugin host, HUD-to-MJPEG/AVI
 recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
@@ -669,7 +672,8 @@ pydronecan multicast CAN1/CAN2, direct serial SLCAN, target-safe official DroneC
 parameter/firmware, MicroDrone, DEVICE_OP
 and ArduPilot Default Settings workflows,
 camera feedback/overlap/gimbal overlays, managed SHP/DXF/GeoPackage
-planner import, the official SHP-to-POLY developer conversion, local GeoTIFF/DTED elevation sources,
+planner import, the official SHP-to-POLY developer conversion, local GeoTIFF/DTED elevation sources
+and the dynamically loaded native GDAL raster-map provider,
 target-safe official barometric-altitude pressure adjustment,
 the target-safe official MAVLink `SERIAL_CONTROL` TCP bridge,
 the cancellable atomic official firmware-archive workflow with HTTPS-first legacy handling and hashes,
@@ -681,7 +685,8 @@ map thumbnails, offline sphere/ellipsoid MagFit, live Traditional Heli visualiza
 Flight Data splitter and detachable live HUD/Quick windows, session-only/latest-wins vehicle
 parameter loading, single-prompt network
 connections, independent multi-link Connection List support and composite upstream/date/commit
-versioning, shared persisted WMS/WMTS maps, the official local map-tile cache import workflow,
+versioning, shared persisted WMS/WMTS maps, the official local map-tile cache import workflow and
+the optional native `GDAL Custom` raster overlay,
 non-blocking physical-device loss/reconnect, the native
 official-compatible
 Translation / RESX Editor, bounded Linux speech-dispatcher/espeak-ng playback with an audible
@@ -698,8 +703,8 @@ exports identified during the current CodeQL triage, plus concurrent global-sett
 serialized settings-file writes, and a cancellable bounded WebSocket transport with explicit
 raw-WebSocket/Socket.IO protocol separation and reconnect lifecycle ownership.
 Its APT version is
-`1:1.3.83+20260823.r261.31ced4b`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r261` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260823.r264.0b4dabc`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r264` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
