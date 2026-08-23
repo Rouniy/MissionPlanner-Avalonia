@@ -110,7 +110,9 @@ public class VideoSourceResolverTests {
 
     MacVlcRuntimePaths runtime = Assert.IsType<MacVlcRuntimePaths>(
         LibVlcBootstrap.LocateMacRuntime(AppContext.BaseDirectory));
-    using var libVlc = LibVlcBootstrap.CreateInstance("--no-video", "--no-audio", "--quiet");
+    // Keep verbose native output in this acceptance test so a bootstrap regression reports the
+    // exact plugin/configuration failure instead of LibVLCSharp's generic instantiation error.
+    using var libVlc = LibVlcBootstrap.CreateInstance(true, "--no-video", "--no-audio");
 
     Assert.StartsWith("3.0.23", libVlc.Version);
     Assert.Equal(runtime.PluginDirectory,

@@ -43,10 +43,15 @@ internal static class LibVlcBootstrap {
   }
 
   public static LibVLCSharp.Shared.LibVLC CreateInstance(params string[] options) {
+    return CreateInstance(enableDebugLogs: false, options);
+  }
+
+  internal static LibVLCSharp.Shared.LibVLC CreateInstance(
+      bool enableDebugLogs, params string[] options) {
     ArgumentNullException.ThrowIfNull(options);
     Initialize();
     if (!OperatingSystem.IsMacOS()) {
-      return new LibVLCSharp.Shared.LibVLC(options);
+      return new LibVLCSharp.Shared.LibVLC(enableDebugLogs, options);
     }
 
     // The runtime is extracted from an exact SHA-256-pinned VideoLAN image and its complete file
@@ -56,7 +61,7 @@ internal static class LibVlcBootstrap {
     string[] macOptions = options.Contains("--no-plugins-scan", StringComparer.Ordinal)
         ? options
         : [.. options, "--no-plugins-scan"];
-    return new LibVLCSharp.Shared.LibVLC(macOptions);
+    return new LibVLCSharp.Shared.LibVLC(enableDebugLogs, macOptions);
   }
 
   internal static MacVlcRuntimePaths? LocateMacRuntime(string baseDirectory) {
