@@ -90,6 +90,45 @@ public partial class NvModemParameterRow : ObservableObject {
   }
 }
 
+internal partial class NvModemParameterComparisonRow : ObservableObject,
+    IParameterComparisonRow {
+  internal NvModemParameterComparisonRow(
+      string name,
+      string currentText,
+      string proposedText,
+      double proposedValue,
+      byte parameterType,
+      bool createIfMissing,
+      bool isRtspPath = false) {
+    Name = name;
+    CurrentText = currentText;
+    ProposedText = proposedText;
+    ProposedValue = proposedValue;
+    ParameterType = parameterType;
+    CreateIfMissing = createIfMissing;
+    IsRtspPath = isRtspPath;
+  }
+
+  public string Name { get; }
+  public string CurrentText { get; }
+  public string ProposedText { get; }
+  internal double ProposedValue { get; }
+  internal byte ParameterType { get; }
+  internal bool CreateIfMissing { get; }
+  internal bool IsRtspPath { get; }
+
+  [ObservableProperty]
+  private bool _use = true;
+}
+
+internal sealed record NvModemParameterComparison(
+    NvModemDeviceState Target,
+    string SourceLabel,
+    IReadOnlyList<NvModemParameterComparisonRow> Rows,
+    int Unknown,
+    int Invalid,
+    int ReadOnly);
+
 public partial class NvRadioStatusRow : ObservableObject {
   internal NvRadioStatusRow(int channel) {
     Channel = channel;
@@ -595,15 +634,14 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     BeginQueuedWrites(device, keyOnly: true, keyChannel: channel);
   }
 
-  [RelayCommand]
-  private void CopyRadioSettings() {
+  internal NvModemParameterComparison? BuildCopyParameterComparison() {
     NvModemDeviceState? target = SelectedState;
     int targetChannel = SelectedPresetRadio?.Channel ?? 0;
     if (target?.Generation != NvModemGeneration.Nv5 || SelectedCopySource == null
         || targetChannel is < 1 or > 2
         || SelectedCopySource.DeviceIdentity is not NvModemDeviceState source) {
       SetStatus("Select a target radio and a fully read radio from another NV5 modem.", true);
-      return;
+      return null;
     }
     int sourceChannel = SelectedCopySource.Channel;
     string sourcePrefix = $"CH{sourceChannel}_";
@@ -612,9 +650,9 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     long targetChip = (long)Math.Round(StagedValue(targetPrefix + "CHIP", -1));
     if (sourceMode == 1 && targetChip != 0) {
       SetStatus("Cannot copy an FLRC profile to a radio whose chip does not support FLRC.", true);
-      return;
+      return null;
     }
-    int staged = 0;
+    var rows = new List<NvModemParameterComparisonRow>();
     foreach ((string sourceName, double value) in source.Parameters) {
       if (!sourceName.StartsWith(sourcePrefix, StringComparison.Ordinal)
           || NvModemCatalog.IsReadOnly(sourceName)) {
@@ -625,17 +663,31 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
       bool create = suffix.StartsWith("LORA_", StringComparison.Ordinal)
           || suffix.StartsWith("FLRC_", StringComparison.Ordinal)
           || suffix is "FEC" or "FEC_K" or "FEC_N" or "FREQ_KHZ";
-      if (StageParameter(targetName, value,
-              source.ParameterTypes.GetValueOrDefault(sourceName,
-                  (byte)MAVLink.MAV_PARAM_TYPE.REAL32), create)) {
-        staged++;
+      if (!_parameterRows.TryGetValue(targetName, out NvModemParameterRow? targetRow)
+          && !create) {
+        continue;
       }
+      byte type = targetRow?.Type ?? source.ParameterTypes.GetValueOrDefault(sourceName,
+          (byte)MAVLink.MAV_PARAM_TYPE.REAL32);
+      if (targetRow != null && targetRow.TryValue(out double current)
+          && NvModemParameterCodec.NearlyEqual(current, value)) {
+        continue;
+      }
+      rows.Add(new NvModemParameterComparisonRow(
+          targetName,
+          targetRow?.ValueText ?? "(not published)",
+          NvModemParameterCodec.Display(value, type),
+          value,
+          type,
+          create));
     }
-    RebuildVisibleParameters();
-    SyncKeyText();
-    RefreshControls();
-    SetStatus($"Staged {staged} channel-local setting(s) from {SelectedCopySource.Label}. "
-        + "Network, transport and system IDs were not copied.", staged == 0);
+    rows.Sort((left, right) => StringComparer.Ordinal.Compare(left.Name, right.Name));
+    SetStatus(rows.Count == 0
+        ? $"No channel-local differences from {SelectedCopySource.Label}."
+        : $"Found {rows.Count} channel-local difference(s) from {SelectedCopySource.Label}; "
+            + "review them before staging.");
+    return new NvModemParameterComparison(
+        target, SelectedCopySource.Label, rows, 0, 0, 0);
   }
 
   [RelayCommand]
@@ -706,13 +758,17 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     return (safe.Length == 0 ? "nv-modem" : safe) + ".param";
   }
 
-  internal bool ImportParameterFile(string contents) {
+  internal NvModemParameterComparison? BuildParameterFileComparison(
+      string contents, string sourceLabel) {
     if (SelectedState == null || IsBusy) {
-      return false;
+      return null;
     }
-    int staged = 0;
+    NvModemDeviceState target = SelectedState;
     int unknown = 0;
     int invalid = 0;
+    int readOnly = 0;
+    var imported = new Dictionary<string, (double Value, byte Type)>(StringComparer.Ordinal);
+    string? importedRtspPath = null;
     foreach (string raw in contents.Split('\n')) {
       string line = raw.Trim();
       if (line.Length == 0) {
@@ -721,8 +777,13 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
 
       if (line.StartsWith("#NV5_RTSP_PATH,", StringComparison.Ordinal)) {
         if (CanUseRtsp) {
-          RtspPath = line["#NV5_RTSP_PATH,".Length..].Trim();
-          staged++;
+          string path = line["#NV5_RTSP_PATH,".Length..].Trim();
+          if (!path.StartsWith("/", StringComparison.Ordinal)
+              || Encoding.Latin1.GetByteCount(path) > 95) {
+            invalid++;
+          } else {
+            importedRtspPath = path;
+          }
         }
         continue;
       }
@@ -738,22 +799,80 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
         continue;
       }
       if (row.IsReadOnly) {
+        readOnly++;
         continue;
       }
-
-      string previous = row.ValueText;
-      row.ValueText = fields[1];
-      if (!row.IsValid) {
-        row.ValueText = previous;
+      if (!NvModemParameterCodec.TryParse(fields[1], row.Type, out double value)
+          || NvModemCatalog.IsNv5KeyByte(row.Name)
+              && value is < 0 or > 255
+              && !(NvModemParameterCodec.NearlyEqual(value, -1)
+                  && NvModemParameterCodec.NearlyEqual(row.Original, -1))) {
         invalid++;
       } else {
+        imported[row.Name] = (value, row.Type);
+      }
+    }
+    var rows = new List<NvModemParameterComparisonRow>();
+    foreach ((string name, (double value, byte type)) in imported) {
+      NvModemParameterRow row = _parameterRows[name];
+      if (row.TryValue(out double current) && NvModemParameterCodec.NearlyEqual(current, value)) {
+        continue;
+      }
+      rows.Add(new NvModemParameterComparisonRow(
+          name,
+          row.ValueText,
+          NvModemParameterCodec.Display(value, type),
+          value,
+          type,
+          createIfMissing: false));
+    }
+    if (importedRtspPath != null && !string.Equals(importedRtspPath, RtspPath,
+            StringComparison.Ordinal)) {
+      rows.Add(new NvModemParameterComparisonRow(
+          "NV5_RTSP_PATH",
+          RtspPath,
+          importedRtspPath,
+          0,
+          0,
+          createIfMissing: false,
+          isRtspPath: true));
+    }
+    rows.Sort((left, right) => StringComparer.Ordinal.Compare(left.Name, right.Name));
+    SetStatus(rows.Count == 0
+        ? $"{sourceLabel}: no differing supported settings; {unknown} unknown, "
+            + $"{invalid} invalid, {readOnly} read-only."
+        : $"{sourceLabel}: found {rows.Count} difference(s); review them before staging. "
+            + $"{unknown} unknown, {invalid} invalid, {readOnly} read-only.", invalid != 0);
+    return new NvModemParameterComparison(
+        target, sourceLabel, rows, unknown, invalid, readOnly);
+  }
+
+  internal int ApplyParameterComparison(NvModemParameterComparison comparison) {
+    if (!ReferenceEquals(comparison.Target, SelectedState) || IsBusy) {
+      SetStatus("The selected modem or its MAVLink connection changed while differences were open; "
+          + "nothing was staged.", true);
+      return -1;
+    }
+    int staged = 0;
+    foreach (NvModemParameterComparisonRow change in comparison.Rows.Where(row => row.Use)) {
+      if (change.IsRtspPath) {
+        RtspPath = change.ProposedText;
+        staged++;
+      } else if (StageParameter(
+                     change.Name,
+                     change.ProposedValue,
+                     change.ParameterType,
+                     change.CreateIfMissing)) {
         staged++;
       }
     }
     RebuildVisibleParameters();
+    SyncKeyText();
     RefreshControls();
-    SetStatus($"Loaded {staged} setting(s); {unknown} unknown, {invalid} invalid.", invalid != 0);
-    return true;
+    SetStatus($"Staged {staged} selected difference(s) from {comparison.SourceLabel}. "
+        + "Nothing was sent — review the Changed rows, then press Save to selected modem.",
+        staged == 0);
+    return staged;
   }
 
   private void OnPacketReceived(NvModemLink source, MAVLink.MAVLinkMessage packet) {

@@ -371,7 +371,12 @@ public class NvModemTests {
     viewModel.HandlePacket(source, ParameterPacket("MODEM_PROFILE", 7, 5, 2, 3, 68));
     viewModel.HandlePacket(source, ParameterPacket("CH1_FREQ_KHZ", 868000, 5, 2, 3, 68));
 
-    Assert.True(viewModel.ImportParameterFile("CH1_FREQ_KHZ,915000\n#NV5_RTSP_PATH,/cam/main\n"));
+    NvModemParameterComparison comparison = Assert.IsType<NvModemParameterComparison>(
+        viewModel.BuildParameterFileComparison(
+            "CH1_FREQ_KHZ,915000\n#NV5_RTSP_PATH,/cam/main\n", "test.param"));
+    Assert.Equal(2, comparison.Rows.Count);
+    Assert.DoesNotContain("CH1_FREQ_KHZ,915000", viewModel.ExportParameterFile());
+    Assert.Equal(2, viewModel.ApplyParameterComparison(comparison));
     string exported = viewModel.ExportParameterFile();
 
     Assert.Contains("CH1_FREQ_KHZ,915000", exported);
@@ -379,6 +384,67 @@ public class NvModemTests {
     Assert.Contains("key-byte values", exported, StringComparison.OrdinalIgnoreCase);
     Assert.DoesNotContain("\r\r\n", exported);
     Assert.True(viewModel.HasPendingChanges);
+  }
+
+  [Fact]
+  public void Parameter_file_preview_contains_only_real_differences_and_honours_selection() {
+    var transport = new FakeTransport();
+    using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
+        startTimer: false);
+    var source = new NvModemLink(new MAVLinkInterface(), "TCP NV5");
+    var status = new Nv5LinkStatusMessage { Channel = 1, RadioChip = 0, Role = 0 };
+    viewModel.HandlePacket(source, Packet(NvModemMessageIds.Nv5LinkStatus, status, 31, 68));
+    viewModel.HandlePacket(source, ParameterPacket("CH1_FREQ_KHZ", 868000, 5, 2, 31, 68));
+    viewModel.HandlePacket(source, ParameterPacket("CH1_FRAME", 64, 5, 2, 31, 68));
+
+    NvModemParameterComparison comparison = Assert.IsType<NvModemParameterComparison>(
+        viewModel.BuildParameterFileComparison(
+            "CH1_FREQ_KHZ,868000\nCH1_FRAME,240\nUNKNOWN,1\nCH1_FRAME,bad\n", "radio.param"));
+
+    NvModemParameterComparisonRow change = Assert.Single(comparison.Rows);
+    Assert.Equal("CH1_FRAME", change.Name);
+    Assert.Equal("64", change.CurrentText);
+    Assert.Equal("240", change.ProposedText);
+    Assert.Equal(1, comparison.Unknown);
+    Assert.Equal(1, comparison.Invalid);
+    Assert.DoesNotContain("CH1_FRAME,240", viewModel.ExportParameterFile());
+
+    change.Use = false;
+    Assert.Equal(0, viewModel.ApplyParameterComparison(comparison));
+    Assert.DoesNotContain("CH1_FRAME,240", viewModel.ExportParameterFile());
+  }
+
+  [Fact]
+  public void Copy_from_another_nv5_previews_differences_before_staging() {
+    var transport = new FakeTransport();
+    using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
+        startTimer: false);
+    var link = new NvModemLink(new MAVLinkInterface(), "shared UDP");
+    var status = new Nv5LinkStatusMessage { Channel = 1, RadioChip = 0, Role = 0 };
+    viewModel.HandlePacket(link, Packet(NvModemMessageIds.Nv5LinkStatus, status, 40, 68));
+    viewModel.HandlePacket(link, ParameterPacket("MODEM_PROFILE", 7, 5, 4, 40, 68));
+    viewModel.HandlePacket(link, ParameterPacket("CH1_CHIP", 0, 5, 4, 40, 68));
+    viewModel.HandlePacket(link, ParameterPacket("CH1_MOD", 0, 5, 4, 40, 68));
+    viewModel.HandlePacket(link, ParameterPacket("CH1_FRAME", 64, 5, 4, 40, 68));
+    viewModel.HandlePacket(link, Packet(NvModemMessageIds.Nv5LinkStatus, status, 41, 68));
+    viewModel.HandlePacket(link, ParameterPacket("MODEM_PROFILE", 7, 5, 4, 41, 68));
+    viewModel.HandlePacket(link, ParameterPacket("CH1_CHIP", 0, 5, 4, 41, 68));
+    viewModel.HandlePacket(link, ParameterPacket("CH1_MOD", 0, 5, 4, 41, 68));
+    viewModel.HandlePacket(link, ParameterPacket("CH1_FRAME", 240, 5, 4, 41, 68));
+
+    NvModemParameterComparison comparison = Assert.IsType<NvModemParameterComparison>(
+        viewModel.BuildCopyParameterComparison());
+
+    NvModemParameterComparisonRow change = Assert.Single(comparison.Rows);
+    Assert.Equal("CH1_FRAME", change.Name);
+    Assert.Equal("64", change.CurrentText);
+    Assert.Equal("240", change.ProposedText);
+    Assert.DoesNotContain("CH1_FRAME,240", viewModel.ExportParameterFile());
+
+    Assert.Equal(1, viewModel.ApplyParameterComparison(comparison));
+    Assert.Contains("CH1_FRAME,240", viewModel.ExportParameterFile());
+    Assert.DoesNotContain(transport.Sent,
+        sent => sent.Packet is MAVLink.mavlink_param_set_t);
   }
 
   [Fact]
@@ -456,6 +522,7 @@ public class NvModemTests {
     Assert.NotNull(view.FindControl<DataGrid>("ParametersGrid"));
     Assert.NotNull(view.FindControl<Button>("LoadParametersButton"));
     Assert.NotNull(view.FindControl<Button>("SaveParametersButton"));
+    Assert.NotNull(view.FindControl<Button>("CopyRadioSettingsButton"));
     using var setup = new MissionPlannerAvalonia.ViewModels.SetupViewModel();
     int sik = setup.Pages.ToList().FindIndex(page => page.Header == "Sik Radio");
     int nv = setup.Pages.ToList().FindIndex(page => page.Header == "NV Modem");

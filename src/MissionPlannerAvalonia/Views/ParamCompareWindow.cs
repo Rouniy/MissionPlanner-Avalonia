@@ -9,8 +9,13 @@ using MissionPlannerAvalonia.ViewModels;
 namespace MissionPlannerAvalonia.Views;
 
 internal sealed class ParamCompareWindow : Window {
-  private ParamCompareWindow(IReadOnlyList<ParamComparisonRow> rows) {
-    Title = "Compare Parameters";
+  private ParamCompareWindow(
+      IReadOnlyList<IParameterComparisonRow> rows,
+      string title,
+      string proposedHeader,
+      string instructions,
+      string acceptText) {
+    Title = title;
     Width = 720;
     Height = 560;
     MinWidth = 520;
@@ -43,8 +48,8 @@ internal sealed class ParamCompareWindow : Window {
       Width = new DataGridLength(160),
     });
     grid.Columns.Add(new DataGridTextColumn {
-      Header = "File",
-      Binding = new Binding(nameof(ParamComparisonRow.FileText)),
+      Header = proposedHeader,
+      Binding = new Binding(nameof(IParameterComparisonRow.ProposedText)),
       IsReadOnly = true,
       Width = new DataGridLength(160),
     });
@@ -57,7 +62,7 @@ internal sealed class ParamCompareWindow : Window {
       }
     };
     var cancel = new Button { Content = "Cancel" };
-    var stage = new Button { Content = "Stage selected", IsDefault = true };
+    var stage = new Button { Content = acceptText, IsDefault = true };
     cancel.Click += (_, _) => Close(false);
     stage.Click += (_, _) => Close(true);
 
@@ -67,7 +72,7 @@ internal sealed class ParamCompareWindow : Window {
       RowSpacing = 10,
       Children = {
         new TextBlock {
-          Text = "Choose which file values to stage. Nothing is written to the vehicle until Write Params is used.",
+          Text = instructions,
           TextWrapping = Avalonia.Media.TextWrapping.Wrap,
         },
         grid,
@@ -86,5 +91,19 @@ internal sealed class ParamCompareWindow : Window {
 
   internal static Task<bool> ShowAsync(
       Window owner, IReadOnlyList<ParamComparisonRow> rows) =>
-      new ParamCompareWindow(rows).ShowDialog<bool>(owner);
+      new ParamCompareWindow(
+          rows,
+          "Compare Parameters",
+          "File",
+          "Choose which file values to stage. Nothing is written to the vehicle until Write Params is used.",
+          "Stage selected").ShowDialog<bool>(owner);
+
+  internal static Task<bool> ShowAsync(
+      Window owner,
+      IReadOnlyList<IParameterComparisonRow> rows,
+      string title,
+      string proposedHeader,
+      string instructions) =>
+      new ParamCompareWindow(
+          rows, title, proposedHeader, instructions, "Stage selected").ShowDialog<bool>(owner);
 }

@@ -804,7 +804,7 @@ public sealed record FrameDefaultFile(string Name, string Path) {
   }
 }
 
-public partial class ParamComparisonRow : ObservableObject {
+public partial class ParamComparisonRow : ObservableObject, IParameterComparisonRow {
   public ParamComparisonRow(string name, double currentValue, double fileValue) {
     Name = name;
     CurrentValue = currentValue;
@@ -816,6 +816,7 @@ public partial class ParamComparisonRow : ObservableObject {
   public double FileValue { get; }
   public string CurrentText => CurrentValue.ToString(CultureInfo.InvariantCulture);
   public string FileText => FileValue.ToString(CultureInfo.InvariantCulture);
+  public string ProposedText => FileText;
 
   [ObservableProperty]
   private bool _use = true;
