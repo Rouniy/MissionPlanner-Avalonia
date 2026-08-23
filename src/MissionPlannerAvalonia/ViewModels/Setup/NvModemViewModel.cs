@@ -815,12 +815,15 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     if (device == null && !nv5Identity && !nv4Identity) {
       return;
     }
-    bool inserted = device == null;
-    if (inserted) {
+    bool inserted;
+    if (device == null) {
+      inserted = true;
       device = new NvModemDeviceState(key);
       _devices.Add(key, device);
       device.Choice = new NvModemDeviceChoice(device);
       Devices.Add(device.Choice);
+    } else {
+      inserted = false;
     }
     if (nv4Identity) {
       device.Generation = NvModemGeneration.Nv4;

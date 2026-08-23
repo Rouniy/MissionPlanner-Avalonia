@@ -21,7 +21,6 @@ public class ConfigViewModel : BackstageViewModel {
   private static bool IsHeli =>
       IsCopter && AppState.comPort.MAV.param.ContainsKey("H_SWASH_TYPE");
 
-  [System.Obsolete]
   public ConfigViewModel() : base(persistKey: "config_lastpage") {
     Add("Flight Modes", () => new ConfigFlightModesViewModel(), requiresConnection: true,
         visibleWhen: When(profile => profile.displayFlightModes));

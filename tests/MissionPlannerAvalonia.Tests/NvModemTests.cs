@@ -343,8 +343,15 @@ public class NvModemTests {
     internal List<NvModemLink> Links { get; } = [];
     internal List<SentPacket> Sent { get; } = [];
 
-    public event Action<NvModemLink, MAVLink.MAVLinkMessage>? PacketReceived;
-    public event Action? LinksChanged;
+    public event Action<NvModemLink, MAVLink.MAVLinkMessage>? PacketReceived {
+      add { }
+      remove { }
+    }
+
+    public event Action? LinksChanged {
+      add { }
+      remove { }
+    }
 
     public IReadOnlyList<NvModemLink> Snapshot() => Links;
 
@@ -353,9 +360,6 @@ public class NvModemTests {
       return true;
     }
 
-    public void Dispose() {
-      PacketReceived = null;
-      LinksChanged = null;
-    }
+    public void Dispose() { }
   }
 }

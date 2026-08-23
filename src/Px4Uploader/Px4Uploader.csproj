@@ -11,7 +11,8 @@
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
     <RootNamespace>px4uploader</RootNamespace>
     <AssemblyName>MissionPlannerAvalonia.Px4Uploader</AssemblyName>
-    <NoWarn>$(NoWarn);CS0618;CS0612;CS8032</NoWarn>
+    <!-- CS8981 belongs to upstream's public lowercase `otp` compatibility type. -->
+    <NoWarn>$(NoWarn);CS0618;CS0612;CS8032;CS8981</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

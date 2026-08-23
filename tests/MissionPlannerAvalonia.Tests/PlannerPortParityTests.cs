@@ -194,7 +194,6 @@ public class PlannerPortParityTests {
   }
 
   [AvaloniaFact]
-  [Obsolete]
   public void Planner_map_exposes_the_six_official_rally_shortcuts() {
     var view = new FlightPlannerView();
     var map = Assert.IsType<FlightPlannerMap>(view.FindControl<FlightPlannerMap>("Map"));
@@ -208,7 +207,6 @@ public class PlannerPortParityTests {
   }
 
   [AvaloniaFact]
-  [Obsolete]
   public void Planner_switch_docking_recreates_both_official_panel_arrangements() {
     var view = new FlightPlannerView();
     var layout = Assert.IsType<AvaloniaGrid>(view.FindControl<AvaloniaGrid>("PlannerLayoutGrid"));
@@ -261,7 +259,6 @@ public class PlannerPortParityTests {
   }
 
   [AvaloniaFact]
-  [Obsolete]
   public void Planner_switch_docking_persists_the_upstream_setting_values() {
     string? saved = Settings.Instance["FP_docking"];
     try {
@@ -281,7 +278,6 @@ public class PlannerPortParityTests {
   }
 
   [AvaloniaFact]
-  [Obsolete]
   public void Flight_data_main_splitter_is_draggable_and_persists_official_distance() {
     string? saved = Settings.Instance["FlightSplitter"];
     try {
@@ -313,7 +309,6 @@ public class PlannerPortParityTests {
   }
 
   [AvaloniaFact]
-  [Obsolete]
   public void Flight_data_hud_and_quick_panels_detach_and_return_without_recreation() {
     var view = new FlightDataView();
     var vm = new FlightDataViewModel();
@@ -355,7 +350,6 @@ public class PlannerPortParityTests {
   }
 
   [AvaloniaFact]
-  [Obsolete]
   public void Closing_a_detached_flight_data_window_redocks_its_live_panel() {
     var view = new FlightDataView();
     var owner = new Window { Content = view };
@@ -378,7 +372,6 @@ public class PlannerPortParityTests {
   }
 
   [AvaloniaFact]
-  [Obsolete]
   public void Flight_data_gimbal_video_layouts_move_one_live_panel_without_recreation() {
     var view = new FlightDataView();
     var panel = new Border();
@@ -438,7 +431,6 @@ public class PlannerPortParityTests {
   }
 
   [AvaloniaFact]
-  [Obsolete]
   public void Closing_popout_clears_the_gimbal_video_presentation() {
     var view = new FlightDataView();
     var owner = new Window { Content = view };
@@ -588,12 +580,11 @@ public class PlannerPortParityTests {
   }
 
   [Fact]
-  [Obsolete]
   public void Planner_route_excludes_roi_and_radius_display_units_convert_to_metres() {
     Assert.True(MissionRoute.IsNavigation((ushort)MAVLink.MAV_CMD.WAYPOINT));
     Assert.True(MissionRoute.IsNavigation((ushort)MAVLink.MAV_CMD.SPLINE_WAYPOINT));
-    Assert.False(MissionRoute.IsNavigation((ushort)MAVLink.MAV_CMD.ROI));
-    Assert.False(MissionRoute.IsNavigation((ushort)MAVLink.MAV_CMD.DO_SET_ROI));
+    Assert.False(MissionRoute.IsNavigation(80)); // legacy MAV_CMD_NAV_ROI
+    Assert.False(MissionRoute.IsNavigation(201)); // MAV_CMD_DO_SET_ROI
     Assert.Equal(100, FlightPlannerMap.RadiusInMeters(328.084, 3.28084), 5);
   }
 

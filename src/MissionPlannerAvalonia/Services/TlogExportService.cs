@@ -123,6 +123,9 @@ public static class TlogExportService {
         continue;
       }
 
+      // Tlogs remain a historical archive format and can contain the deprecated MAVLink 1
+      // MISSION_ITEM payload. Reading it is intentional compatibility, not a new sender path.
+#pragma warning disable CS0612
       TlogMissionItem? item = packet.msgid switch {
         (uint)MAVLink.MAVLINK_MSG_ID.MISSION_ITEM_INT => FromInt(
             packet.ToStructure<MAVLink.mavlink_mission_item_int_t>()),
@@ -130,6 +133,7 @@ public static class TlogExportService {
             packet.ToStructure<MAVLink.mavlink_mission_item_t>()),
         _ => null,
       };
+#pragma warning restore CS0612
       if (item == null || !builders.TryGetValue(key, out var builder)
           || item.Sequence >= builder.Expected) {
         continue;
@@ -162,6 +166,7 @@ public static class TlogExportService {
         item.x / scale, item.y / scale, item.z, item.autocontinue);
   }
 
+#pragma warning disable CS0612 // Decode legacy packets already present in old tlogs.
   private static TlogMissionItem? FromFloat(MAVLink.mavlink_mission_item_t item) =>
       item.mission_type == (byte)MAVLink.MAV_MISSION_TYPE.MISSION
           ? new TlogMissionItem(
@@ -169,14 +174,13 @@ public static class TlogExportService {
               item.param1, item.param2, item.param3, item.param4,
               item.x, item.y, item.z, item.autocontinue)
           : null;
+#pragma warning restore CS0612
 
-  private static bool IsGlobalFrame(byte frame) => (MAVLink.MAV_FRAME)frame is
-      MAVLink.MAV_FRAME.GLOBAL or
-      MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT or
-      MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT or
-      MAVLink.MAV_FRAME.GLOBAL_INT or
-      MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT_INT or
-      MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT_INT;
+  private static bool IsGlobalFrame(byte frame) => frame is
+      (byte)MAVLink.MAV_FRAME.GLOBAL or
+      (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT or
+      (byte)MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT or
+      5 or 6 or 11;
 
   private static void WriteQgcWpl(IReadOnlyList<TlogMissionItem> mission, string output) {
     using var writer = new StreamWriter(output, false, new UTF8Encoding(false));

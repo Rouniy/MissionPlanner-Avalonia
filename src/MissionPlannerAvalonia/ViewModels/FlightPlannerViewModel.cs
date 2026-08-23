@@ -800,7 +800,6 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
 #pragma warning restore CS0612
   }
 
-  [Obsolete]
   internal async Task ReadAncillaryOnConnectAsync() {
     if (!IsConnected) {
       return;
@@ -856,7 +855,6 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
     }
   }
 
-  [Obsolete]
   private Task<List<WpRow>> DownloadRowsAsync(
       MAVLink.MAV_MISSION_TYPE type, byte sysid, byte compid) => Task.Run(async () => {
         var list = new List<WpRow>();
@@ -914,7 +912,7 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
   internal static bool SupportsMissionFence(uint capabilities) =>
       (capabilities & (uint)MAVLink.MAV_PROTOCOL_CAPABILITY.MISSION_FENCE) != 0;
 
-  [Obsolete]
+#pragma warning disable CS0612 // Required fallback for controllers without mission-fence support.
   private async Task<List<WpRow>> DownloadLegacyFenceAsync() {
     var result = new List<WpRow>();
     var first = await _comPort.getFencePoint(0);
@@ -941,7 +939,6 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
     return result;
   }
 
-  [Obsolete]
   private async Task<List<WpRow>> DownloadLegacyRallyAsync() {
     int total = Math.Clamp((int)Math.Round(ParamValue("RALLY_TOTAL")), 0, byte.MaxValue);
     var result = new List<WpRow>(total);
@@ -953,6 +950,7 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
     }
     return result;
   }
+#pragma warning restore CS0612
 
   private bool IsSameOpenVehicle(byte sysid, byte compid) =>
       IsConnected && _comPort.MAV.sysid == sysid && _comPort.MAV.compid == compid;

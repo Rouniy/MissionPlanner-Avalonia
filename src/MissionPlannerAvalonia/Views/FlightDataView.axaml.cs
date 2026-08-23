@@ -23,7 +23,7 @@ using MissionPlannerAvalonia.ViewModels;
 namespace MissionPlannerAvalonia.Views;
 
 public partial class FlightDataView : UserControl {
-  [Obsolete]
+#pragma warning disable CS0612 // Constructor wires legacy MissionPlanner APIs behind this view.
   public FlightDataView() {
     InitializeComponent();
     _flightDataLayout = this.FindControl<Avalonia.Controls.Grid>("FlightDataLayoutGrid");
@@ -107,6 +107,7 @@ public partial class FlightDataView : UserControl {
     };
     ApplyGaugeSettings();
   }
+#pragma warning restore CS0612
 
   private bool _displayViewSubscribed;
 
@@ -1083,7 +1084,8 @@ public partial class FlightDataView : UserControl {
     return menu;
   }
 
-  private readonly ITemplate<Panel?>? _defaultTabPanel;
+  private readonly ITemplate<Panel?> _defaultTabPanel =
+      new FuncTemplate<Panel?>(() => new StackPanel());
 
   private const string _hiddenTabsKey = "tabcontrolactions_avalonia_hidden";
 

@@ -7,6 +7,9 @@
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest</AnalysisLevel>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <!-- external/ has its own Directory.Build.props, so this gate applies only to port-owned
+         source, tests and compatibility projects. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
 

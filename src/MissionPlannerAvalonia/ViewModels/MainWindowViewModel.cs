@@ -12,7 +12,6 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
   public FlightDataViewModel FlightData { get; } = new();
   public FlightPlannerViewModel FlightPlanner { get; } = new();
   public SetupViewModel Setup { get; } = new();
-  [System.Obsolete]
   public ConfigViewModel Config { get; } = new();
   public SimulationViewModel Simulation { get; }
   public HelpViewModel Help { get; } = new();

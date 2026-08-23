@@ -298,7 +298,6 @@ public class FaceMapTests {
   }
 
   [AvaloniaFact]
-  [Obsolete]
   public void Planner_auto_wp_menu_exposes_face_map() {
     var view = new FlightPlannerView();
     var map = Assert.IsType<MissionPlannerAvalonia.Controls.FlightPlannerMap>(

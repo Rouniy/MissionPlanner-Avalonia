@@ -26,7 +26,7 @@ public partial class FlightPlannerView : UserControl {
   private const int _pColIndex = 2;
   private const string _dockingSetting = "FP_docking";
 
-  [Obsolete]
+#pragma warning disable CS0612 // Constructor wires legacy MissionPlanner APIs behind this view.
   public FlightPlannerView() {
     InitializeComponent();
     ApplyDockingLayout(
@@ -56,6 +56,7 @@ public partial class FlightPlannerView : UserControl {
       Vm?.SavePlannerSettings();
     };
   }
+#pragma warning restore CS0612
 
   internal bool IsActionDockedBottom => _actionDockBottom;
 
