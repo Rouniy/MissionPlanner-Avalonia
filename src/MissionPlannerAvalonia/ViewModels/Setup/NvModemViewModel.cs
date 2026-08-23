@@ -137,7 +137,10 @@ internal sealed class NvModemDeviceState {
   internal Dictionary<string, double> LocallyKnownKeyBytes { get; } = new(StringComparer.Ordinal);
   internal Dictionary<int, uint> LegacyKeyWords { get; } = [];
   internal string LegacyKeyFingerprint { get; set; } = "";
+  internal NvModemInfoMessage ModemInfo { get; set; }
+  internal bool ModemInfoReady { get; set; }
   internal Dictionary<int, Nv5LinkStatusMessage> Links { get; } = [];
+  internal string LegacyNodeName { get; set; } = "";
   internal NvRxStatMessage LegacyRxStatus { get; set; }
   internal bool LegacyRxReady { get; set; }
   internal MAVLink.mavlink_radio_status_t LegacyRadioStatus { get; set; }
@@ -224,8 +227,8 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   public string Title => "NV Modem";
   public string Instructions =>
       "Uses the MAVLink connections already open in Mission Planner; this page does not open a "
-      + "separate UDP, TCP or serial connection. NV5 status and NV4 CAN node information are "
-      + "accepted at any valid system/component ID.";
+      + "separate UDP, TCP or serial connection. The shared NV modem passport, NV5 status, and "
+      + "legacy NV4 status/CAN node information are accepted at any system/component ID.";
 
   public ObservableCollection<NvModemDeviceChoice> Devices { get; } = [];
   public ObservableCollection<NvModemParameterRow> Parameters { get; } = [];
@@ -788,17 +791,27 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
 
     string parameterName = "";
     MAVLink.mavlink_param_value_t parameter = default;
+    NvModemInfoMessage modemInfo = default;
     bool nv5Identity = msgid is NvModemMessageIds.Nv5LinkStatus
         or NvModemMessageIds.Nv5RtspConfig or NvModemMessageIds.Nv5RtspConfigAck;
-    bool nv4Identity = false;
+    bool nv4Identity = msgid == NvModemMessageIds.NvRxStat;
+    if (msgid == NvModemMessageIds.NvModemInfo) {
+      modemInfo = packet.ToStructure<NvModemInfoMessage>();
+      if (modemInfo.SchemaVersion >= 1) {
+        nv4Identity = modemInfo.ModemGeneration == 4;
+        nv5Identity = modemInfo.ModemGeneration == 5;
+      }
+    }
     MAVLink.mavlink_uavcan_node_info_t nodeInfo = default;
     if (msgid == (uint)MAVLink.MAVLINK_MSG_ID.UAVCAN_NODE_INFO) {
       nodeInfo = packet.ToStructure<MAVLink.mavlink_uavcan_node_info_t>();
-      nv4Identity = IsNv4NodeName(NvModemParameterCodec.Name(nodeInfo.name));
+      nv4Identity = IsLegacyNv4Node(nodeInfo);
     }
     if (msgid == (uint)MAVLink.MAVLINK_MSG_ID.PARAM_VALUE) {
       parameter = packet.ToStructure<MAVLink.mavlink_param_value_t>();
       parameterName = NvModemParameterCodec.Name(parameter.param_id);
+      nv5Identity = NvModemCatalog.IsNv5Signature(parameterName);
+      nv4Identity = device != null && NvModemCatalog.IsNv4Signature(parameterName);
     }
     if (device == null && !nv5Identity && !nv4Identity) {
       return;
@@ -823,18 +836,29 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     UpdateDeviceLabel(device);
     if (SelectedDevice == null) {
       SelectedDevice = device.Choice;
-    } else if (inserted && device.Generation == NvModemGeneration.Nv5) {
-      SendIdentityRequest(device.Key.Link, device.Key.SystemId, device.Key.ComponentId);
+    } else if (inserted) {
+      if (device.Generation == NvModemGeneration.Nv5) {
+        SendIdentityRequest(device.Key.Link, device.Key.SystemId, device.Key.ComponentId);
+      }
       SendParameterRequestList(device);
     }
 
-    if (msgid == (uint)MAVLink.MAVLINK_MSG_ID.AUTOPILOT_VERSION
+    if (msgid == NvModemMessageIds.NvModemInfo
+        && modemInfo.SchemaVersion >= 1
+        && modemInfo.ModemGeneration is 4 or 5) {
+      device.ModemInfo = modemInfo;
+      device.ModemInfoReady = true;
+      device.Generation = modemInfo.ModemGeneration == 4
+          ? NvModemGeneration.Nv4 : NvModemGeneration.Nv5;
+      device.ProductProfile = modemInfo.ProductProfile;
+      UpdateDeviceLabel(device);
+    } else if (msgid == (uint)MAVLink.MAVLINK_MSG_ID.AUTOPILOT_VERSION
         && device.Generation == NvModemGeneration.Nv5) {
       device.ProductProfile = packet.ToStructure<MAVLink.mavlink_autopilot_version_t>().product_id;
       UpdateDeviceLabel(device);
     } else if (msgid == (uint)MAVLink.MAVLINK_MSG_ID.UAVCAN_NODE_INFO
         && device.Generation == NvModemGeneration.Nv4) {
-      device.ProductProfile = nodeInfo.hw_version_major;
+      device.LegacyNodeName = NvModemParameterCodec.Name(nodeInfo.name);
       UpdateDeviceLabel(device);
     } else if (msgid == (uint)MAVLink.MAVLINK_MSG_ID.PARAM_VALUE) {
       HandleParameterValue(device, parameter, parameterName);
@@ -1479,6 +1503,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
 
   private void RequestDiscoveryMessages(
       NvModemLink link, byte systemId, byte componentId) {
+    SendMessageRequest(link, systemId, componentId, NvModemMessageIds.NvModemInfo);
     SendMessageRequest(link, systemId, componentId, NvModemMessageIds.Nv5LinkStatus);
     SendMessageRequest(link, systemId, componentId,
         (uint)MAVLink.MAVLINK_MSG_ID.UAVCAN_NODE_INFO);
@@ -1494,6 +1519,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   }
 
   private void SendIdentityRequest(NvModemLink link, byte systemId, byte componentId) {
+    SendMessageRequest(link, systemId, componentId, NvModemMessageIds.NvModemInfo);
     SendMessageRequest(link, systemId, componentId,
         (uint)MAVLink.MAVLINK_MSG_ID.AUTOPILOT_VERSION);
   }
@@ -1510,10 +1536,13 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     _transport.Send(link, command, systemId, componentId);
   }
 
-  private static bool IsNv4NodeName(string name) {
-    string prefix = name.Length > 5 ? name[..5] : name;
-    return prefix.Equals("NV_TX", StringComparison.OrdinalIgnoreCase)
-        || prefix.Equals("NV_RX", StringComparison.OrdinalIgnoreCase);
+  private static bool IsLegacyNv4Node(MAVLink.mavlink_uavcan_node_info_t info) {
+    if (info.hw_version_major != 4 || info.sw_version_major != 4) {
+      return false;
+    }
+    string name = NvModemParameterCodec.Name(info.name);
+    return name.StartsWith("TX_", StringComparison.Ordinal)
+        || name.StartsWith("RX_", StringComparison.Ordinal);
   }
 
   private void SendRtspRequest(NvModemDeviceState device) {
@@ -1641,8 +1670,21 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     device.Choice.Label = $"{label} — {device.Key.Link.Name}";
   }
 
-  private string HardwareModel(NvModemDeviceState device) => NvModemCatalog.HardwareModel(
-      device.Generation, device.ProductProfile, device.Links.Values.Select(link => link.RadioChip));
+  private string HardwareModel(NvModemDeviceState device) {
+    IEnumerable<byte> chips = device.Links.Values.Select(link => link.RadioChip);
+    if (device.ModemInfoReady) {
+      var passportChips = new List<byte>();
+      if ((device.ModemInfo.Flags & NvModemInfoFlags.Channel1Active) != 0) {
+        passportChips.Add(device.ModemInfo.Channel1RadioChip);
+      }
+      if ((device.ModemInfo.Flags & NvModemInfoFlags.Channel2Active) != 0) {
+        passportChips.Add(device.ModemInfo.Channel2RadioChip);
+      }
+      chips = chips.Concat(passportChips);
+    }
+    return NvModemCatalog.HardwareModel(device.Generation, device.ProductProfile, chips,
+        device.ModemInfoReady);
+  }
 
   private static string ModemName(NvModemDeviceState device) => device.Generation switch {
     NvModemGeneration.Nv4 => "NV4",
@@ -1651,9 +1693,29 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   };
 
   private static string RoleSummary(NvModemDeviceState device) {
+    if (device.ModemInfoReady) {
+      var passportRoles = new List<string>();
+      if ((device.ModemInfo.Flags & NvModemInfoFlags.Channel1Active) != 0) {
+        passportRoles.Add(NvModemCatalog.RoleName(device.ModemInfo.Channel1Role));
+      }
+      if ((device.ModemInfo.Flags & NvModemInfoFlags.Channel2Active) != 0) {
+        passportRoles.Add(NvModemCatalog.RoleName(device.ModemInfo.Channel2Role));
+      }
+      if (passportRoles.Count != 0) {
+        return string.Join('/', passportRoles);
+      }
+    }
     if (device.Generation == NvModemGeneration.Nv4
         && device.Parameters.TryGetValue("TX_ON", out double tx)) {
       return tx >= 0.5 ? "TX" : "RX";
+    }
+    if (device.Generation == NvModemGeneration.Nv4) {
+      if (device.LegacyNodeName.StartsWith("TX_", StringComparison.Ordinal)) {
+        return "TX";
+      }
+      if (device.LegacyNodeName.StartsWith("RX_", StringComparison.Ordinal)) {
+        return "RX";
+      }
     }
 
     if (device.Generation != NvModemGeneration.Nv5) {
@@ -1676,7 +1738,9 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
 
   private static bool SupportsRtsp(NvModemDeviceState device) =>
       device.Generation == NvModemGeneration.Nv5
-      && (Enumerable.Range(1, 2).Any(channel =>
+      && ((device.ModemInfoReady
+              && (device.ModemInfo.Capabilities & NvModemCapabilities.Rtsp) != 0)
+          || Enumerable.Range(1, 2).Any(channel =>
               device.Parameters.GetValueOrDefault($"CH{channel}_CHIP", -1) == 0)
           || device.Links.Values.Any(link => link.RadioChip == 0));
 
