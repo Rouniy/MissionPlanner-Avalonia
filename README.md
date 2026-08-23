@@ -60,6 +60,12 @@ and arm64 macOS dylibs are fetched from the official SimpleBLE release during pu
 with the corresponding artifact. Discovery, connection and I/O are cancellable and bounded;
 end-to-end traffic with representative BLE modems remains a native-platform acceptance item.
 
+Setup > NV Modem is a native port of AgroSky GTU's `NV5Settings` for NV4/NV5 radio modems. It
+discovers modems and performs parameter, key, RTSP and maintenance operations through the UDP/TCP/
+UART MAVLink connections already open in Mission Planner; it never opens a second port. Parameter
+values are session-only and cleared on refresh or device change, while the copied parameter
+descriptions remain available in the tab. See [NV Modem](docs/NV_MODEM.md).
+
 ## Linux prerequisites
 
 Ubuntu 24.04 / Linux Mint 22 can use the distribution SDK. `global.json` accepts the 10.0.100
