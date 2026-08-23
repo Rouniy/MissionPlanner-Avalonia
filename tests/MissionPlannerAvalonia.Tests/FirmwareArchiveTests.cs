@@ -51,7 +51,8 @@ public class FirmwareArchiveTests {
     Assert.InRange(handler.MaximumActiveFirmwareRequests, 2,
         FirmwareArchiveService.MaxParallelDownloads);
     Assert.Equal(1, handler.Requests.Count(uri => uri == firmwareUris[0]));
-    Assert.Equal(firmwareUris.Length, progress.Last().Completed);
+    Assert.Equal(Enumerable.Range(1, firmwareUris.Length),
+        progress.Select(item => item.Completed));
     Assert.Equal(firmwareUris.Length, progress.Last().Total);
 
     XDocument localManifest = XDocument.Load(Path.Combine(destination, "firmware2.xml"));

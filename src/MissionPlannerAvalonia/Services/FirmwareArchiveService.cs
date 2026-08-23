@@ -89,6 +89,7 @@ internal sealed class FirmwareArchiveService {
     Directory.CreateDirectory(temporary);
     long bytesDownloaded = 0;
     int completed = 0;
+    var progressGate = new object();
     try {
       await Parallel.ForEachAsync(
           downloads.Values,
@@ -113,10 +114,15 @@ internal sealed class FirmwareArchiveService {
             } catch (Exception ex) {
               download.Error = ex.Message.Replace('\r', ' ').Replace('\n', ' ');
             }
-            int current = Interlocked.Increment(ref completed);
-            progress?.Report(new FirmwareArchiveProgress(
-                current, downloads.Count, download.RelativePath.Replace(
-                    Path.DirectorySeparatorChar, '/')));
+            // Parallel downloads can finish together. Keep the increment and callback in one
+            // critical section so a delayed lower value can never be delivered after a higher
+            // value and make the operator-visible progress bar move backwards.
+            lock (progressGate) {
+              completed++;
+              progress?.Report(new FirmwareArchiveProgress(
+                  completed, downloads.Count, download.RelativePath.Replace(
+                      Path.DirectorySeparatorChar, '/')));
+            }
           }).ConfigureAwait(false);
 
       cancellationToken.ThrowIfCancellationRequested();

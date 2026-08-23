@@ -622,7 +622,8 @@ native-platform acceptance testing.
   exact link/vehicle/component identity and single-system enforcement.
   Firmware-archive tests cover mirror fallback, exact-URL deduplication, bounded parallelism,
   HTTPS-first legacy handling, partial availability, hashes, XML/path hardening, size limits,
-  non-overwrite behavior, cancellation cleanup and atomic publication.
+  non-overwrite behavior, cancellation cleanup, atomic publication and strictly ordered progress
+  reporting under parallel downloads.
   Hong Kong NoFly tests cover Polygon/MultiPolygon parsing, holes, WGS84 validation, the official
   alpha/color style, fresh/stale caches, network failure, cancellation cleanup, atomic publication,
   concurrent-load serialization and layer replacement on both Flight Planner and Flight Data.
@@ -659,10 +660,10 @@ native-platform acceptance testing.
   traffic test.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260823.1cb424b_amd64.deb`
-(54,280,982 bytes; SHA-256
-`aea1cde16ebaf5fda582adb66455ed83265ad00e8e1d86e5366c01b959687e5a`), built from commit
-`1cb424b` and the current 1024-test source including the signed beta update channel, portable plugin host, HUD-to-MJPEG/AVI
+`out/packages/missionplanner-avalonia_1.3.83-20260823.b6e462c_amd64.deb`
+(54,281,204 bytes; SHA-256
+`ad411c248c57bccfd7aba0314db3fe425f7d0496763b8c1d890e075cb7eb52bf`), built from commit
+`b6e462c` and the current 1024-test source including serialized firmware-archive progress, the signed beta update channel, portable plugin host, HUD-to-MJPEG/AVI
 recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
@@ -704,8 +705,8 @@ exports identified during the current CodeQL triage, plus concurrent global-sett
 serialized settings-file writes, and a cancellable bounded WebSocket transport with explicit
 raw-WebSocket/Socket.IO protocol separation and reconnect lifecycle ownership.
 Its APT version is
-`1:1.3.83+20260823.r267.1cb424b`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r267` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260823.r271.b6e462c`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r271` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
