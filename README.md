@@ -52,13 +52,16 @@ installed 10.0.301 SDK is not required.
 ```bash
 sudo apt-get update
 sudo apt-get install dotnet-sdk-10.0 libvlc5 vlc-plugin-base speech-dispatcher-espeak-ng bluez
+# Optional official-style GDAL Custom local raster map provider:
+sudo apt-get install gdal-bin
 sudo usermod -aG dialout "$USER"
 ```
 
 Log out and back in after adding `dialout`. `libvlc` is needed for video,
 `speech-dispatcher-espeak-ng` for spoken warnings and BlueZ for Linux Nordic-UART Bluetooth LE
-connections. Add `xvfb` for headless GUI smoke tests and `dotnet-sdk-aot-10.0` only when experimenting
-with NativeAOT.
+connections. A current system GDAL runtime enables the optional `GDAL Custom` map provider; the
+managed GeoTIFF/DTED elevation path does not require it. Add `xvfb` for headless GUI smoke tests and
+`dotnet-sdk-aot-10.0` only when experimenting with NativeAOT.
 
 Video sources may be direct files or libVLC MRLs such as `rtsp://host/path`, `udp://@:5600`,
 `rtp://@:5600` and `v4l2:///dev/video0`. The input dialog also accepts an RTP GStreamer pipeline
@@ -114,7 +117,7 @@ Artifacts are written to `out/packages/`. The `.deb` is intended for Ubuntu 24.0
 and compatible amd64 distributions. It is self-contained, so a .NET runtime is not required on the
 target machine. APT installs the native GUI, ICU, OpenSSL and libVLC dependencies declared by the
 package; `speech-dispatcher-espeak-ng` and `bluez` are recommended for spoken warnings and optional
-BLE connections respectively.
+BLE connections respectively, while `gdal-bin` is suggested for local GDAL raster maps.
 
 ```bash
 sudo apt install ./out/packages/missionplanner-avalonia_*.deb

@@ -15,6 +15,7 @@ public partial class App : Application {
   public override void OnFrameworkInitializationCompleted() {
     Services.AppPaths.Initialize();
     Services.ElevationSourceService.InitializeFromSettings();
+    Services.NativeGdalMapService.InitializeFromSettings();
     _ = Services.AirportService.EnsureLoadedAsync();
     Services.DisplayViewService.Initialize();
     Services.FlightModeNames.Initialize();
@@ -55,6 +56,7 @@ public partial class App : Application {
         Services.SpeechAnnouncer.Stop();
         WarningEngine.Stop();
         Services.Speech.Stop();
+        Services.NativeGdalMapService.Shutdown();
         mainViewModel.Dispose();
         AppState.JoystickControl.Dispose();
         AppState.Traffic.Dispose();

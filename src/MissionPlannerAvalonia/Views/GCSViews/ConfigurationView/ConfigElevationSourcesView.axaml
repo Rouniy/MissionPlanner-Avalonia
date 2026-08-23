@@ -12,15 +12,15 @@
   Background="{DynamicResource MpControlBg}">
   <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,*,Auto" RowSpacing="10">
     <StackPanel Grid.Row="0" Spacing="4">
-      <TextBlock Classes="pagetitle" Text="Elevation Sources" />
+      <TextBlock Classes="pagetitle" Text="Elevation &amp; Local Raster Sources" />
       <TextBlock Classes="fieldlbl" TextWrapping="Wrap" MaxWidth="850" HorizontalAlignment="Left"
-                 Text="Load local GeoTIFF and DTED digital elevation models. As in official Mission Planner, local GeoTIFF is checked first, then DTED, then the downloaded SRTM cache." />
+                 Text="Load local GeoTIFF/DTED elevation models and the official GDAL Custom raster-map overlay. Local DEM files are checked before the downloaded SRTM cache; native GDAL remains optional." />
     </StackPanel>
 
     <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="8">
-      <TextBlock Grid.Column="0" Classes="lbl" Text="DEM directory" VerticalAlignment="Center" />
+      <TextBlock Grid.Column="0" Classes="lbl" Text="Local data directory" VerticalAlignment="Center" />
       <TextBox Grid.Column="1" Text="{Binding DirectoryPath, Mode=TwoWay}"
-               Watermark="Directory containing .tif/.tiff/.dt0/.dt1/.dt2 files" />
+               Watermark="Directory containing elevation or georeferenced raster files" />
       <Button Grid.Column="2" x:Name="BrowseButton" Content="Browse…" IsEnabled="{Binding !IsBusy}" />
       <Button Grid.Column="3" Content="Save &amp; Scan" Command="{Binding RescanCommand}"
               IsEnabled="{Binding !IsBusy}" />
@@ -29,20 +29,43 @@
     </Grid>
 
     <TextBlock Grid.Row="2" Classes="fieldlbl" TextWrapping="Wrap"
-               Text="The selected directory is restored automatically at every start. Subdirectories are scanned; one unreadable file does not prevent other elevation models from loading." />
+               Text="The selected directory is restored automatically at every start. Subdirectories are scanned; one unreadable file does not prevent other sources from loading. GDAL datasets stay on disk and are sampled per map tile." />
 
     <Border Grid.Row="3" BorderBrush="#666" BorderThickness="1">
-      <DataGrid ItemsSource="{Binding Files}" AutoGenerateColumns="False" IsReadOnly="True"
-                GridLinesVisibility="Horizontal" CanUserResizeColumns="True" CanUserSortColumns="True">
-        <DataGrid.Columns>
-          <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="200" />
-          <DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="90" />
-          <DataGridTextColumn Header="State" Binding="{Binding State}" Width="90" />
-          <DataGridTextColumn Header="Coverage / size" Binding="{Binding Coverage}" Width="360" />
-          <DataGridTextColumn Header="Path" Binding="{Binding FullPath}" Width="300" />
-          <DataGridTextColumn Header="Error" Binding="{Binding Error}" Width="260" />
-        </DataGrid.Columns>
-      </DataGrid>
+      <TabControl>
+        <TabItem Header="Elevation (GeoTIFF / DTED)">
+          <DataGrid ItemsSource="{Binding Files}" AutoGenerateColumns="False" IsReadOnly="True"
+                    GridLinesVisibility="Horizontal" CanUserResizeColumns="True" CanUserSortColumns="True">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="200" />
+              <DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="90" />
+              <DataGridTextColumn Header="State" Binding="{Binding State}" Width="90" />
+              <DataGridTextColumn Header="Coverage / size" Binding="{Binding Coverage}" Width="360" />
+              <DataGridTextColumn Header="Path" Binding="{Binding FullPath}" Width="300" />
+              <DataGridTextColumn Header="Error" Binding="{Binding Error}" Width="260" />
+            </DataGrid.Columns>
+          </DataGrid>
+        </TabItem>
+        <TabItem Header="GDAL Custom map rasters">
+          <Grid RowDefinitions="*,Auto" RowSpacing="6">
+            <DataGrid Grid.Row="0" ItemsSource="{Binding RasterFiles}" AutoGenerateColumns="False"
+                      IsReadOnly="True" GridLinesVisibility="Horizontal"
+                      CanUserResizeColumns="True" CanUserSortColumns="True">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="200" />
+                <DataGridTextColumn Header="Driver" Binding="{Binding Driver}" Width="100" />
+                <DataGridTextColumn Header="State" Binding="{Binding State}" Width="90" />
+                <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="180" />
+                <DataGridTextColumn Header="Coverage" Binding="{Binding Coverage}" Width="320" />
+                <DataGridTextColumn Header="Path" Binding="{Binding FullPath}" Width="300" />
+                <DataGridTextColumn Header="Error" Binding="{Binding Error}" Width="260" />
+              </DataGrid.Columns>
+            </DataGrid>
+            <TextBlock Grid.Row="1" Margin="6,0" Text="{Binding NativeGdalStatus}"
+                       Foreground="#9CDCFE" TextWrapping="Wrap" />
+          </Grid>
+        </TabItem>
+      </TabControl>
     </Border>
 
     <Grid Grid.Row="4" RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="5" ColumnSpacing="8">

@@ -560,6 +560,7 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
       Services.MapTileSourceFactory.BuiltInMapTypes.Concat([
         Services.OgcMapProvider.WmsMapType,
         Services.OgcMapProvider.WmtsMapType,
+        Services.NativeGdalMapService.MapType,
       ]));
 
   [ObservableProperty]
