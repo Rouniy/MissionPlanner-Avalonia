@@ -14,6 +14,8 @@ using MissionPlanner;
 using MissionPlanner.ArduPilot;
 using MissionPlanner.ArduPilot.Mavlink;
 using MissionPlanner.Utilities;
+using MissionPlannerAvalonia.Services;
+using MissionPlannerAvalonia.Views;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -461,9 +463,15 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
   }
 
   public async Task SetTrackerHomeAsync(double lat, double lng) {
-    double currentMeters = _comPort.MAV.cs.TrackerLocation.Alt != 0
-        ? _comPort.MAV.cs.TrackerLocation.Alt
-        : _comPort.MAV.cs.HomeAlt;
+    NmeaVehicleTarget? target = NmeaVehicleSession.CaptureActive(requireOpen: false);
+    if (target == null) {
+      await Services.Dialogs.Alert("Tracker Home", "No planner target is available.");
+      return;
+    }
+    CurrentState state = target.Link.MAVlist[target.SystemId, target.ComponentId].cs;
+    double currentMeters = state.TrackerLocation.Alt != 0
+        ? state.TrackerLocation.Alt
+        : state.HomeAlt;
     double displayAlt = currentMeters * CurrentState.multiplieralt;
     string? input = await Services.Dialogs.InputBox(
         "Tracker Home",
@@ -476,9 +484,87 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
       }
       return;
     }
-    _comPort.MAV.cs.TrackerLocation = new PointLatLngAlt(
-        lat, lng, entered / CurrentState.multiplieralt);
+    if (!NmeaVehicleSession.Matches(
+            target, NmeaVehicleSession.CaptureActive(requireOpen: false))) {
+      await Services.Dialogs.Alert(
+          "Tracker Home", "The selected modem or vehicle changed; tracker home was not modified.");
+      Status = "Tracker Home cancelled because the selected target changed.";
+      return;
+    }
+    SetTrackerHome(target, lat, lng, entered / CurrentState.multiplieralt);
     Status = "Tracker Home set from the map.";
+  }
+
+  public async Task SetTrackerHomeFromModuleAsync() {
+    NmeaVehicleTarget? target = NmeaVehicleSession.CaptureActive(requireOpen: false);
+    if (target == null) {
+      await Services.Dialogs.Alert("Tracker Home", "No planner target is available.");
+      return;
+    }
+
+    NmeaGgaFix? fix = await TrackerHomeModuleWindow.ShowAsync(Services.Dialogs.Owner);
+    if (!fix.HasValue) {
+      return;
+    }
+    if (!NmeaVehicleSession.Matches(
+            target, NmeaVehicleSession.CaptureActive(requireOpen: false))) {
+      await Services.Dialogs.Alert(
+          "Tracker Home", "The selected modem or vehicle changed while reading GPS. "
+          + "Tracker home was not modified.");
+      Status = "Tracker Home cancelled because the selected target changed.";
+      return;
+    }
+
+    srtm.altresponce terrain = await Task.Run(
+        () => srtm.getAltitude(fix.Value.Latitude, fix.Value.Longitude));
+    TrackerHomeAltitude altitude;
+    try {
+      altitude = TrackerHomeLocationResolver.Resolve(fix.Value, terrain);
+    } catch (Exception ex) {
+      await Services.Dialogs.Alert("Tracker Home", ex.Message);
+      Status = "Unable to resolve Tracker Home altitude.";
+      return;
+    }
+
+    string fallbackWarning = altitude.UsedGpsFallback
+        ? "\n\nLocal terrain was unavailable, so the GPS mean-sea-level altitude will be used."
+        : "";
+    bool confirmed = await Services.Dialogs.ConfirmDangerous(
+        "Set Tracker Home From GPS",
+        $"Set the shared antenna-tracker home while "
+        + $"{NmeaVehicleSession.Describe(target)} is selected to "
+        + $"{TrackerHomeLocationResolver.CoordinateText(fix.Value)}, "
+        + $"{altitude.Metres:0.0} m ASL ({altitude.Source})?"
+        + fallbackWarning
+        + "\n\nTracker Home is shared across vehicles. Verify the selected modem and the "
+        + "physical GPS location before applying it.",
+        "Set Tracker Home");
+    if (!confirmed) {
+      Status = "Tracker Home update from GPS was cancelled.";
+      return;
+    }
+    if (!NmeaVehicleSession.Matches(
+            target, NmeaVehicleSession.CaptureActive(requireOpen: false))) {
+      await Services.Dialogs.Alert(
+          "Tracker Home", "The selected modem or vehicle changed; tracker home was not modified.");
+      Status = "Tracker Home cancelled because the selected target changed.";
+      return;
+    }
+
+    SetTrackerHome(
+        target, fix.Value.Latitude, fix.Value.Longitude, altitude.Metres);
+    Status = $"Tracker Home set from external GPS using {altitude.Source}.";
+  }
+
+  internal static void SetTrackerHome(
+      NmeaVehicleTarget target, double latitude, double longitude, double altitudeMetres) {
+    if (!double.IsFinite(latitude) || latitude is < -90 or > 90
+        || !double.IsFinite(longitude) || longitude is < -180 or > 180
+        || !double.IsFinite(altitudeMetres)) {
+      throw new ArgumentOutOfRangeException(nameof(latitude), "Tracker Home position is invalid.");
+    }
+    target.Link.MAVlist[target.SystemId, target.ComponentId].cs.TrackerLocation =
+        new PointLatLngAlt(latitude, longitude, altitudeMetres, "Tracker Home");
   }
 
   private static double PolygonAreaM2(IReadOnlyList<PointLatLngAlt> pts) {
