@@ -655,11 +655,11 @@ native-platform acceptance testing.
   its safe defaults were visually verified.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 1042-test source on 2026-08-23. Package metadata,
+- The `.deb` target is rebuilt from the current 1044-test source on 2026-08-23. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
-  resources were verified; all 405 packaged-file checksums match after extraction, including the
-  portable plugin API, HIDSharp/BLE dependency licenses, the SimpleBLE source/license notice and
-  byte-for-byte pinned 8,443,722-byte `airports.csv`.
+  resources were verified; all 407 packaged-file checksums match after extraction, including the
+  portable plugin API, HIDSharp/BLE dependency licenses, the SimpleBLE and VLC source/license
+  notices and byte-for-byte pinned 8,443,722-byte `airports.csv`.
 - `lintian --fail-on error,warning` passes without diagnostics. The extracted x86-64 ELF apphost
   reaches the normal event loop under Xvfb and has no unresolved direct library dependencies.
   Complete and checkpoint-only HUD AVI samples are recognized as 25 fps MJPEG by `ffprobe`.
@@ -677,10 +677,11 @@ native-platform acceptance testing.
   traffic test.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260823.1463552_amd64.deb`
-(54,403,518 bytes; SHA-256
-`c4188ea8374fc1db67f71ab7a4ca5477ed7dc5245b0b010996ec636fbdb05061`), built from commit
-`1463552` and the current 1042-test source including the cross-platform Nordic UART BLE transport,
+`out/packages/missionplanner-avalonia_1.3.83-20260823.e68f68f_amd64.deb`
+(54,402,176 bytes; SHA-256
+`e493a51a76a7a9671820a69fe18a91d3f12c626462e4d4c772b5be2d8c5b842e`), built from commit
+`e68f68f` and the current 1044-test source including the cross-platform Nordic UART BLE transport,
+the native Apple-Silicon VLC video runtime and ARM64 release target,
 the macOS IOKit HID joystick backend,
 serialized firmware-archive progress, the signed beta update channel, portable plugin host, HUD-to-MJPEG/AVI
 recording, synchronized
@@ -724,9 +725,11 @@ exports identified during the current CodeQL triage, plus concurrent global-sett
 serialized settings-file writes, and a cancellable bounded WebSocket transport with explicit
 raw-WebSocket/Socket.IO protocol separation and reconnect lifecycle ownership.
 Its APT version is
-`1:1.3.83+20260823.r277.1463552`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r277` orders same-day builds before comparing hashes. The existing
-`out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
+`1:1.3.83+20260823.r280.e68f68f`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r280` orders same-day builds before comparing hashes. The matching portable archive
+is `out/packages/MissionPlannerAvalonia-1.3.83-20260823.e68f68f-linux-x64.tar.gz`
+(68,357,775 bytes; SHA-256
+`9e3015f73ff39cd070ec2d6ed04a2d52dbb9210132362c0b550c2b9a497c3cfb`).
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
 
