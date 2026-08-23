@@ -27,6 +27,11 @@ interface of **ArduPilot Mission Planner**.
 - `Tmds.DBus` © Tom Deseyn and Alp Toker is used by that transport under the MIT
   License; see `LICENSES/MIT-Tmds.DBus.txt`.
 
+## macOS joystick dependency
+
+- `HIDSharp` © 2010–2025 James F. Bellinger is used for the macOS IOKit HID joystick
+  transport under Apache License 2.0; see `LICENSES/Apache-2.0.txt`.
+
 ## License of this project
 
 Because this work links Mission Planner's GPLv3 code, the combined work is a **derivative work and is

@@ -45,6 +45,11 @@ The macOS x64 artifact runs natively on Intel Macs and through Rosetta 2 on Appl
 Avalonia application also cross-publishes for `osx-arm64`, but the official macOS libVLC NuGet
 runtime is x86-64-only, so ARM64 video is not yet a complete release configuration.
 
+Joystick input uses the upstream DirectInput backend on Windows, a port-native joydev backend on
+Linux and a native IOKit HID backend on macOS. All three feed the same mapping UI and target-safe
+RC/manual-control sender; physical controller acceptance is tracked separately in the port-status
+document.
+
 ## Linux prerequisites
 
 Ubuntu 24.04 / Linux Mint 22 can use the distribution SDK. `global.json` accepts the 10.0.100

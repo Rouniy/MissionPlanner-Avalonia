@@ -10,8 +10,8 @@ first-class release targets and still require runtime acceptance on their native
 | Target | Packaging | Current verification |
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
-| macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 1024 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/signed-beta-updates/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/Hong-Kong-NoFly/GeoTIFF/DTED/native-GDAL/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed, including the managed IOKit HID joystick dependency; native CI loads IOKit and enumerates controllers. Full native application and physical-controller acceptance remain pending. Runs on Apple Silicon through Rosetta 2 |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 1035 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/signed-beta-updates/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/Hong-Kong-NoFly/GeoTIFF/DTED/native-GDAL/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
@@ -140,8 +140,13 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   scheduler, repeated loop faults are stopped, and plugin diagnostics use a bounded rotating log.
   Plugins remain trusted in-process code. Existing WinForms binaries still require source-level UI
   adaptation and recompilation against the documented portable API.
-- Linux joystick input uses a port-native joydev reader with deterministic lifecycle, raw input
-  preview and Avalonia-safe axis/button detection; Windows continues to use upstream DirectInput.
+- Joystick input now has native backends on every release target: a port-native Linux joydev reader,
+  upstream DirectInput on Windows and IOKit HID on macOS through the managed HIDSharp transport.
+  The macOS decoder handles descriptor-declared signed/unsigned ranges, Generic Desktop and Flight
+  Simulation axes, two sliders, up to 128 buttons, hat switches and discrete D-pads. Enumeration
+  rejects unrelated HID collections, gives identical controllers stable privacy-preserving labels
+  and isolates unreadable devices; hot-unplug stops the reader and releases active vehicle control.
+  Linux retains deterministic lifecycle, raw input preview and Avalonia-safe axis/button detection.
   An application-level 20 Hz sender now mirrors upstream RC override/manual-control behaviour,
   including the native UDP RC path for the built-in SITL and safe release on disable/link loss. It
   remains active after leaving Setup and can be released immediately from Flight Data. Opt-in,
@@ -596,8 +601,8 @@ submodule. UI-only changes were translated to Avalonia where applicable:
 
 Existing port functionality includes serial/TCP/UDP/UDP-client/WebSocket connections, flight data,
 mission planning, parameter pages, firmware/log tools, simulation launcher, NMEA/mirroring tools,
-maps/KML, DroneCAN over MAVLink, direct SLCAN or pydronecan multicast, joystick mapping where a
-backend exists, and libVLC video. These code paths compile; hardware-specific paths still need
+maps/KML, DroneCAN over MAVLink, direct SLCAN or pydronecan multicast, joystick mapping on all three
+release targets, and libVLC video. These code paths compile; hardware-specific paths still need
 native-platform acceptance testing.
 
 ## Linux verification details
@@ -605,8 +610,10 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 1024 passed, 0 failed, including signed beta manifest discovery, HTTPS-only
-  bundle download, Ed25519/SHA-256 tamper rejection, extraction and atomic rollback; Settings concurrency/null-reset stress,
+- Automated tests: 1035 passed, 0 failed, including HID descriptor decoding for signed and unsigned
+  axes, Flight Simulation controls, dual sliders, buttons, hats and D-pads; signed beta manifest
+  discovery, HTTPS-only bundle download, Ed25519/SHA-256 tamper rejection, extraction and atomic
+  rollback; Settings concurrency/null-reset stress,
   WMS/WMTS capabilities and tile addressing, raw/Socket.IO WebSocket protocol, fragmentation,
   reconnect and bounded-close integration, real
   loopback-UDP Moving Base input, blocking serial cancellation, exact multi-modem target isolation
@@ -749,7 +756,7 @@ not remove required Windows-native files from `win-x64` builds.
 
 ## Remaining cross-platform parity and release work
 
-This list contains four concrete open areas. The handler-level audit of the hidden developer form is
+This list contains three concrete open areas. The handler-level audit of the hidden developer form is
 complete and enforced against the pinned upstream source by a test. Completed workflows are
 documented above rather than being left in the gap table.
 NativeAOT is tracked separately as an optional runtime experiment and is not counted as a
@@ -758,7 +765,6 @@ Mission Planner functional-parity gap.
 | Area | Affected targets | Current state and direction |
 | --- | --- | --- |
 | Legacy Mission Planner plugin compatibility | All | Portable DLL discovery, dependency loading, `Init`/`Loaded`/`Loop`/`Exit`, enable/disable UI, current MAVLink/settings access, Flight Data actions and HUD overlays are native and operational. Existing DLLs compiled against Mission Planner's WinForms executable are not binary-compatible; their UI must be adapted to Avalonia and rebuilt. Loose `.cs` runtime compilation is intentionally not treated as DLL compatibility. |
-| Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
 | BLE transport | macOS; Linux/Windows hardware acceptance | Linux uses the port-native managed BlueZ/D-Bus Nordic UART transport and no longer needs a SimpleBLE `.so`; adapter discovery is verified, while end-to-end traffic still needs a Nordic UART modem. Upstream's Windows SimpleBLE path remains hardware-unverified. macOS still needs a CoreBluetooth or maintained native integration. |
 
@@ -799,6 +805,9 @@ covers this mismatch and its endpoint/clamping/monotonicity behaviour is unit-te
 The 20 Hz MAVLink and built-in-SITL packet paths are unit-tested; a two-instance Linux Copter swarm
 has also been started and connected over two real MAVLink TCP links with distinct sysids. Hands-on
 joystick auto-detect/mapping and RC output to a live vehicle or SITL still need acceptance.
+The macOS IOKit backend is descriptor-tested, cross-publishes for x64 and arm64, and is exercised by
+a native CI enumeration smoke; controller discovery, live axes/buttons and unplug behavior still
+need acceptance with representative macOS USB and Bluetooth hardware.
 Camera-footprint projection is
 unit-tested, but a live `CAMERA_FEEDBACK` source is still required for acceptance. No USB flight
 controller, CAN adapter, camera or live vehicle was attached during this verification. Each release
