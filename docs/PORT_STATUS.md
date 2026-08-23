@@ -721,6 +721,11 @@ override fixes upstream `Settings.GetDataDirectory()`, which otherwise resolves 
 Package-managed Linux installs contain a marker and launch-time environment flag. The in-app updater
 is disabled for those installs and directs the user to APT; portable Linux, Windows and macOS builds
 retain their existing signed update flow.
+The Beta Updates preference is operational rather than decorative: startup/manual checks discover
+the latest GitHub prerelease carrying platform-specific signed manifest assets, verify the same
+Ed25519 trust key as stable, then verify and atomically install its SHA-256-pinned full bundle. Help
+also exposes a one-shot beta check. Stable tags continue to deploy the loose-file GitHub Pages feed;
+`-beta`/`-beta.N` tags publish prerelease assets without replacing that stable site.
 
 ## Managed DLL versus platform-native libraries
 
@@ -742,7 +747,7 @@ not remove required Windows-native files from `win-x64` builds.
 
 ## Remaining cross-platform parity and release work
 
-This list contains five concrete open areas. The handler-level audit of the hidden developer form is
+This list contains four concrete open areas. The handler-level audit of the hidden developer form is
 complete and enforced against the pinned upstream source by a test. Completed workflows are
 documented above rather than being left in the gap table.
 NativeAOT is tracked separately as an optional runtime experiment and is not counted as a
@@ -751,7 +756,6 @@ Mission Planner functional-parity gap.
 | Area | Affected targets | Current state and direction |
 | --- | --- | --- |
 | Legacy Mission Planner plugin compatibility | All | Portable DLL discovery, dependency loading, `Init`/`Loaded`/`Loop`/`Exit`, enable/disable UI, current MAVLink/settings access, Flight Data actions and HUD overlays are native and operational. Existing DLLs compiled against Mission Planner's WinForms executable are not binary-compatible; their UI must be adapted to Avalonia and rebuilt. Loose `.cs` runtime compilation is intentionally not treated as DLL compatibility. |
-| Signed beta application updates | All | Stable signed updates work. The Beta Updates control is disabled until this project publishes and signs a separate beta manifest/channel. |
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
 | BLE transport | macOS; Linux/Windows hardware acceptance | Linux uses the port-native managed BlueZ/D-Bus Nordic UART transport and no longer needs a SimpleBLE `.so`; adapter discovery is verified, while end-to-end traffic still needs a Nordic UART modem. Upstream's Windows SimpleBLE path remains hardware-unverified. macOS still needs a CoreBluetooth or maintained native integration. |

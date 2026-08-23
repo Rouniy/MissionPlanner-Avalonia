@@ -18,6 +18,8 @@ archives and update manifests. Filesystem/release names use the GitHub-safe equi
 `1.3.83-20260821.8a07b1b`, and release tags add a leading `v`. Debian control metadata adds the
 epoch `1:` plus a monotonically ordered port revision so
 APT correctly upgrades installations that used the port's older `2026.8.0` CalVer.
+Signed beta tags append `-beta` or `-beta.N`; they are published as GitHub prereleases and are
+discovered by the enabled Beta Updates preference without replacing the stable GitHub Pages feed.
 
 See [port status](docs/PORT_STATUS.md) for the Windows/macOS/Linux support matrix, upstream
 synchronization details, and the explicit list of missing or intentionally disabled functionality.
@@ -127,7 +129,10 @@ missionplanner-avalonia
 The Debian package installs the application under `/usr/lib/missionplanner-avalonia`, adds a desktop
 entry and exposes `/usr/bin/missionplanner-avalonia`. Package-managed installs do not overwrite
 themselves with the in-app updater; update them through APT. The portable `tar.gz` keeps the signed
-in-app updater and includes `install.sh` for a per-user desktop entry.
+in-app updater and includes `install.sh` for a per-user desktop entry. Portable Linux, Windows and
+macOS builds can opt into signed prereleases with Setup > Planner > Beta Updates or check the beta
+channel directly from Help. Both stable and beta manifests use Ed25519 signatures; downloaded beta
+bundles are additionally pinned by SHA-256 before extraction.
 
 ## Runtime files
 

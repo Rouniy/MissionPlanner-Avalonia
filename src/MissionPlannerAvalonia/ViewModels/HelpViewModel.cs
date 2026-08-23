@@ -14,6 +14,7 @@ public partial class HelpViewModel : ViewModelBase {
 
   [ObservableProperty]
   [NotifyCanExecuteChangedFor(nameof(CheckForUpdatesCommand))]
+  [NotifyCanExecuteChangedFor(nameof(CheckForBetaUpdatesCommand))]
   private bool _isChecking;
 
   [RelayCommand(CanExecute = nameof(CanCheck))]
@@ -25,6 +26,20 @@ public partial class HelpViewModel : ViewModelBase {
       UpdateStatus = "";
     } catch (Exception ex) {
       UpdateStatus = "Update check failed: " + ex.Message;
+    } finally {
+      IsChecking = false;
+    }
+  }
+
+  [RelayCommand(CanExecute = nameof(CanCheck))]
+  private async Task CheckForBetaUpdates() {
+    IsChecking = true;
+    UpdateStatus = "Checking for signed beta updates…";
+    try {
+      await Services.Updater.CheckBetaNowAsync();
+      UpdateStatus = "";
+    } catch (Exception ex) {
+      UpdateStatus = "Beta update check failed: " + ex.Message;
     } finally {
       IsChecking = false;
     }

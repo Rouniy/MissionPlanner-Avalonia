@@ -23,8 +23,8 @@ jobs:
         shell: bash
         run: |
           V="${GITHUB_REF_NAME#v}"
-          if [[ ! "$V" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-([0-9]{8})\.([0-9a-fA-F]{7})$ ]]; then
-            echo "::error::Tag '$GITHUB_REF_NAME' must be v<MP-version>-<yyyyMMdd>.<short-hash>."
+          if [[ ! "$V" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-([0-9]{8})\.([0-9a-fA-F]{7})(-beta(\.[0-9]+)?)?$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' must be v<MP-version>-<yyyyMMdd>.<short-hash> or add -beta[.N]."
             exit 1
           fi
           TAG_BASE="${BASH_REMATCH[1]}"
@@ -58,6 +58,7 @@ jobs:
       revision: ${{ steps.ver.outputs.revision }}
       version: ${{ steps.ver.outputs.version }}
       artifact: ${{ steps.ver.outputs.artifact }}
+      prerelease: ${{ steps.ver.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -67,11 +68,13 @@ jobs:
         id: ver
         shell: bash
         run: |
+          PRERELEASE=false
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             TAG_VERSION="${GITHUB_REF_NAME#v}"
-            if [[ "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-([0-9]{8})\.([0-9a-fA-F]{7})$ ]]; then
+            if [[ "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-([0-9]{8})\.([0-9a-fA-F]{7})(-beta(\.[0-9]+)?)?$ ]]; then
               export MISSIONPLANNER_BUILD_DATE="${BASH_REMATCH[1]}"
               export MISSIONPLANNER_COMMIT="${BASH_REMATCH[2]}"
+              [[ -n "${BASH_REMATCH[3]}" ]] && PRERELEASE=true
             fi
           fi
           export MISSIONPLANNER_DIRTY_SUFFIX=""
@@ -82,6 +85,7 @@ jobs:
           echo "revision=$MP_PORT_REVISION" >> "$GITHUB_OUTPUT"
           echo "version=$MP_PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
           echo "artifact=$MP_ARTIFACT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
 
   package:
     needs: resolve-version
@@ -103,6 +107,7 @@ jobs:
       MP_RELEASE_REVISION: ${{ needs.resolve-version.outputs.revision }}
       MP_RELEASE_VERSION: ${{ needs.resolve-version.outputs.version }}
       MP_RELEASE_ARTIFACT: ${{ needs.resolve-version.outputs.artifact }}
+      MP_RELEASE_PRERELEASE: ${{ needs.resolve-version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -225,7 +230,20 @@ jobs:
           else
             NOTES="https://github.com/${GITHUB_REPOSITORY}/releases"
           fi
-          if [[ "$RID" == "osx-x64" ]]; then
+          if [[ "$MP_RELEASE_PRERELEASE" == "true" ]]; then
+            if [[ "$RID" == "osx-x64" ]]; then
+              BUNDLE="upload/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-osx-x64.zip"
+            else
+              BUNDLE="upload/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-$RID-update.zip"
+              python3 build/make-update-bundle.py "$PUB" "$BUNDLE"
+            fi
+            BUNDLE_NAME="$(basename "$BUNDLE")"
+            BUNDLE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$BUNDLE_NAME"
+            BUNDLE_SHA=$(shasum -a 256 "$BUNDLE" | awk '{print $1}')
+            BUNDLE_SIZE=$(python3 -c 'import os,sys; print(os.path.getsize(sys.argv[1]))' "$BUNDLE")
+            python3 build/gen-manifest.py "$SITE" "$MP_RELEASE_VERSION" "$NOTES" "$SITE/manifest.json" \
+              --bundle-url "$BUNDLE_URL" --bundle-sha256 "$BUNDLE_SHA" --bundle-size "$BUNDLE_SIZE"
+          elif [[ "$RID" == "osx-x64" ]]; then
             # macOS updates whole-bundle (notarization can't survive loose-file swaps). The manifest
             # points at the notarized .app zip that the release job publishes as a release asset; the
             # URL is deterministic from the tag, so it resolves once release + pages jobs finish.
@@ -250,6 +268,10 @@ jobs:
           # stdin keeps base64 portable: macOS BSD base64 rejects a positional file arg
           base64 < update.sig.bin | tr -d '\n' > "$SITE/manifest.sig"
           rm -f update_key.pem update.sig.bin
+          if [[ "$MP_RELEASE_PRERELEASE" == "true" ]]; then
+            cp "$SITE/manifest.json" "upload/$RID-manifest.json"
+            cp "$SITE/manifest.sig" "upload/$RID-manifest.sig"
+          fi
 
       - uses: actions/upload-artifact@v7
         with:
@@ -263,7 +285,7 @@ jobs:
           path: upload/*
 
   release:
-    needs: package
+    needs: [resolve-version, package]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
@@ -275,12 +297,12 @@ jobs:
         with:
           files: artifacts/**/*
           generate_release_notes: true
-          prerelease: false
+          prerelease: ${{ needs.resolve-version.outputs.prerelease == 'true' }}
 
   # Host the per-platform loose file tree + signed manifest for the in-app auto-updater.
   pages:
-    needs: package
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: [resolve-version, package]
+    if: startsWith(github.ref, 'refs/tags/') && needs.resolve-version.outputs.prerelease != 'true'
     runs-on: ubuntu-latest
     permissions:
       pages: write

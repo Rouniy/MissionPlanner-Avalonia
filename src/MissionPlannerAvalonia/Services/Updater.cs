@@ -2,12 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Security;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
@@ -19,13 +21,16 @@ using Org.BouncyCastle.Crypto.Signers;
 
 namespace MissionPlannerAvalonia.Services;
 
+public enum UpdateChannel { Stable, Beta }
+
 public static class Updater {
   public const string DefaultOwnerRepo = "sema-aviation/MissionPlanner-Avalonia";
   public const string PagesBaseUrl = "https://sema-aviation.github.io/MissionPlanner-Avalonia";
 
   public const string PublicKeyBase64 = "A0WFYpVPY1BvbOSpAzmuCTfbV6SR/cw9sUPy4AKZSgg=";
 
-  private const string _skipKey = "update_skip_version";
+  private const string _stableSkipKey = "update_skip_version";
+  private const string _betaSkipKey = "update_skip_beta_version";
 
   private static readonly HttpClient _http = CreateClient();
 
@@ -37,29 +42,54 @@ public static class Updater {
 
   public static Task CheckOnStartupAsync() => AppPaths.IsPackageManaged
       ? Task.CompletedTask
-      : RunAsync(silentWhenUpToDate: true, respectSkip: true);
+      : RunAsync(SelectedChannel(), silentWhenUpToDate: true, respectSkip: true);
 
   public static Task CheckNowAsync() => AppPaths.IsPackageManaged
       ? Dialogs.Alert("Update", "This installation is managed by the system package manager. " +
           "Use apt to install updates.")
-      : RunAsync(silentWhenUpToDate: false, respectSkip: false);
+      : RunAsync(SelectedChannel(), silentWhenUpToDate: false, respectSkip: false);
 
-  private static async Task RunAsync(bool silentWhenUpToDate, bool respectSkip) {
+  public static Task CheckBetaNowAsync() => AppPaths.IsPackageManaged
+      ? Dialogs.Alert("Beta update", "This installation is managed by the system package manager. " +
+          "Install a beta .deb from the beta release instead of overwriting package-owned files.")
+      : RunAsync(UpdateChannel.Beta, silentWhenUpToDate: false, respectSkip: false);
+
+  private static UpdateChannel SelectedChannel() =>
+      Settings.Instance.GetBoolean("beta_updates", false) ? UpdateChannel.Beta : UpdateChannel.Stable;
+
+  private static async Task RunAsync(
+      UpdateChannel channel, bool silentWhenUpToDate, bool respectSkip) {
     UpdateEngine engine;
     UpdateEngine.Manifest? m;
     try {
       engine = NewEngine();
-      m = await engine.FetchManifestAsync().ConfigureAwait(true);
+      if (channel == UpdateChannel.Beta) {
+        UpdateManifestEndpoint? endpoint = await BetaUpdateLocator.FindLatestAsync(
+            _http, DefaultOwnerRepo, UpdateEngine.Rid()).ConfigureAwait(true);
+        m = endpoint == null
+            ? null
+            : await engine.FetchManifestAsync(
+                endpoint.ManifestUrl, endpoint.SignatureUrl).ConfigureAwait(true);
+        if (m != null && m.Bundle == null) {
+          throw new InvalidDataException(
+              "The signed beta manifest does not contain a full update bundle.");
+        }
+      } else {
+        m = await engine.FetchManifestAsync().ConfigureAwait(true);
+      }
     } catch (Exception ex) {
       if (!silentWhenUpToDate) {
-        await Dialogs.Alert("Update", "Update check failed: " + ex.Message);
+        await Dialogs.Alert(ChannelTitle(channel), "Update check failed: " + ex.Message);
       }
       return;
     }
 
     if (m == null) {
       if (!silentWhenUpToDate) {
-        await Dialogs.Alert("Update", "Could not reach the update server.");
+        string message = channel == UpdateChannel.Beta
+            ? "No signed beta release is currently published for this platform."
+            : "Could not reach the update server.";
+        await Dialogs.Alert(ChannelTitle(channel), message);
       }
       return;
     }
@@ -68,19 +98,23 @@ public static class Updater {
     string localDisplay = AppVersion.Full;
     if (!UpdateEngine.IsNewer(m.Version, local)) {
       if (!silentWhenUpToDate) {
-        await Dialogs.Alert("Update", $"You are up to date ({localDisplay}).");
+        await Dialogs.Alert(ChannelTitle(channel), $"You are up to date ({localDisplay}).");
       }
       return;
     }
 
-    if (respectSkip && Settings.Instance[_skipKey] == m.Version) {
+    string skipKey = channel == UpdateChannel.Beta ? _betaSkipKey : _stableSkipKey;
+    if (respectSkip && Settings.Instance[skipKey] == m.Version) {
       return;
     }
 
     while (true) {
-      var choice = await Dialogs.Choice("Update available",
+      string warning = channel == UpdateChannel.Beta
+          ? " This is a prerelease build and may be less stable."
+          : "";
+      var choice = await Dialogs.Choice(ChannelTitle(channel) + " available",
           $"Version {AppVersion.Parse(m.Version).Display} is available " +
-          $"(you have {localDisplay}).",
+          $"(you have {localDisplay}).{warning}",
           "Install", "What's new", "Skip this version", "Later");
       if (choice == "What's new") {
         Dialogs.OpenUrl(string.IsNullOrEmpty(m.Notes)
@@ -89,7 +123,7 @@ public static class Updater {
         continue;
       }
       if (choice == "Skip this version") {
-        Settings.Instance[_skipKey] = m.Version;
+        Settings.Instance[skipKey] = m.Version;
         Settings.Instance.Save();
         return;
       }
@@ -99,7 +133,7 @@ public static class Updater {
       break;
     }
 
-    if (m.Bundle != null && OperatingSystem.IsMacOS()) {
+    if (m.Bundle != null) {
       await InstallBundleAsync(engine, m.Bundle);
       return;
     }
@@ -143,6 +177,9 @@ public static class Updater {
   private static UpdateEngine NewEngine() =>
       new(_http, AppPaths.InstallRoot, PagesBaseUrl, Convert.FromBase64String(PublicKeyBase64));
 
+  private static string ChannelTitle(UpdateChannel channel) =>
+      channel == UpdateChannel.Beta ? "Beta update" : "Update";
+
   private static void ApplyAndRestart(
       UpdateEngine engine, IReadOnlyList<UpdateEngine.ManifestFile> changed, string staging) {
     string exe = Environment.ProcessPath ?? "";
@@ -161,9 +198,9 @@ public static class Updater {
     Shutdown();
   }
 
-  // macOS: download the whole notarized .app zip, verify its hash, then hand off to a detached
-  // helper that swaps the entire bundle after we exit and relaunches. Whole-bundle replacement
-  // keeps the signature + stapled notarization ticket intact.
+  // Beta releases use a signed manifest containing one SHA-256-pinned full bundle on every target.
+  // Stable macOS releases use the same bundle path because loose-file replacement would invalidate
+  // the Developer ID signature and notarization staple.
   private static async Task InstallBundleAsync(UpdateEngine engine, UpdateEngine.ManifestBundle bundle) {
     string staging = Path.Combine(engine.CacheDir, "staging");
     try {
@@ -190,7 +227,21 @@ public static class Updater {
     progress.Close();
 
     try {
-      RunMacBundleHelper(engine.InstallDir, zip, staging);
+      if (OperatingSystem.IsMacOS()) {
+        RunMacBundleHelper(engine.InstallDir, zip, staging);
+      } else {
+        string extracted = Path.Combine(staging, "extract");
+        IReadOnlyList<UpdateEngine.ManifestFile> files = engine.ExtractBundle(zip, extracted);
+        if (OperatingSystem.IsWindows()) {
+          RunWindowsHelper(engine.InstallDir, extracted, Environment.ProcessPath ?? "");
+        } else {
+          engine.Apply(files, extracted);
+          string exe = Environment.ProcessPath ?? "";
+          if (!string.IsNullOrEmpty(exe)) {
+            Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false });
+          }
+        }
+      }
       Shutdown();
     } catch (Exception ex) {
       await Dialogs.Alert("Update", "Install failed: " + ex.Message);
@@ -259,6 +310,58 @@ public static class Updater {
   }
 }
 
+public sealed record UpdateManifestEndpoint(string ManifestUrl, string SignatureUrl);
+
+public static class BetaUpdateLocator {
+  private sealed record ReleaseAsset(
+      [property: JsonPropertyName("name")] string Name,
+      [property: JsonPropertyName("browser_download_url")] string DownloadUrl);
+
+  private sealed record Release(
+      [property: JsonPropertyName("draft")] bool Draft,
+      [property: JsonPropertyName("prerelease")] bool Prerelease,
+      [property: JsonPropertyName("assets")] IReadOnlyList<ReleaseAsset>? Assets);
+
+  public static async Task<UpdateManifestEndpoint?> FindLatestAsync(
+      HttpClient http, string ownerRepo, string rid, CancellationToken ct = default) {
+    ArgumentNullException.ThrowIfNull(http);
+    if (string.IsNullOrWhiteSpace(ownerRepo) || string.IsNullOrWhiteSpace(rid)) {
+      throw new ArgumentException("Repository and runtime identifier are required.");
+    }
+
+    string api = $"https://api.github.com/repos/{ownerRepo.Trim('/')}/releases?per_page=30";
+    IReadOnlyList<Release>? releases;
+    try {
+      releases = JsonSerializer.Deserialize<IReadOnlyList<Release>>(
+          await http.GetByteArrayAsync(api, ct).ConfigureAwait(false));
+    } catch (HttpRequestException) {
+      return null;
+    } catch (TaskCanceledException) {
+      return null;
+    }
+
+    string manifestName = rid + "-manifest.json";
+    string signatureName = rid + "-manifest.sig";
+    foreach (Release release in releases ?? Array.Empty<Release>()) {
+      if (release.Draft || !release.Prerelease || release.Assets == null) {
+        continue;
+      }
+      string? manifest = release.Assets.FirstOrDefault(asset =>
+          string.Equals(asset.Name, manifestName, StringComparison.OrdinalIgnoreCase))?.DownloadUrl;
+      string? signature = release.Assets.FirstOrDefault(asset =>
+          string.Equals(asset.Name, signatureName, StringComparison.OrdinalIgnoreCase))?.DownloadUrl;
+      if (IsHttps(manifest) && IsHttps(signature)) {
+        return new UpdateManifestEndpoint(manifest!, signature!);
+      }
+    }
+    return null;
+  }
+
+  private static bool IsHttps(string? value) =>
+      Uri.TryCreate(value, UriKind.Absolute, out Uri? uri)
+      && uri.Scheme == Uri.UriSchemeHttps;
+}
+
 public sealed class UpdateEngine {
   private static readonly JsonSerializerOptions _jsonOpts = new() { PropertyNameCaseInsensitive = true };
 
@@ -288,10 +391,17 @@ public sealed class UpdateEngine {
       string Version, string? Notes, IReadOnlyList<ManifestFile> Files, ManifestBundle? Bundle = null);
 
   public async Task<Manifest?> FetchManifestAsync(CancellationToken ct = default) {
+    return await FetchManifestAsync(
+        $"{_baseUrl}/{_rid}/manifest.json",
+        $"{_baseUrl}/{_rid}/manifest.sig", ct).ConfigureAwait(false);
+  }
+
+  public async Task<Manifest?> FetchManifestAsync(
+      string manifestUrl, string signatureUrl, CancellationToken ct = default) {
     byte[] json, sig;
     try {
-      json = await _http.GetByteArrayAsync($"{_baseUrl}/{_rid}/manifest.json", ct).ConfigureAwait(false);
-      string sigText = await _http.GetStringAsync($"{_baseUrl}/{_rid}/manifest.sig", ct).ConfigureAwait(false);
+      json = await _http.GetByteArrayAsync(manifestUrl, ct).ConfigureAwait(false);
+      string sigText = await _http.GetStringAsync(signatureUrl, ct).ConfigureAwait(false);
       sig = Convert.FromBase64String(sigText.Trim());
     } catch (HttpRequestException) {
       return null;
@@ -303,6 +413,30 @@ public sealed class UpdateEngine {
       throw new SecurityException("Update manifest signature is invalid.");
     }
     return JsonSerializer.Deserialize<Manifest>(json, _jsonOpts);
+  }
+
+  public IReadOnlyList<ManifestFile> ExtractBundle(string zipPath, string extractionDir) {
+    if (Directory.Exists(extractionDir)) {
+      Directory.Delete(extractionDir, recursive: true);
+    }
+    Directory.CreateDirectory(extractionDir);
+    ZipFile.ExtractToDirectory(zipPath, extractionDir);
+
+    string launcher = Path.Combine(extractionDir,
+        OperatingSystem.IsWindows() ? "MissionPlannerAvalonia.exe" : "MissionPlannerAvalonia");
+    if (!File.Exists(launcher)) {
+      throw new InvalidDataException("The update bundle does not contain the application launcher.");
+    }
+    if (!OperatingSystem.IsWindows()) {
+      File.SetUnixFileMode(launcher, File.GetUnixFileMode(launcher)
+          | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+    }
+
+    return Directory.EnumerateFiles(extractionDir, "*", SearchOption.AllDirectories)
+        .Select(path => new ManifestFile(
+            Path.GetRelativePath(extractionDir, path), Sha256File(path), new FileInfo(path).Length))
+        .OrderBy(file => file.Path, StringComparer.Ordinal)
+        .ToArray();
   }
 
   public bool VerifySignature(byte[] data, byte[] signature) {
@@ -363,8 +497,12 @@ public sealed class UpdateEngine {
 
   public async Task DownloadBundleAsync(ManifestBundle bundle, string destZip,
       IProgress<double>? progress = null, CancellationToken ct = default) {
+    if (!Uri.TryCreate(bundle.Url, UriKind.Absolute, out Uri? bundleUri)
+        || bundleUri.Scheme != Uri.UriSchemeHttps) {
+      throw new SecurityException("Update bundles must use HTTPS.");
+    }
     Directory.CreateDirectory(Path.GetDirectoryName(destZip)!);
-    using (var resp = await _http.GetAsync(bundle.Url, HttpCompletionOption.ResponseHeadersRead, ct)
+    using (var resp = await _http.GetAsync(bundleUri, HttpCompletionOption.ResponseHeadersRead, ct)
         .ConfigureAwait(false)) {
       resp.EnsureSuccessStatusCode();
       long total = resp.Content.Headers.ContentLength ?? bundle.Size;
@@ -388,6 +526,7 @@ public sealed class UpdateEngine {
 
   public void Apply(IReadOnlyList<ManifestFile> changed, string stagingDir) {
     var moved = new List<(string live, string old)>();
+    var placed = new List<string>();
     try {
       foreach (var f in changed) {
         string live = Path.Combine(InstallDir, f.Path);
@@ -402,8 +541,14 @@ public sealed class UpdateEngine {
           moved.Add((live, old));
         }
         File.Move(staged, live);
+        placed.Add(live);
       }
     } catch {
+      foreach (string live in placed) {
+        try {
+          File.Delete(live);
+        } catch { }
+      }
       foreach (var (live, old) in moved) {
         try {
           if (File.Exists(live)) {

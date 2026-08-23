@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security;
 using System.Security.Cryptography;
+using System.IO.Compression;
 using System.Text.Json;
 using MissionPlannerAvalonia.Services;
 using Org.BouncyCastle.Crypto.Generators;
@@ -140,15 +141,86 @@ public class UpdaterTests {
     File.WriteAllBytes(Path.Combine(install, "a.dll"), origA);
     File.WriteAllBytes(Path.Combine(install, "b.dll"), [20, 21]);
     File.WriteAllBytes(Path.Combine(staging, "a.dll"), [99]);
+    File.WriteAllBytes(Path.Combine(staging, "new.dll"), [88]);
 
     var engine = new UpdateEngine(new HttpClient(new FakeHandler()), install, Base, pub, Rid);
     var changed = new List<UpdateEngine.ManifestFile> {
       new("a.dll", "x", 1),
+      new("new.dll", "x", 1),
       new("b.dll", "x", 1),
     };
 
     Assert.ThrowsAny<Exception>(() => engine.Apply(changed, staging));
     Assert.Equal(origA, File.ReadAllBytes(Path.Combine(install, "a.dll")));
+    Assert.False(File.Exists(Path.Combine(install, "new.dll")));
+  }
+
+  [Fact]
+  public async Task Beta_locator_selects_latest_prerelease_with_https_platform_manifests() {
+    const string api = "https://api.github.com/repos/test/project/releases?per_page=30";
+    var handler = new FakeHandler();
+    handler.Routes[api] = JsonSerializer.SerializeToUtf8Bytes(new[] {
+      new {
+        draft = false,
+        prerelease = true,
+        assets = new[] {
+          new { name = $"{Rid}-manifest.json", browser_download_url = "http://unsafe/manifest" },
+          new { name = $"{Rid}-manifest.sig", browser_download_url = "http://unsafe/signature" },
+        },
+      },
+      new {
+        draft = false,
+        prerelease = true,
+        assets = new[] {
+          new { name = $"{Rid}-manifest.json", browser_download_url = "https://download/manifest" },
+          new { name = $"{Rid}-manifest.sig", browser_download_url = "https://download/signature" },
+        },
+      },
+    });
+
+    UpdateManifestEndpoint? endpoint = await BetaUpdateLocator.FindLatestAsync(
+        new HttpClient(handler), "test/project", Rid);
+
+    Assert.NotNull(endpoint);
+    Assert.Equal("https://download/manifest", endpoint!.ManifestUrl);
+    Assert.Equal("https://download/signature", endpoint.SignatureUrl);
+  }
+
+  [Fact]
+  public void Bundle_extract_requires_launcher_and_applies_root_relative_files() {
+    var (_, pub) = NewKey();
+    string source = TempDir();
+    string install = TempDir();
+    string extract = TempDir();
+    Directory.Delete(extract);
+    string launcher = OperatingSystem.IsWindows()
+        ? "MissionPlannerAvalonia.exe"
+        : "MissionPlannerAvalonia";
+    File.WriteAllBytes(Path.Combine(source, launcher), [1, 2, 3]);
+    Directory.CreateDirectory(Path.Combine(source, "sub"));
+    File.WriteAllBytes(Path.Combine(source, "sub", "feature.dll"), [4, 5, 6]);
+    string zip = Path.Combine(TempDir(), "update.zip");
+    ZipFile.CreateFromDirectory(source, zip, CompressionLevel.NoCompression, includeBaseDirectory: false);
+
+    var engine = new UpdateEngine(new HttpClient(new FakeHandler()), install, Base, pub, Rid);
+    IReadOnlyList<UpdateEngine.ManifestFile> files = engine.ExtractBundle(zip, extract);
+    engine.Apply(files, extract);
+
+    Assert.Equal(new byte[] { 1, 2, 3 }, File.ReadAllBytes(Path.Combine(install, launcher)));
+    Assert.Equal(new byte[] { 4, 5, 6 },
+        File.ReadAllBytes(Path.Combine(install, "sub", "feature.dll")));
+  }
+
+  [Fact]
+  public void Bundle_extract_rejects_archive_without_application_launcher() {
+    var (_, pub) = NewKey();
+    string source = TempDir();
+    File.WriteAllBytes(Path.Combine(source, "not-the-app.txt"), [1]);
+    string zip = Path.Combine(TempDir(), "update.zip");
+    ZipFile.CreateFromDirectory(source, zip);
+    var engine = new UpdateEngine(new HttpClient(new FakeHandler()), TempDir(), Base, pub, Rid);
+
+    Assert.Throws<InvalidDataException>(() => engine.ExtractBundle(zip, Path.Combine(TempDir(), "x")));
   }
 
   private static byte[] BundleManifestJson(string version, string url, byte[] pkg) {
@@ -201,6 +273,16 @@ public class UpdaterTests {
     var m = await engine.FetchManifestAsync();
     await Assert.ThrowsAsync<InvalidDataException>(
         () => engine.DownloadBundleAsync(m!.Bundle!, Path.Combine(TempDir(), "update.zip")));
+  }
+
+  [Fact]
+  public async Task Bundle_download_rejects_non_https_url() {
+    var (_, pub) = NewKey();
+    var engine = new UpdateEngine(new HttpClient(new FakeHandler()), TempDir(), Base, pub, Rid);
+    var bundle = new UpdateEngine.ManifestBundle("http://download/update.zip", "00", 1);
+
+    await Assert.ThrowsAsync<SecurityException>(
+        () => engine.DownloadBundleAsync(bundle, Path.Combine(TempDir(), "update.zip")));
   }
 
   [Theory]
