@@ -185,7 +185,7 @@
       <TextBlock Classes="grp" Text="Advanced" />
       <WrapPanel>
         <CheckBox Content="Beta Updates" IsChecked="{Binding BetaUpdates, Mode=TwoWay}"
-                  IsEnabled="False" ToolTip.Tip="No separate signed beta manifest is published yet"
+                  ToolTip.Tip="Use signed GitHub prereleases for startup and manual update checks"
                   Margin="0,0,12,0" />
         <CheckBox Content="Password Protect" IsChecked="{Binding PasswordProtect, Mode=TwoWay}" Margin="0,0,12,0" />
         <CheckBox Content="Auto Param Commit" IsChecked="{Binding AutoParamCommit, Mode=TwoWay}" Margin="0,0,12,0" />
