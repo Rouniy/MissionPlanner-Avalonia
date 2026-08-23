@@ -102,6 +102,60 @@ public class NvModemTests {
   }
 
   [Fact]
+  public void Discovery_replays_shared_cache_and_probes_every_observed_mavlink_id() {
+    var transport = new FakeTransport();
+    var source = new NvModemLink(new MAVLinkInterface(), "shared UDP");
+    transport.Links.Add(source);
+    transport.Endpoints[source] = [new NvModemEndpoint(37, 203)];
+    transport.Cached[source] = [Packet(NvModemMessageIds.Nv5LinkStatus,
+        new Nv5LinkStatusMessage { Channel = 1, RadioChip = 0, Role = 2 }, 149, 241)];
+
+    using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
+        startTimer: false);
+
+    NvModemDeviceChoice modem = Assert.Single(viewModel.Devices);
+    Assert.Contains("149:241", modem.Label, StringComparison.Ordinal);
+    Assert.Contains(transport.Sent, sent => sent.SystemId == 37 && sent.ComponentId == 203
+        && sent.Packet is MAVLink.mavlink_command_long_t command
+        && command.command == (ushort)MAVLink.MAV_CMD.REQUEST_MESSAGE
+        && command.param1 == NvModemMessageIds.Nv5LinkStatus);
+    Assert.Contains(transport.Sent, sent => sent.SystemId == 37 && sent.ComponentId == 203
+        && sent.Packet is MAVLink.mavlink_command_long_t command
+        && command.command == (ushort)MAVLink.MAV_CMD.UAVCAN_GET_NODE_INFO);
+  }
+
+  [Fact]
+  public void Nv4_detection_uses_nv_can_node_name_at_any_id_and_ignores_other_nodes() {
+    var transport = new FakeTransport();
+    using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
+        startTimer: false);
+    var source = new NvModemLink(new MAVLinkInterface(), "shared TCP");
+
+    viewModel.HandlePacket(source, NodeInfoPacket("camera.node", 41, 212));
+    Assert.Empty(viewModel.Devices);
+
+    viewModel.HandlePacket(source, NodeInfoPacket("nv_tx-main", 199, 254));
+
+    NvModemDeviceChoice modem = Assert.Single(viewModel.Devices);
+    Assert.Contains("NV4 199:254", modem.Label, StringComparison.Ordinal);
+    Assert.Contains(transport.Sent, sent => sent.SystemId == 199 && sent.ComponentId == 254
+        && sent.Packet is MAVLink.mavlink_param_request_list_t);
+  }
+
+  [Fact]
+  public void Autopilot_version_alone_does_not_classify_component_68_as_nv5() {
+    var transport = new FakeTransport();
+    using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
+        startTimer: false);
+    var source = new NvModemLink(new MAVLinkInterface(), "shared serial");
+
+    viewModel.HandlePacket(source, Packet((uint)MAVLink.MAVLINK_MSG_ID.AUTOPILOT_VERSION,
+        new MAVLink.mavlink_autopilot_version_t { product_id = 7 }, 11, 68));
+
+    Assert.Empty(viewModel.Devices);
+  }
+
+  [Fact]
   public void Clears_parameter_rows_immediately_when_switching_devices_and_reuses_target_link() {
     var transport = new FakeTransport();
     DateTime now = DateTime.UtcNow;
@@ -165,8 +219,7 @@ public class NvModemTests {
         startTimer: false);
     var source = new NvModemLink(new MAVLinkInterface(), "UDP NV4");
     const int count = 10;
-    viewModel.HandlePacket(source, Packet(NvModemMessageIds.NvRxStat,
-        new NvRxStatMessage(), 1, 16));
+    viewModel.HandlePacket(source, NodeInfoPacket("NV_RX", 1, 16));
     viewModel.HandlePacket(source, ParameterPacket("HW_VERSION", 4, 5, count, 1, 16));
     for (int index = 1; index <= 8; index++) {
       viewModel.HandlePacket(source, ParameterPacket($"ENC_KEY_BYTE{index}", index, 6,
@@ -327,6 +380,19 @@ public class NvModemTests {
     };
   }
 
+  private static MAVLink.MAVLinkMessage NodeInfoPacket(
+      string name, byte systemId, byte componentId) {
+    byte[] nameBytes = new byte[80];
+    Encoding.ASCII.GetBytes(name).CopyTo(nameBytes, 0);
+    return Packet((uint)MAVLink.MAVLINK_MSG_ID.UAVCAN_NODE_INFO,
+        new MAVLink.mavlink_uavcan_node_info_t {
+          name = nameBytes,
+          hw_unique_id = new byte[16],
+          hw_version_major = 4,
+          sw_version_major = 4,
+        }, systemId, componentId);
+  }
+
   private static MAVLink.MAVLinkMessage Packet(
       uint id, object payload, byte systemId, byte componentId) {
     NvModemMavlinkDialect.Register();
@@ -342,6 +408,8 @@ public class NvModemTests {
 
     internal List<NvModemLink> Links { get; } = [];
     internal List<SentPacket> Sent { get; } = [];
+    internal Dictionary<NvModemLink, List<NvModemEndpoint>> Endpoints { get; } = [];
+    internal Dictionary<NvModemLink, List<MAVLink.MAVLinkMessage>> Cached { get; } = [];
 
     public event Action<NvModemLink, MAVLink.MAVLinkMessage>? PacketReceived {
       add { }
@@ -354,6 +422,12 @@ public class NvModemTests {
     }
 
     public IReadOnlyList<NvModemLink> Snapshot() => Links;
+
+    public IReadOnlyList<NvModemEndpoint> KnownEndpoints(NvModemLink source) =>
+        Endpoints.GetValueOrDefault(source) ?? [];
+
+    public IReadOnlyList<MAVLink.MAVLinkMessage> CachedDiscoveryPackets(NvModemLink source) =>
+        Cached.GetValueOrDefault(source) ?? [];
 
     public bool Send(NvModemLink source, object packet, byte systemId, byte componentId) {
       Sent.Add(new SentPacket(source, packet, systemId, componentId));

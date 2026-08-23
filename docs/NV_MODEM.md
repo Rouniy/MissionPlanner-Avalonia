@@ -16,8 +16,15 @@ modem was observed. A device key is therefore:
 
 This keeps modems with identical MAVLink IDs on different network or serial links independent.
 NV4 replies use the same observed Mission Planner link, which is the port equivalent of GTU's dirty
-addressed-UDP-route fix. Discovery supports current NV5 identity/link-status messages and legacy
-NV4 parameter signatures. The corrected singular NV4 apply parameter is `REFRESH_SETTING`.
+addressed-UDP-route fix. Discovery has no system-ID or component-ID range. Current NV5 devices are
+identified by their private live-status/configuration messages; NV4 devices are identified by the
+`UAVCAN_NODE_INFO` names `NV_TX` and `NV_RX`, matching GTU's NV diagnostics. The page replays those
+discovery packets from the shared Mission Planner cache when it is opened after a modem was already
+seen, and requests both message families from every observed address as well as by broadcast. The
+private SkyComm dialect is registered at application startup, before any shared connection starts
+reading, so an early NV5 status packet is not lost while the setup page is still closed. An
+ordinary `AUTOPILOT_VERSION` or parameter reply is not enough to classify a flight controller as a
+modem. The corrected singular NV4 apply parameter is `REFRESH_SETTING`.
 
 ## Settings behavior
 
