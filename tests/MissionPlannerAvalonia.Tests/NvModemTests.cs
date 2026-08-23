@@ -18,6 +18,7 @@ public class NvModemTests {
     Assert.Equal(78, Marshal.SizeOf<Nv5LinkStatusMessage>());
     Assert.Equal(103, Marshal.SizeOf<Nv5RtspConfigMessage>());
     Assert.Equal(9, Marshal.SizeOf<Nv5RtspConfigAckMessage>());
+    Assert.Equal(53, Marshal.SizeOf<NvModemInfoMessage>());
     AssertMessage(NvModemMessageIds.NvRxStat, 49, 28, 28, typeof(NvRxStatMessage));
     AssertMessage(NvModemMessageIds.Nv5LinkStatus, 165, 77, 78,
         typeof(Nv5LinkStatusMessage));
@@ -25,6 +26,8 @@ public class NvModemTests {
         typeof(Nv5RtspConfigMessage));
     AssertMessage(NvModemMessageIds.Nv5RtspConfigAck, 193, 9, 9,
         typeof(Nv5RtspConfigAckMessage));
+    AssertMessage(NvModemMessageIds.NvModemInfo, 207, 53, 53,
+        typeof(NvModemInfoMessage));
   }
 
   [Fact]
@@ -55,6 +58,25 @@ public class NvModemTests {
     Assert.Equal(-873, actual.PacketRssiDbmX10);
     Assert.Equal(2, actual.Channel);
     Assert.Equal(97, actual.LinkQuality);
+  }
+
+  [Fact]
+  public void Parses_shared_nv_modem_passport_through_the_startup_dialect() {
+    NvModemInfoMessage expected = ModemInfo(
+        generation: 5, productProfile: 7,
+        flags: NvModemInfoFlags.Channel1Active | NvModemInfoFlags.Channel2Active,
+        channel1Role: 0, channel2Role: 2, channel1Chip: 0, channel2Chip: 3);
+
+    MAVLink.MAVLinkMessage packet = Packet(
+        NvModemMessageIds.NvModemInfo, expected, systemId: 213, componentId: 247);
+    NvModemInfoMessage actual = packet.ToStructure<NvModemInfoMessage>();
+
+    Assert.Equal(1, actual.SchemaVersion);
+    Assert.Equal(5, actual.ModemGeneration);
+    Assert.Equal(7, actual.ProductProfile);
+    Assert.Equal(2, actual.RadioCount);
+    Assert.Equal(2, actual.Channel2Role);
+    Assert.Equal(3, actual.Channel2RadioChip);
   }
 
   [Theory]
@@ -107,8 +129,8 @@ public class NvModemTests {
     var source = new NvModemLink(new MAVLinkInterface(), "shared UDP");
     transport.Links.Add(source);
     transport.Endpoints[source] = [new NvModemEndpoint(37, 203)];
-    transport.Cached[source] = [Packet(NvModemMessageIds.Nv5LinkStatus,
-        new Nv5LinkStatusMessage { Channel = 1, RadioChip = 0, Role = 2 }, 149, 241)];
+    transport.Cached[source] = [Packet(NvModemMessageIds.NvModemInfo,
+        ModemInfo(5, 7, NvModemInfoFlags.Channel1Active, channel1Role: 2), 149, 241)];
 
     using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
         startTimer: false);
@@ -121,11 +143,15 @@ public class NvModemTests {
         && command.param1 == NvModemMessageIds.Nv5LinkStatus);
     Assert.Contains(transport.Sent, sent => sent.SystemId == 37 && sent.ComponentId == 203
         && sent.Packet is MAVLink.mavlink_command_long_t command
+        && command.command == (ushort)MAVLink.MAV_CMD.REQUEST_MESSAGE
+        && command.param1 == NvModemMessageIds.NvModemInfo);
+    Assert.Contains(transport.Sent, sent => sent.SystemId == 37 && sent.ComponentId == 203
+        && sent.Packet is MAVLink.mavlink_command_long_t command
         && command.command == (ushort)MAVLink.MAV_CMD.UAVCAN_GET_NODE_INFO);
   }
 
   [Fact]
-  public void Nv4_detection_uses_nv_can_node_name_at_any_id_and_ignores_other_nodes() {
+  public void Nv4_detection_uses_strict_gtu_can_node_signature_at_any_id() {
     var transport = new FakeTransport();
     using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
         startTimer: false);
@@ -134,12 +160,70 @@ public class NvModemTests {
     viewModel.HandlePacket(source, NodeInfoPacket("camera.node", 41, 212));
     Assert.Empty(viewModel.Devices);
 
-    viewModel.HandlePacket(source, NodeInfoPacket("nv_tx-main", 199, 254));
+    viewModel.HandlePacket(source, NodeInfoPacket("RX_433/70", 42, 213, hardwareMajor: 2));
+    Assert.Empty(viewModel.Devices);
+
+    viewModel.HandlePacket(source, NodeInfoPacket("TX_433/70", 199, 254));
 
     NvModemDeviceChoice modem = Assert.Single(viewModel.Devices);
     Assert.Contains("NV4 199:254", modem.Label, StringComparison.Ordinal);
     Assert.Contains(transport.Sent, sent => sent.SystemId == 199 && sent.ComponentId == 254
         && sent.Packet is MAVLink.mavlink_param_request_list_t);
+  }
+
+  [Fact]
+  public void Supports_every_current_gtu_identity_mode_without_id_ranges() {
+    var transport = new FakeTransport();
+    using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
+        startTimer: false);
+    var source = new NvModemLink(new MAVLinkInterface(), "shared UDP");
+
+    viewModel.HandlePacket(source, Packet(NvModemMessageIds.NvModemInfo,
+        ModemInfo(5, 7, NvModemInfoFlags.Channel1Active, channel1Role: 0), 213, 247));
+    viewModel.HandlePacket(source, Packet(NvModemMessageIds.NvModemInfo,
+        ModemInfo(4, 4, NvModemInfoFlags.Channel1Active, channel1Role: 1,
+            channel1Chip: 4), 121, 203));
+    viewModel.HandlePacket(source, Packet(NvModemMessageIds.Nv5LinkStatus,
+        new Nv5LinkStatusMessage { Channel = 1, RadioChip = 0, Role = 2 }, 149, 241));
+    viewModel.HandlePacket(source, Packet(NvModemMessageIds.NvRxStat,
+        new NvRxStatMessage { Frequency = 433_000_000 }, 90, 91));
+    viewModel.HandlePacket(source, NodeInfoPacket("RX_433/70", 199, 254));
+    viewModel.HandlePacket(source, ParameterPacket(
+        "MODEM_PROFILE", 8, 5, 1, 88, 222));
+
+    Assert.Equal(6, viewModel.Devices.Count);
+    Assert.Contains(viewModel.Devices, item =>
+        item.Label.Contains("NV5 213:247", StringComparison.Ordinal)
+        && item.Label.Contains("RX", StringComparison.Ordinal));
+    Assert.Contains(viewModel.Devices, item =>
+        item.Label.Contains("NV4 121:203", StringComparison.Ordinal)
+        && item.Label.Contains("TX", StringComparison.Ordinal));
+    Assert.Contains(viewModel.Devices, item =>
+        item.Label.Contains("NV5 149:241", StringComparison.Ordinal));
+    Assert.Contains(viewModel.Devices, item =>
+        item.Label.Contains("NV4 90:91", StringComparison.Ordinal));
+    Assert.Contains(viewModel.Devices, item =>
+        item.Label.Contains("NV4 199:254", StringComparison.Ordinal)
+        && item.Label.Contains("RX", StringComparison.Ordinal));
+    Assert.Contains(viewModel.Devices, item =>
+        item.Label.Contains("NV5 88:222", StringComparison.Ordinal));
+  }
+
+  [Fact]
+  public void Invalid_passport_and_unscoped_nv4_parameter_do_not_create_devices() {
+    var transport = new FakeTransport();
+    using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
+        startTimer: false);
+    var source = new NvModemLink(new MAVLinkInterface(), "shared UDP");
+
+    NvModemInfoMessage invalid = ModemInfo(5, 7, 0);
+    invalid.SchemaVersion = 0;
+    viewModel.HandlePacket(source,
+        Packet(NvModemMessageIds.NvModemInfo, invalid, 10, 20));
+    viewModel.HandlePacket(source,
+        ParameterPacket("HW_VERSION", 4, 5, 1, 30, 40));
+
+    Assert.Empty(viewModel.Devices);
   }
 
   [Fact]
@@ -219,7 +303,7 @@ public class NvModemTests {
         startTimer: false);
     var source = new NvModemLink(new MAVLinkInterface(), "UDP NV4");
     const int count = 10;
-    viewModel.HandlePacket(source, NodeInfoPacket("NV_RX", 1, 16));
+    viewModel.HandlePacket(source, NodeInfoPacket("RX_433/70", 1, 16));
     viewModel.HandlePacket(source, ParameterPacket("HW_VERSION", 4, 5, count, 1, 16));
     for (int index = 1; index <= 8; index++) {
       viewModel.HandlePacket(source, ParameterPacket($"ENC_KEY_BYTE{index}", index, 6,
@@ -380,16 +464,41 @@ public class NvModemTests {
     };
   }
 
+  private static NvModemInfoMessage ModemInfo(
+      byte generation, byte productProfile, byte flags,
+      byte channel1Role = 0, byte channel2Role = 0,
+      byte channel1Chip = 0, byte channel2Chip = 0) => new() {
+        Capabilities = 1,
+        TimeBootMs = 1000,
+        BuildHash = new byte[8],
+        Uid2 = new byte[18],
+        SchemaVersion = 1,
+        ModemGeneration = generation,
+        HardwareVersionMajor = generation,
+        HardwareVersionMinor = 1,
+        FirmwareVersionMajor = generation,
+        ProtocolVersion = 4,
+        ProductProfile = productProfile,
+        RadioCount = (byte)(((flags & NvModemInfoFlags.Channel1Active) != 0 ? 1 : 0)
+        + ((flags & NvModemInfoFlags.Channel2Active) != 0 ? 1 : 0)),
+        Flags = flags,
+        Channel1Role = channel1Role,
+        Channel2Role = channel2Role,
+        Channel1RadioChip = channel1Chip,
+        Channel2RadioChip = channel2Chip,
+      };
+
   private static MAVLink.MAVLinkMessage NodeInfoPacket(
-      string name, byte systemId, byte componentId) {
+      string name, byte systemId, byte componentId,
+      byte hardwareMajor = 4, byte softwareMajor = 4) {
     byte[] nameBytes = new byte[80];
     Encoding.ASCII.GetBytes(name).CopyTo(nameBytes, 0);
     return Packet((uint)MAVLink.MAVLINK_MSG_ID.UAVCAN_NODE_INFO,
         new MAVLink.mavlink_uavcan_node_info_t {
           name = nameBytes,
           hw_unique_id = new byte[16],
-          hw_version_major = 4,
-          sw_version_major = 4,
+          hw_version_major = hardwareMajor,
+          sw_version_major = softwareMajor,
         }, systemId, componentId);
   }
 

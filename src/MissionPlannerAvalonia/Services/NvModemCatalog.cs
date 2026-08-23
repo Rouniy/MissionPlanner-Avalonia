@@ -374,8 +374,9 @@ internal static class NvModemCatalog {
   }
 
   internal static string HardwareModel(
-      NvModemGeneration generation, uint profile, IEnumerable<byte>? chips = null) {
-    if (generation == NvModemGeneration.Nv4) {
+      NvModemGeneration generation, uint profile, IEnumerable<byte>? chips = null,
+      bool hasModemInfo = false) {
+    if (generation == NvModemGeneration.Nv4 && !hasModemInfo) {
       return "Teensy · RFM/SX1278";
     }
     string model = profile switch {
@@ -389,7 +390,7 @@ internal static class NvModemCatalog {
       8 => "Teensy.V5 2RX shared-SPI",
       _ => generation == NvModemGeneration.Nv5 ? "NV5 hardware unknown" : "hardware unknown",
     };
-    if (profile is 0 or 7 && chips != null) {
+    if ((profile is 0 or 7 || generation == NvModemGeneration.Nv4) && chips != null) {
       string[] names = [.. chips.Distinct().Select(ChipName)];
       if (names.Length != 0) {
         model += " · " + string.Join(" + ", names);

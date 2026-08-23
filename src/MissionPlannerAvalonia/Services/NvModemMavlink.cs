@@ -12,6 +12,16 @@ internal static class NvModemMessageIds {
   internal const uint Nv5LinkStatus = 53010;
   internal const uint Nv5RtspConfig = 53014;
   internal const uint Nv5RtspConfigAck = 53015;
+  internal const uint NvModemInfo = 53016;
+}
+
+internal static class NvModemInfoFlags {
+  internal const byte Channel1Active = 1 << 0;
+  internal const byte Channel2Active = 1 << 1;
+}
+
+internal static class NvModemCapabilities {
+  internal const ulong Rtsp = 1UL << 8;
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1, Size = 28)]
@@ -77,6 +87,34 @@ internal struct Nv5RtspConfigAckMessage {
   internal byte Result;
 }
 
+[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 53)]
+internal struct NvModemInfoMessage {
+  internal ulong Capabilities;
+  internal uint TimeBootMs;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
+  internal byte[] BuildHash;
+
+  [MarshalAs(UnmanagedType.ByValArray, SizeConst = 18)]
+  internal byte[] Uid2;
+
+  internal byte SchemaVersion;
+  internal byte ModemGeneration;
+  internal byte HardwareVersionMajor;
+  internal byte HardwareVersionMinor;
+  internal byte FirmwareVersionMajor;
+  internal byte FirmwareVersionMinor;
+  internal byte FirmwareVersionPatch;
+  internal byte ProtocolVersion;
+  internal byte ProductProfile;
+  internal byte RadioCount;
+  internal byte Flags;
+  internal byte Channel1Role;
+  internal byte Channel2Role;
+  internal byte Channel1RadioChip;
+  internal byte Channel2RadioChip;
+}
+
 /// <summary>
 /// Registers the SkyComm messages used by NV5Settings with Mission Planner's generated MAVLink
 /// parser. The upstream MAVLink table is public and mutable, which lets the port add a private
@@ -106,6 +144,8 @@ internal static class NvModemMavlinkDialect {
         typeof(Nv5RtspConfigMessage)),
     new(NvModemMessageIds.Nv5RtspConfigAck, "NV5_RTSP_CONFIG_ACK", 193, 9, 9,
         typeof(Nv5RtspConfigAckMessage)),
+    new(NvModemMessageIds.NvModemInfo, "NV_MODEM_INFO", 207, 53, 53,
+        typeof(NvModemInfoMessage)),
   ];
 }
 
@@ -251,8 +291,13 @@ internal sealed class NvModemMavlinkTransport : INvModemMavlinkTransport {
   public IReadOnlyList<MAVLink.MAVLinkMessage> CachedDiscoveryPackets(NvModemLink source) {
     try {
       uint[] messageIds = [
+        NvModemMessageIds.NvModemInfo,
         NvModemMessageIds.Nv5LinkStatus,
+        NvModemMessageIds.Nv5RtspConfig,
+        NvModemMessageIds.Nv5RtspConfigAck,
+        NvModemMessageIds.NvRxStat,
         (uint)MAVLink.MAVLINK_MSG_ID.UAVCAN_NODE_INFO,
+        (uint)MAVLink.MAVLINK_MSG_ID.PARAM_VALUE,
       ];
       var packets = new List<MAVLink.MAVLinkMessage>();
       foreach (MAVState mav in source.Link.MAVlist.ToArray()) {
