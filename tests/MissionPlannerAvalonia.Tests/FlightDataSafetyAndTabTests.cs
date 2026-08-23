@@ -7,7 +7,7 @@ namespace MissionPlannerAvalonia.Tests;
 
 public class FlightDataSafetyAndTabTests {
   private static readonly string[] _headers = {
-    "Quick", "Actions", "Messages", "Simple Actions", "PreFlight", "Gauges", "Status", "Servo/Relay",
+    "Quick", "Actions", "Messages", "Simple Actions", "PreFlight", "Drone ID", "Gauges", "Status", "Servo/Relay",
     "Scripts", "Payload Control", "Telemetry Logs", "DataFlash Logs", "Transponder",
     "Aux Function",
   };
@@ -137,7 +137,7 @@ public class FlightDataSafetyAndTabTests {
       var tabs = Assert.IsType<TabControl>(view.FindControl<TabControl>("FdTabs"));
       var items = tabs.Items.OfType<TabItem>().ToArray();
       string[] expected = {
-        "Quick", "Actions", "Messages", "Simple Actions", "PreFlight", "Gauges",
+        "Quick", "Actions", "Messages", "Simple Actions", "PreFlight", "Drone ID", "Gauges",
         "Transponder", "Status", "Servo/Relay", "Aux Function", "Scripts",
         "Payload Control", "Telemetry Logs", "DataFlash Logs",
       };
@@ -163,6 +163,7 @@ public class FlightDataSafetyAndTabTests {
     Assert.DoesNotContain("Actions", hidden);
     Assert.DoesNotContain("Messages", hidden);
     Assert.DoesNotContain("Telemetry Logs", hidden);
+    Assert.DoesNotContain("Drone ID", hidden);
     Assert.Contains("Status", hidden);
     Assert.Contains("DataFlash Logs", hidden);
   }

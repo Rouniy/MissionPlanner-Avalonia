@@ -1103,6 +1103,7 @@ public partial class FlightDataView : UserControl {
         ["tablogbrowse"] = "DataFlash Logs",
         ["tabTransponder"] = "Transponder",
         ["tabAuxFunction"] = "Aux Function",
+        ["tabDroneId"] = "Drone ID",
       };
 
   private static IEnumerable<TabItem> TabItemsOf(TabControl tabs) => tabs.Items.OfType<TabItem>();
@@ -1187,7 +1188,10 @@ public partial class FlightDataView : UserControl {
         .Where(header => header != null)
         .Cast<string>()
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
-    return headers.Where(header => !visible.Contains(header))
+    // The upstream value predates plugin-inserted tabs. Keep the newly ported Drone ID tab
+    // visible on first migration; subsequent Avalonia settings can still hide it explicitly.
+    return headers.Where(header => !header.Equals("Drone ID", StringComparison.OrdinalIgnoreCase)
+        && !visible.Contains(header))
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
   }
 

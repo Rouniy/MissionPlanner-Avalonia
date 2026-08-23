@@ -1,0 +1,160 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  mc:Ignorable="d"
+  d:DesignWidth="760"
+  d:DesignHeight="360"
+  x:Class="MissionPlannerAvalonia.Views.OpenDroneIdView"
+  x:DataType="vm:OpenDroneIdViewModel">
+  <Grid Margin="6" RowDefinitions="Auto,Auto,*" RowSpacing="5">
+    <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+      <Button x:Name="ToggleOpenDroneIdButton" Grid.Column="0" MinWidth="86"
+              Content="{Binding ConnectButtonText}" Command="{Binding ToggleCommand}" />
+      <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+        <TextBlock Text="{Binding Status}" TextWrapping="Wrap" FontSize="11" />
+        <TextBlock Text="{Binding TargetDescription}" TextWrapping="Wrap"
+                   FontSize="10" Foreground="#AAB8C4" />
+      </StackPanel>
+      <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="5">
+        <Button Content="Declare Emergency" Command="{Binding DeclareEmergencyCommand}"
+                Background="#A52A2A" Foreground="White" />
+        <Button Content="Clear" Command="{Binding ClearEmergencyCommand}"
+                IsVisible="{Binding EmergencyDeclared}" />
+      </StackPanel>
+    </Grid>
+
+    <Border Grid.Row="1" Background="{Binding MapStatusBrush}" CornerRadius="3" Padding="6,3">
+      <TextBlock Text="{Binding MapStatusText}" Foreground="White" FontWeight="SemiBold" />
+    </Border>
+
+    <TabControl Grid.Row="2">
+      <TabItem Header="Status">
+        <Grid Margin="6" ColumnDefinitions="Auto,150,Auto,90,*"
+              RowDefinitions="Auto,Auto,Auto,Auto,*" ColumnSpacing="6" RowSpacing="4">
+          <TextBlock Grid.Row="0" Grid.Column="0" Text="NMEA source" VerticalAlignment="Center" />
+          <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding Inputs}"
+                    SelectedItem="{Binding SelectedInput, Mode=TwoWay}"
+                    IsEnabled="{Binding CanEditSettings}" />
+          <Button Grid.Row="0" Grid.Column="2" Content="Refresh"
+                  Command="{Binding RefreshInputsCommand}" IsEnabled="{Binding CanEditSettings}" />
+          <ComboBox Grid.Row="0" Grid.Column="3" ItemsSource="{Binding Bauds}"
+                    SelectedItem="{Binding SelectedBaud, Mode=TwoWay}"
+                    IsVisible="{Binding IsSerialInput}" IsEnabled="{Binding CanEditSettings}" />
+
+          <TextBlock Grid.Row="1" Grid.Column="0" Text="{Binding NetworkPortLabel}"
+                     VerticalAlignment="Center" IsVisible="{Binding !IsSerialInput}" />
+          <NumericUpDown Grid.Row="1" Grid.Column="1" Minimum="1" Maximum="65535"
+                         Value="{Binding NetworkPort, Mode=TwoWay}"
+                         IsVisible="{Binding !IsSerialInput}" IsEnabled="{Binding CanEditSettings}" />
+          <TextBlock Grid.Row="1" Grid.Column="2" Text="Host" VerticalAlignment="Center"
+                     IsVisible="{Binding IsNetworkClient}" />
+          <TextBox Grid.Row="1" Grid.Column="3" Grid.ColumnSpan="2"
+                   Text="{Binding NetworkHost, Mode=TwoWay}"
+                   IsVisible="{Binding IsNetworkClient}" IsEnabled="{Binding CanEditSettings}" />
+
+          <TextBlock Grid.Row="2" Grid.Column="0" Text="RID module" FontWeight="SemiBold" />
+          <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="4"
+                     Text="{Binding ArmStatusText}" TextWrapping="Wrap" />
+          <TextBlock Grid.Row="3" Grid.Column="0" Text="Operator GPS" FontWeight="SemiBold" />
+          <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="4"
+                     Text="{Binding GpsStatus}" TextWrapping="Wrap" />
+
+          <Grid Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5"
+                ColumnDefinitions="*,*" ColumnSpacing="6">
+            <StackPanel Grid.Column="0" Spacing="2">
+              <TextBlock Text="Status history" FontWeight="SemiBold" />
+              <TextBox Text="{Binding StatusLog}" AcceptsReturn="True" IsReadOnly="True"
+                       TextWrapping="Wrap" FontFamily="monospace" FontSize="10"
+                       ScrollViewer.VerticalScrollBarVisibility="Auto" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Spacing="2">
+              <TextBlock Text="Raw NMEA" FontWeight="SemiBold" />
+              <TextBox Text="{Binding RawNmea}" AcceptsReturn="True" IsReadOnly="True"
+                       TextWrapping="NoWrap" FontFamily="monospace" FontSize="10"
+                       ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                       ScrollViewer.VerticalScrollBarVisibility="Auto" />
+            </StackPanel>
+          </Grid>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="UAS ID">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <Grid Margin="10" ColumnDefinitions="150,*" RowDefinitions="Auto,Auto,Auto"
+                ColumnSpacing="8" RowSpacing="7" IsEnabled="{Binding CanEditSettings}">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="UAS ID type" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding UasIdTypes}"
+                      SelectedItem="{Binding SelectedUasIdType, Mode=TwoWay}" />
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="UAS ID (max 20 ASCII)"
+                       VerticalAlignment="Center" />
+            <TextBox Grid.Row="1" Grid.Column="1" MaxLength="20"
+                     Text="{Binding UasId, Mode=TwoWay}" />
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Aircraft type" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="2" Grid.Column="1" ItemsSource="{Binding UaTypes}"
+                      SelectedItem="{Binding SelectedUaType, Mode=TwoWay}" />
+          </Grid>
+        </ScrollViewer>
+      </TabItem>
+
+      <TabItem Header="Operations">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <Grid Margin="10" ColumnDefinitions="165,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                ColumnSpacing="8" RowSpacing="6" IsEnabled="{Binding CanEditSettings}">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Operator location type" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding OperatorLocationTypes}"
+                      SelectedItem="{Binding SelectedOperatorLocationType, Mode=TwoWay}" />
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Classification" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="1" Grid.Column="1" ItemsSource="{Binding ClassificationTypes}"
+                      SelectedItem="{Binding SelectedClassificationType, Mode=TwoWay}" />
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="EU category / class" VerticalAlignment="Center" />
+            <Grid Grid.Row="2" Grid.Column="1" ColumnDefinitions="*,*" ColumnSpacing="6">
+              <ComboBox Grid.Column="0" ItemsSource="{Binding CategoriesEu}"
+                        SelectedItem="{Binding SelectedCategoryEu, Mode=TwoWay}" />
+              <ComboBox Grid.Column="1" ItemsSource="{Binding ClassesEu}"
+                        SelectedItem="{Binding SelectedClassEu, Mode=TwoWay}" />
+            </Grid>
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="Aircraft count / radius (m)"
+                       VerticalAlignment="Center" />
+            <Grid Grid.Row="3" Grid.Column="1" ColumnDefinitions="*,*" ColumnSpacing="6">
+              <NumericUpDown Grid.Column="0" Minimum="1" Maximum="65535"
+                             Value="{Binding AreaCount, Mode=TwoWay}" />
+              <NumericUpDown Grid.Column="1" Minimum="0" Maximum="65535"
+                             Value="{Binding AreaRadiusM, Mode=TwoWay}" />
+            </Grid>
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="Area floor / ceiling WGS84 (m)"
+                       VerticalAlignment="Center" />
+            <Grid Grid.Row="4" Grid.Column="1" ColumnDefinitions="*,*" ColumnSpacing="6">
+              <NumericUpDown Grid.Column="0" Minimum="-1000" Maximum="100000"
+                             Value="{Binding AreaFloorM, Mode=TwoWay}" />
+              <NumericUpDown Grid.Column="1" Minimum="-1000" Maximum="100000"
+                             Value="{Binding AreaCeilingM, Mode=TwoWay}" />
+            </Grid>
+            <TextBlock Grid.Row="5" Grid.Column="0" Text="Self ID type" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="5" Grid.Column="1" ItemsSource="{Binding DescriptionTypes}"
+                      SelectedItem="{Binding SelectedDescriptionType, Mode=TwoWay}" />
+            <TextBlock Grid.Row="6" Grid.Column="0" Text="Self ID (max 23 ASCII)"
+                       VerticalAlignment="Center" />
+            <TextBox Grid.Row="6" Grid.Column="1" MaxLength="23"
+                     Text="{Binding Description, Mode=TwoWay}" />
+            <TextBlock Grid.Row="7" Grid.Column="0" Text="Operator ID type" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="7" Grid.Column="1" ItemsSource="{Binding OperatorIdTypes}"
+                      SelectedItem="{Binding SelectedOperatorIdType, Mode=TwoWay}" />
+            <TextBlock Grid.Row="8" Grid.Column="0" Text="Operator ID (max 20 ASCII)"
+                       VerticalAlignment="Center" />
+            <TextBox Grid.Row="8" Grid.Column="1" MaxLength="20"
+                     Text="{Binding OperatorId, Mode=TwoWay}" />
+            <TextBlock Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="2" Foreground="#D9A441"
+                       TextWrapping="Wrap"
+                       Text="Unknown WGS84 altitude, floor or ceiling is transmitted as -1000 according to MAVLink Open Drone ID." />
+            <TextBlock Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="2" Foreground="#AAB8C4"
+                       TextWrapping="Wrap"
+                       Text="Changes are locked while transmitting, except the explicit emergency controls." />
+          </Grid>
+        </ScrollViewer>
+      </TabItem>
+    </TabControl>
+  </Grid>
+</UserControl>
