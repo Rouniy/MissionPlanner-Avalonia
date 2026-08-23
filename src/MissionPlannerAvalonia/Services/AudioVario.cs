@@ -270,8 +270,7 @@ internal sealed class LibVlcTonePlayer : IVarioTonePlayer {
       }
 
       try {
-        LibVlcBootstrap.Initialize();
-        _libVlc = new LibVLCSharp.Shared.LibVLC("--no-video-title-show", "--quiet");
+        _libVlc = LibVlcBootstrap.CreateInstance("--no-video-title-show", "--quiet");
         _mediaPlayer = new MediaPlayer(_libVlc);
         _status = "audio ready";
         return true;

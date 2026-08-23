@@ -93,8 +93,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             rid: osx-x64
+          - os: macos-15
+            rid: osx-arm64
           - os: windows-latest
             rid: win-x64
           - os: ubuntu-latest
@@ -118,7 +120,7 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Package macOS (.app, self-contained, signed + notarized)
-        if: matrix.rid == 'osx-x64'
+        if: startsWith(matrix.rid, 'osx-')
         shell: bash
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
@@ -128,8 +130,9 @@ jobs:
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           MACOS_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
         run: |
+          RID=${{ matrix.rid }}
           rm -rf out/osx dist
-          dotnet publish "$APP" -c Release -r osx-x64 --self-contained true \
+          dotnet publish "$APP" -c Release -r "$RID" --self-contained true \
             -m:1 \
             -p:DebugType=none -p:StripSymbols=true \
             -p:MissionPlannerUpstreamVersion="$MP_RELEASE_BASE" \
@@ -162,7 +165,7 @@ jobs:
           ./build/macos/make-app.sh out/osx "$MP_RELEASE_BASE" "dist/Mission Planner.app"
 
           mkdir -p upload
-          ZIP="upload/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-osx-x64.zip"
+          ZIP="upload/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-$RID.zip"
           ( cd dist && ditto -c -k --sequesterRsrc --keepParent "Mission Planner.app" "../$ZIP" )
 
           # Notarize the zip, then staple the ticket onto the bundle and re-zip so the
@@ -220,7 +223,7 @@ jobs:
           RID=${{ matrix.rid }}
           case "$RID" in
             win-x64)   PUB=out/win ;;
-            osx-x64)   PUB=out/osx ;;
+            osx-x64|osx-arm64) PUB=out/osx ;;
             linux-x64) PUB="out/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-linux-x64" ;;
           esac
           SITE="site/$RID"
@@ -231,8 +234,8 @@ jobs:
             NOTES="https://github.com/${GITHUB_REPOSITORY}/releases"
           fi
           if [[ "$MP_RELEASE_PRERELEASE" == "true" ]]; then
-            if [[ "$RID" == "osx-x64" ]]; then
-              BUNDLE="upload/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-osx-x64.zip"
+            if [[ "$RID" == osx-* ]]; then
+              BUNDLE="upload/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-$RID.zip"
             else
               BUNDLE="upload/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-$RID-update.zip"
               python3 build/make-update-bundle.py "$PUB" "$BUNDLE"
@@ -243,12 +246,12 @@ jobs:
             BUNDLE_SIZE=$(python3 -c 'import os,sys; print(os.path.getsize(sys.argv[1]))' "$BUNDLE")
             python3 build/gen-manifest.py "$SITE" "$MP_RELEASE_VERSION" "$NOTES" "$SITE/manifest.json" \
               --bundle-url "$BUNDLE_URL" --bundle-sha256 "$BUNDLE_SHA" --bundle-size "$BUNDLE_SIZE"
-          elif [[ "$RID" == "osx-x64" ]]; then
+          elif [[ "$RID" == osx-* ]]; then
             # macOS updates whole-bundle (notarization can't survive loose-file swaps). The manifest
             # points at the notarized .app zip that the release job publishes as a release asset; the
             # URL is deterministic from the tag, so it resolves once release + pages jobs finish.
-            ZIP="upload/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-osx-x64.zip"
-            BUNDLE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-osx-x64.zip"
+            ZIP="upload/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-$RID.zip"
+            BUNDLE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/MissionPlannerAvalonia-$MP_RELEASE_ARTIFACT-$RID.zip"
             BUNDLE_SHA=$(shasum -a 256 "$ZIP" | awk '{print $1}')
             BUNDLE_SIZE=$(stat -f%z "$ZIP")
             python3 build/gen-manifest.py "$SITE" "$MP_RELEASE_VERSION" "$NOTES" "$SITE/manifest.json" \

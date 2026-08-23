@@ -153,8 +153,7 @@ public class VideoControl : UserControl, IDisposable {
   private void InitializeCore() {
 
     try {
-      LibVlcBootstrap.Initialize();
-      _libVlc = new LibVLCSharp.Shared.LibVLC("--no-video-title-show", "--quiet");
+      _libVlc = LibVlcBootstrap.CreateInstance("--no-video-title-show", "--quiet");
       _mediaPlayer = new MediaPlayer(_libVlc);
       _mediaPlayer.EnableKeyInput = false;
       _mediaPlayer.EnableMouseInput = false;

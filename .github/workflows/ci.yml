@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-14]
+        os: [ubuntu-latest, windows-latest, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -56,13 +56,20 @@ jobs:
         run: dotnet build src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj -c Release -m:1
 
       - name: macOS IOKit joystick smoke test
-        if: matrix.os == 'macos-14'
+        if: matrix.os == 'macos-15'
         run: >-
           dotnet test tests/MissionPlannerAvalonia.Tests/MissionPlannerAvalonia.Tests.csproj
           -c Release -m:1 --filter FullyQualifiedName~Mac_backend_loads_iokit
 
       - name: macOS SimpleBLE load and adapter smoke test
-        if: matrix.os == 'macos-14'
+        if: matrix.os == 'macos-15'
         run: >-
           dotnet test tests/MissionPlannerAvalonia.Tests/MissionPlannerAvalonia.Tests.csproj
           -c Release -m:1 --filter FullyQualifiedName~Mac_native_backend_loads
+
+      - name: macOS bundled libVLC load and MJPEG pipeline smoke test
+        if: matrix.os == 'macos-15'
+        run: >-
+          dotnet test tests/MissionPlannerAvalonia.Tests/MissionPlannerAvalonia.Tests.csproj
+          -c Release -m:1
+          --filter "FullyQualifiedName~Mac_bundled_libvlc_loads|FullyQualifiedName~Libvlc_pipeline_exports"

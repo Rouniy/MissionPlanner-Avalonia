@@ -35,6 +35,13 @@ interface of **ArduPilot Mission Planner**.
 - `HIDSharp` © 2010–2025 James F. Bellinger is used for the macOS IOKit HID joystick
   transport under Apache License 2.0; see `LICENSES/Apache-2.0.txt`.
 
+## Video runtime dependency
+
+- `LibVLCSharp` provides the managed video API and `VLC media player` 3.0.23 provides the native
+  runtime. Windows uses the official VideoLAN NuGet; macOS Intel and Apple-Silicon artifacts bundle
+  the corresponding unmodified official VideoLAN runtime. Exact binary/source URLs, sizes, hashes
+  and upstream GPL/LGPL notices are recorded in `LICENSES/VLC-3.0.23-NOTICE.txt`.
+
 ## License of this project
 
 Because this work links Mission Planner's GPLv3 code, the combined work is a **derivative work and is

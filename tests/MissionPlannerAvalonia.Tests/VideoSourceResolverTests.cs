@@ -76,4 +76,48 @@ public class VideoSourceResolverTests {
     using var libVlc = new LibVLCSharp.Shared.LibVLC("--no-video-title-show", "--quiet");
     Assert.NotEmpty(libVlc.Version);
   }
+
+  [Fact]
+  public void Mac_runtime_locator_requires_libraries_and_plugin_cache() {
+    string root = Path.Combine(Path.GetTempPath(), "mp-vlc-layout-" + Guid.NewGuid());
+    try {
+      Directory.CreateDirectory(Path.Combine(root, "lib"));
+      Directory.CreateDirectory(Path.Combine(root, "plugins"));
+      Directory.CreateDirectory(Path.Combine(root, "share", "lua"));
+      Assert.Null(LibVlcBootstrap.LocateMacRuntime(root));
+
+      File.WriteAllText(Path.Combine(root, "lib", "libvlc.dylib"), "test");
+      File.WriteAllText(Path.Combine(root, "lib", "libvlccore.dylib"), "test");
+      File.WriteAllText(Path.Combine(root, "plugins", "plugins.dat"), "test");
+
+      MacVlcRuntimePaths runtime = Assert.IsType<MacVlcRuntimePaths>(
+          LibVlcBootstrap.LocateMacRuntime(root));
+      Assert.Equal(Path.Combine(root, "lib"), runtime.LibraryDirectory);
+      Assert.Equal(Path.Combine(root, "plugins"), runtime.PluginDirectory);
+      Assert.Equal(Path.Combine(root, "share"), runtime.DataDirectory);
+    } finally {
+      if (Directory.Exists(root)) {
+        Directory.Delete(root, recursive: true);
+      }
+    }
+  }
+
+  [Fact]
+  public void Mac_bundled_libvlc_loads_and_reports_pinned_version() {
+    if (!OperatingSystem.IsMacOS()) {
+      return;
+    }
+
+    MacVlcRuntimePaths runtime = Assert.IsType<MacVlcRuntimePaths>(
+        LibVlcBootstrap.LocateMacRuntime(AppContext.BaseDirectory));
+    // Keep verbose native output in this acceptance test so a bootstrap regression reports the
+    // exact plugin/configuration failure instead of LibVLCSharp's generic instantiation error.
+    using var libVlc = LibVlcBootstrap.CreateInstance(true, "--no-video", "--no-audio");
+
+    Assert.StartsWith("3.0.23", libVlc.Version);
+    Assert.Equal(runtime.PluginDirectory,
+        Environment.GetEnvironmentVariable("VLC_PLUGIN_PATH"));
+    Assert.Equal(runtime.DataDirectory,
+        Environment.GetEnvironmentVariable("VLC_DATA_PATH"));
+  }
 }
