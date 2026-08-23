@@ -198,11 +198,15 @@ internal static class NvModemParameterCodec {
 
 internal sealed record NvModemLink(MAVLinkInterface Link, string Name);
 
+internal readonly record struct NvModemEndpoint(byte SystemId, byte ComponentId);
+
 internal interface INvModemMavlinkTransport : IDisposable {
   event Action<NvModemLink, MAVLink.MAVLinkMessage>? PacketReceived;
   event Action? LinksChanged;
 
   IReadOnlyList<NvModemLink> Snapshot();
+  IReadOnlyList<NvModemEndpoint> KnownEndpoints(NvModemLink source);
+  IReadOnlyList<MAVLink.MAVLinkMessage> CachedDiscoveryPackets(NvModemLink source);
   bool Send(NvModemLink source, object packet, byte systemId, byte componentId);
 }
 
@@ -215,6 +219,7 @@ internal sealed class NvModemMavlinkTransport : INvModemMavlinkTransport {
   internal NvModemMavlinkTransport() {
     NvModemMavlinkDialect.Register();
     AppState.Connections.Changed += OnConnectionsChanged;
+    AppState.ConnectionChanged += OnConnectionsChanged;
     RefreshLinks();
   }
 
@@ -222,8 +227,45 @@ internal sealed class NvModemMavlinkTransport : INvModemMavlinkTransport {
   public event Action? LinksChanged;
 
   public IReadOnlyList<NvModemLink> Snapshot() {
+    // Opening the already-active primary connection does not necessarily change the connection
+    // manager's selection. Refresh here so the Discover button cannot miss that shared link.
+    RefreshLinks();
     lock (_sync) {
       return _links.Values.ToArray();
+    }
+  }
+
+  public IReadOnlyList<NvModemEndpoint> KnownEndpoints(NvModemLink source) {
+    try {
+      return source.Link.MAVlist.ToArray()
+          .Where(mav => mav.lastvalidpacket > DateTime.MinValue
+              && (mav.sysid != 0 || mav.compid != 0))
+          .Select(mav => new NvModemEndpoint(mav.sysid, mav.compid))
+          .Distinct()
+          .ToArray();
+    } catch {
+      return [];
+    }
+  }
+
+  public IReadOnlyList<MAVLink.MAVLinkMessage> CachedDiscoveryPackets(NvModemLink source) {
+    try {
+      uint[] messageIds = [
+        NvModemMessageIds.Nv5LinkStatus,
+        (uint)MAVLink.MAVLINK_MSG_ID.UAVCAN_NODE_INFO,
+      ];
+      var packets = new List<MAVLink.MAVLinkMessage>();
+      foreach (MAVState mav in source.Link.MAVlist.ToArray()) {
+        foreach (uint messageId in messageIds) {
+          MAVLink.MAVLinkMessage? packet = mav.getPacketLast(messageId);
+          if (packet != null) {
+            packets.Add(packet);
+          }
+        }
+      }
+      return packets;
+    } catch {
+      return [];
     }
   }
 
@@ -286,6 +328,7 @@ internal sealed class NvModemMavlinkTransport : INvModemMavlinkTransport {
       }
       _disposed = true;
       AppState.Connections.Changed -= OnConnectionsChanged;
+      AppState.ConnectionChanged -= OnConnectionsChanged;
       foreach (MAVLinkInterface link in _links.Keys) {
         link.OnPacketReceived -= OnPacketReceived;
       }

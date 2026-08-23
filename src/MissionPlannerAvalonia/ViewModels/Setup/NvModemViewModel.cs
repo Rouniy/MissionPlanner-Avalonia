@@ -181,7 +181,6 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   private const int MaximumWriteAttempts = 3;
   private const int MaximumParameterListRetries = 2;
   private const ushort SetTransmitEnabledCommand = 42010;
-  private const byte LegacyNv5ComponentId = (byte)MAVLink.MAV_COMPONENT.MAV_COMP_ID_TELEMETRY_RADIO;
 
   private readonly INvModemMavlinkTransport _transport;
   private readonly Func<DateTime> _utcNow;
@@ -189,8 +188,6 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   private readonly Dictionary<string, NvModemParameterRow> _parameterRows =
       new(StringComparer.Ordinal);
   private readonly Queue<NvWriteOperation> _writeQueue = [];
-  private readonly Dictionary<(NvModemLink Link, byte SystemId, byte ComponentId), DateTime>
-      _legacyProbeTimes = [];
   private readonly DispatcherTimer? _serviceTimer;
   private NvWriteOperation? _currentWrite;
   private uint _nextTransactionId = unchecked((uint)Environment.TickCount64);
@@ -226,8 +223,9 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
 
   public string Title => "NV Modem";
   public string Instructions =>
-      "Discover and configure NV4/NV5 modems through the MAVLink connections already open in "
-      + "Mission Planner. No separate UDP, TCP or serial port is opened.";
+      "Uses the MAVLink connections already open in Mission Planner; this page does not open a "
+      + "separate UDP, TCP or serial connection. NV5 status and NV4 CAN node information are "
+      + "accepted at any valid system/component ID.";
 
   public ObservableCollection<NvModemDeviceChoice> Devices { get; } = [];
   public ObservableCollection<NvModemParameterRow> Parameters { get; } = [];
@@ -364,20 +362,19 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   private void Discover() {
     int openLinks = 0;
     foreach (NvModemLink link in _transport.Snapshot()) {
-      if (link.Link.BaseStream?.IsOpen != true) {
-        continue;
-      }
       openLinks++;
-      SendIdentityRequest(link, 0, 0);
-      foreach (byte systemId in new byte[] { 1, 255 }) {
-        for (byte componentId = 16; componentId <= 19; componentId++) {
-          ProbeLegacy(link, systemId, componentId, force: true);
-        }
+      foreach (MAVLink.MAVLinkMessage packet in _transport.CachedDiscoveryPackets(link)) {
+        HandlePacket(link, packet);
+      }
+      RequestDiscoveryMessages(link, 0, 0);
+      foreach (NvModemEndpoint endpoint in _transport.KnownEndpoints(link)) {
+        RequestDiscoveryMessages(link, endpoint.SystemId, endpoint.ComponentId);
       }
     }
     SetStatus(openLinks == 0
-        ? "No open MAVLink connections. Connect over UDP, TCP or serial and press Discover."
-        : $"Discovery request sent on {openLinks} open MAVLink connection(s).", openLinks == 0);
+        ? "No shared MAVLink connection is open. Connect with Mission Planner's main connection "
+            + "control, then press Discover."
+        : $"Searching {openLinks} shared Mission Planner MAVLink connection(s).", openLinks == 0);
   }
 
   [RelayCommand]
@@ -788,29 +785,20 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     var key = new NvModemDeviceKey(source, packet.sysid, packet.compid);
     _devices.TryGetValue(key, out NvModemDeviceState? device);
     uint msgid = packet.msgid;
-    if (device == null && msgid == (uint)MAVLink.MAVLINK_MSG_ID.HEARTBEAT) {
-      var heartbeat = packet.ToStructure<MAVLink.mavlink_heartbeat_t>();
-      if (heartbeat.type == (byte)MAVLink.MAV_TYPE.ONBOARD_CONTROLLER
-          && heartbeat.autopilot == (byte)MAVLink.MAV_AUTOPILOT.INVALID) {
-        ProbeLegacy(source, packet.sysid, packet.compid, force: false);
-      }
-      return;
-    }
 
     string parameterName = "";
     MAVLink.mavlink_param_value_t parameter = default;
     bool nv5Identity = msgid is NvModemMessageIds.Nv5LinkStatus
-        or NvModemMessageIds.Nv5RtspConfig or NvModemMessageIds.Nv5RtspConfigAck
-        || msgid == (uint)MAVLink.MAVLINK_MSG_ID.AUTOPILOT_VERSION
-            && packet.compid == LegacyNv5ComponentId;
-    bool nv4Identity = msgid == NvModemMessageIds.NvRxStat;
+        or NvModemMessageIds.Nv5RtspConfig or NvModemMessageIds.Nv5RtspConfigAck;
+    bool nv4Identity = false;
+    MAVLink.mavlink_uavcan_node_info_t nodeInfo = default;
+    if (msgid == (uint)MAVLink.MAVLINK_MSG_ID.UAVCAN_NODE_INFO) {
+      nodeInfo = packet.ToStructure<MAVLink.mavlink_uavcan_node_info_t>();
+      nv4Identity = IsNv4NodeName(NvModemParameterCodec.Name(nodeInfo.name));
+    }
     if (msgid == (uint)MAVLink.MAVLINK_MSG_ID.PARAM_VALUE) {
       parameter = packet.ToStructure<MAVLink.mavlink_param_value_t>();
       parameterName = NvModemParameterCodec.Name(parameter.param_id);
-      nv5Identity = NvModemCatalog.IsNv5Signature(parameterName);
-      nv4Identity = NvModemCatalog.IsNv4Signature(parameterName)
-          && (device != null || _legacyProbeTimes.ContainsKey(
-              (source, packet.sysid, packet.compid)));
     }
     if (device == null && !nv5Identity && !nv4Identity) {
       return;
@@ -843,6 +831,10 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     if (msgid == (uint)MAVLink.MAVLINK_MSG_ID.AUTOPILOT_VERSION
         && device.Generation == NvModemGeneration.Nv5) {
       device.ProductProfile = packet.ToStructure<MAVLink.mavlink_autopilot_version_t>().product_id;
+      UpdateDeviceLabel(device);
+    } else if (msgid == (uint)MAVLink.MAVLINK_MSG_ID.UAVCAN_NODE_INFO
+        && device.Generation == NvModemGeneration.Nv4) {
+      device.ProductProfile = nodeInfo.hw_version_major;
       UpdateDeviceLabel(device);
     } else if (msgid == (uint)MAVLink.MAVLINK_MSG_ID.PARAM_VALUE) {
       HandleParameterValue(device, parameter, parameterName);
@@ -1485,31 +1477,43 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     _transport.Send(device.Key.Link, request, device.Key.SystemId, device.Key.ComponentId);
   }
 
-  private void ProbeLegacy(NvModemLink link, byte systemId, byte componentId, bool force) {
-    var key = (link, systemId, componentId);
-    DateTime now = _utcNow();
-    if (!force && _legacyProbeTimes.TryGetValue(key, out DateTime last)
-        && now - last < OnlineTimeout) {
-      return;
-    }
+  private void RequestDiscoveryMessages(
+      NvModemLink link, byte systemId, byte componentId) {
+    SendMessageRequest(link, systemId, componentId, NvModemMessageIds.Nv5LinkStatus);
+    SendMessageRequest(link, systemId, componentId,
+        (uint)MAVLink.MAVLINK_MSG_ID.UAVCAN_NODE_INFO);
 
-    _legacyProbeTimes[key] = now;
-    var request = new MAVLink.mavlink_param_request_list_t {
+    // Old NV4 implementations use the dedicated UAVCAN command rather than MAV_CMD_REQUEST_MESSAGE.
+    var nodeInfo = new MAVLink.mavlink_command_long_t {
       target_system = systemId,
       target_component = componentId,
+      command = (ushort)MAVLink.MAV_CMD.UAVCAN_GET_NODE_INFO,
+      confirmation = 0,
     };
-    _transport.Send(link, request, systemId, componentId);
+    _transport.Send(link, nodeInfo, systemId, componentId);
   }
 
   private void SendIdentityRequest(NvModemLink link, byte systemId, byte componentId) {
+    SendMessageRequest(link, systemId, componentId,
+        (uint)MAVLink.MAVLINK_MSG_ID.AUTOPILOT_VERSION);
+  }
+
+  private void SendMessageRequest(
+      NvModemLink link, byte systemId, byte componentId, uint messageId) {
     var command = new MAVLink.mavlink_command_long_t {
       target_system = systemId,
       target_component = componentId,
       command = (ushort)MAVLink.MAV_CMD.REQUEST_MESSAGE,
       confirmation = 0,
-      param1 = (float)MAVLink.MAVLINK_MSG_ID.AUTOPILOT_VERSION,
+      param1 = messageId,
     };
     _transport.Send(link, command, systemId, componentId);
+  }
+
+  private static bool IsNv4NodeName(string name) {
+    string prefix = name.Length > 5 ? name[..5] : name;
+    return prefix.Equals("NV_TX", StringComparison.OrdinalIgnoreCase)
+        || prefix.Equals("NV_RX", StringComparison.OrdinalIgnoreCase);
   }
 
   private void SendRtspRequest(NvModemDeviceState device) {
@@ -1537,7 +1541,7 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
     NvModemDeviceState? device = SelectedState;
     if (device == null) {
       ConnectionText = "No modem discovered";
-      IdentityText = "Open a MAVLink connection, then press Discover.";
+      IdentityText = "Uses Mission Planner's current shared MAVLink connection. Press Discover.";
       ParameterProgress = "Parameters: 0 / 0";
       ResetRadioRows();
       RefreshControls();
