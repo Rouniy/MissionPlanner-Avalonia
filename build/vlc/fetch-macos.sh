@@ -173,10 +173,12 @@ DESTINATION_PARENT="$(dirname "$DESTINATION")"
 mkdir -p "$DESTINATION_PARENT"
 STAGING="$(mktemp -d "$DESTINATION_PARENT/.missionplanner-vlc-$RID.XXXXXX")"
 mkdir -p "$STAGING/lib" "$STAGING/plugins" "$STAGING/share/lua" "$STAGING/share/hrtfs"
-cp -RP "$SOURCE_ROOT/lib/." "$STAGING/lib/"
-cp -RP "$SOURCE_ROOT/plugins/." "$STAGING/plugins/"
-cp -RP "$SOURCE_ROOT/share/lua/." "$STAGING/share/lua/"
-cp -RP "$SOURCE_ROOT/share/hrtfs/." "$STAGING/share/hrtfs/"
+# plugins.dat records each dylib's size and modification time. Preserve both timestamps and
+# symlinks so VLC can use its signed upstream cache without treating every plugin as stale.
+cp -RpP "$SOURCE_ROOT/lib/." "$STAGING/lib/"
+cp -RpP "$SOURCE_ROOT/plugins/." "$STAGING/plugins/"
+cp -RpP "$SOURCE_ROOT/share/lua/." "$STAGING/share/lua/"
+cp -RpP "$SOURCE_ROOT/share/hrtfs/." "$STAGING/share/hrtfs/"
 
 # 7-Zip exposes HFS+ code-signature extended attributes as colon-named sidecar files. They are not
 # runtime content; the enclosing Mission Planner app is signed after these dylibs are assembled.

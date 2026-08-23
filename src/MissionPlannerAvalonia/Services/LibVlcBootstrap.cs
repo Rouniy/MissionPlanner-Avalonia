@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -32,6 +33,7 @@ internal static class LibVlcBootstrap {
         // libvlc reads this when it creates its first instance and may load modules later,
         // so retain the exact bundled path for the lifetime of the process.
         Environment.SetEnvironmentVariable("VLC_PLUGIN_PATH", runtime.PluginDirectory);
+        Environment.SetEnvironmentVariable("VLC_DATA_PATH", runtime.DataDirectory);
         LibVLCSharp.Shared.Core.Initialize(runtime.LibraryDirectory);
       } else {
         LibVLCSharp.Shared.Core.Initialize();
@@ -40,15 +42,35 @@ internal static class LibVlcBootstrap {
     }
   }
 
+  public static LibVLCSharp.Shared.LibVLC CreateInstance(params string[] options) {
+    ArgumentNullException.ThrowIfNull(options);
+    Initialize();
+    if (!OperatingSystem.IsMacOS()) {
+      return new LibVLCSharp.Shared.LibVLC(options);
+    }
+
+    // The runtime is extracted from an exact SHA-256-pinned VideoLAN image and its complete file
+    // manifest is verified at build time. Trust its matching plugins.dat instead of rescanning
+    // relocated dylibs: scan mode compares package timestamps and attempts to dlopen every plugin
+    // before the foreign host's loader context has been established.
+    string[] macOptions = options.Contains("--no-plugins-scan", StringComparer.Ordinal)
+        ? options
+        : [.. options, "--no-plugins-scan"];
+    return new LibVLCSharp.Shared.LibVLC(macOptions);
+  }
+
   internal static MacVlcRuntimePaths? LocateMacRuntime(string baseDirectory) {
     ArgumentException.ThrowIfNullOrWhiteSpace(baseDirectory);
     string libraryDirectory = Path.Combine(baseDirectory, "lib");
     string pluginDirectory = Path.Combine(baseDirectory, "plugins");
+    string dataDirectory = Path.Combine(baseDirectory, "share");
     string libVlc = Path.Combine(libraryDirectory, "libvlc.dylib");
     string libVlcCore = Path.Combine(libraryDirectory, "libvlccore.dylib");
     string pluginCache = Path.Combine(pluginDirectory, "plugins.dat");
+    string luaDirectory = Path.Combine(dataDirectory, "lua");
     return File.Exists(libVlc) && File.Exists(libVlcCore) && File.Exists(pluginCache)
-        ? new MacVlcRuntimePaths(libraryDirectory, pluginDirectory)
+        && Directory.Exists(luaDirectory)
+        ? new MacVlcRuntimePaths(libraryDirectory, pluginDirectory, dataDirectory)
         : null;
   }
 
@@ -99,4 +121,7 @@ internal static class LibVlcBootstrap {
   }
 }
 
-internal sealed record MacVlcRuntimePaths(string LibraryDirectory, string PluginDirectory);
+internal sealed record MacVlcRuntimePaths(
+    string LibraryDirectory,
+    string PluginDirectory,
+    string DataDirectory);

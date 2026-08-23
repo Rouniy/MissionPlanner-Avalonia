@@ -366,8 +366,7 @@ internal sealed class LibVlcOsdExportSession : IDisposable {
   internal async Task<OsdVideoExportResult> RunAsync(CancellationToken cancellationToken) {
     ObjectDisposedException.ThrowIf(_disposed, this);
     _cancellationToken = cancellationToken;
-    LibVlcBootstrap.Initialize();
-    _libVlc = new LibVLCSharp.Shared.LibVLC(
+    _libVlc = LibVlcBootstrap.CreateInstance(
         "--no-video-title-show", "--quiet", "--no-audio");
     _media = new Media(_libVlc, Path.GetFullPath(_options.VideoPath), FromType.FromPath);
     MediaParsedStatus parseStatus = await _media.Parse(
