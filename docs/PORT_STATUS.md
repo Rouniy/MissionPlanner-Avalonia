@@ -12,8 +12,9 @@ their native runners.
 | Target | Packaging | Current verification |
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC and native SimpleBLE runtime | Cross-publish passed and PE32+ executable/native DLLs inspected; native Windows application and physical BLE-modem acceptance remain pending |
-| macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC and pinned SimpleBLE runtime; CI signing/notarization when credentials are configured | Cross-publish passed, including native IOKit HID and x64 SimpleBLE dependencies; native CI loads both and enumerates controllers/adapters. Full native application and physical-device acceptance remain pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 1042 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/signed-beta-updates/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/Hong-Kong-NoFly/GeoTIFF/DTED/native-GDAL/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/cross-platform-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled official Intel VLC 3.0.23 and pinned x64 SimpleBLE runtime; CI signing/notarization when credentials are configured | Cross-publish passed; the apphost and every bundled native dependency were inspected as x86-64, and all 444 checksummed VLC runtime files, including 343 plugin dylibs, were verified. Full native Intel application and physical-device acceptance remain pending. Also runs on Apple Silicon through Rosetta 2. |
+| macOS ARM64 (`osx-arm64`) | Self-contained `.app`, native Apple-Silicon apphost/dylibs; bundled official ARM64 VLC 3.0.23 and pinned ARM64 SimpleBLE runtime; CI signing/notarization when credentials are configured | Cross-publish passed; the apphost and every bundled native dependency were inspected as ARM64, and all 438 checksummed VLC runtime files, including 337 plugin dylibs, were verified. Native ARM64 CI loads libVLC/SimpleBLE/IOKit, enumerates available hardware and decodes the real MJPEG callback/export pipeline. Full application and physical-device acceptance remain pending. |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 1044 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/signed-beta-updates/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/Hong-Kong-NoFly/GeoTIFF/DTED/native-GDAL/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/cross-platform-BLE/macOS-ARM64-video `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
@@ -614,7 +615,7 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 1042 passed, 0 failed, including BLE endpoint parsing, native ABI layout,
+- Automated tests: 1044 passed, 0 failed, including BLE endpoint parsing, native ABI layout,
   platform-backend selection and HID descriptor decoding for signed and unsigned
   axes, Flight Simulation controls, dual sliders, buttons, hats and D-pads; signed beta manifest
   discovery, HTTPS-only bundle download, Ed25519/SHA-256 tamper rejection, extraction and atomic
@@ -632,6 +633,8 @@ native-platform acceptance testing.
   MAVLink serial-bridge tests use a real loopback TCP socket for bidirectional and multi-chunk byte
   transfer, then verify bounded explicit stop, target-loss shutdown, UART release between clients,
   exact link/vehicle/component identity and single-system enforcement.
+  Video tests also validate the complete bundled macOS libVLC layout and require native ARM64 CI
+  to load VLC 3.0.23 and execute the real MJPEG decode/callback/export path.
   Firmware-archive tests cover mirror fallback, exact-URL deduplication, bounded parallelism,
   HTTPS-first legacy handling, partial availability, hashes, XML/path hardening, size limits,
   non-overwrite behavior, cancellation cleanup, atomic publication and strictly ordered progress
@@ -766,7 +769,7 @@ matched official dylibs instead.
 
 ## Remaining cross-platform parity and release work
 
-This list contains two concrete open areas. The handler-level audit of the hidden developer form is
+This list contains one concrete open area. The handler-level audit of the hidden developer form is
 complete and enforced against the pinned upstream source by a test. Completed workflows are
 documented above rather than being left in the gap table.
 NativeAOT is tracked separately as an optional runtime experiment and is not counted as a
@@ -775,7 +778,6 @@ Mission Planner functional-parity gap.
 | Area | Affected targets | Current state and direction |
 | --- | --- | --- |
 | Legacy Mission Planner plugin compatibility | All | Portable DLL discovery, dependency loading, `Init`/`Loaded`/`Loop`/`Exit`, enable/disable UI, current MAVLink/settings access, Flight Data actions and HUD overlays are native and operational. Existing DLLs compiled against Mission Planner's WinForms executable are not binary-compatible; their UI must be adapted to Avalonia and rebuilt. Loose `.cs` runtime compilation is intentionally not treated as DLL compatibility. |
-| Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |
 
 ## Optional runtime experiment
 
@@ -815,8 +817,10 @@ The 20 Hz MAVLink and built-in-SITL packet paths are unit-tested; a two-instance
 has also been started and connected over two real MAVLink TCP links with distinct sysids. Hands-on
 joystick auto-detect/mapping and RC output to a live vehicle or SITL still need acceptance.
 The macOS IOKit backend is descriptor-tested, cross-publishes for x64 and arm64, and is exercised by
-a native CI enumeration smoke; controller discovery, live axes/buttons and unplug behavior still
-need acceptance with representative macOS USB and Bluetooth hardware.
+a native ARM64 CI enumeration smoke; controller discovery, live axes/buttons and unplug behavior
+still need acceptance with representative macOS USB and Bluetooth hardware. The same native CI
+loads the bundled Apple-Silicon VLC 3.0.23 runtime and decodes/exports a real MJPEG pipeline; visual
+playback, capture devices and network video sources still need hands-on application acceptance.
 The Nordic UART BLE stream is unit-tested and all platform artifacts contain the intended backend.
 Linux BlueZ scans completed against a real adapter, and native macOS CI loads SimpleBLE and
 enumerates adapters. End-to-end scan, connect, MAVLink traffic, physical loss and reconnect still

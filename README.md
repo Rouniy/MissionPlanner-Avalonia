@@ -28,11 +28,11 @@ installation paths, Avalonia extension API and legacy WinForms compatibility bou
 
 ## Platform targets
 
-Release automation builds self-contained artifacts for Windows x64, macOS x64 and Linux x64.
-Linux x64 is the platform verified locally in this synchronization; Windows and macOS remain
-first-class targets and are built by the cross-platform CI/release workflows.
+Release automation builds self-contained artifacts for Windows x64, macOS x64, macOS ARM64 and
+Linux x64. Linux x64 is the platform verified locally in this synchronization; Windows and macOS
+remain first-class targets and are built by the cross-platform CI/release workflows.
 
-Set `RID` to the required runtime identifier: `win-x64`, `osx-x64` or `linux-x64`.
+Set `RID` to the required runtime identifier: `win-x64`, `osx-x64`, `osx-arm64` or `linux-x64`.
 
 ```bash
 RID=linux-x64
@@ -41,9 +41,12 @@ dotnet publish src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj \
   -o "out/$RID"
 ```
 
-The macOS x64 artifact runs natively on Intel Macs and through Rosetta 2 on Apple Silicon. The
-Avalonia application also cross-publishes for `osx-arm64`, but the official macOS libVLC NuGet
-runtime is x86-64-only, so ARM64 video is not yet a complete release configuration.
+Both macOS artifacts bundle an architecture-matched VLC 3.0.23 runtime from the corresponding
+official VideoLAN application image. The ARM64 artifact and its video pipeline run natively on
+Apple Silicon; the x64 artifact remains available for Intel Macs and Rosetta 2. Exact source URLs,
+hashes and licenses are recorded in `LICENSES/VLC-3.0.23-NOTICE.txt`. A non-macOS host needs `curl`,
+`file` and `7z` when cross-publishing either macOS RID so the pinned official DMG can be verified and
+extracted.
 
 Joystick input uses the upstream DirectInput backend on Windows, a port-native joydev backend on
 Linux and a native IOKit HID backend on macOS. All three feed the same mapping UI and target-safe

@@ -9,11 +9,47 @@ using LibVLCSharp.Shared;
 namespace MissionPlannerAvalonia.Services;
 
 internal static class LibVlcBootstrap {
+  private static readonly object _initializeSync = new();
   private static int _configured;
+  private static int _initialized;
 
   public static void Initialize() {
-    ConfigureLinuxResolver();
-    LibVLCSharp.Shared.Core.Initialize();
+    if (Volatile.Read(ref _initialized) != 0) {
+      return;
+    }
+
+    lock (_initializeSync) {
+      if (_initialized != 0) {
+        return;
+      }
+
+      ConfigureLinuxResolver();
+      if (OperatingSystem.IsMacOS()) {
+        MacVlcRuntimePaths runtime = LocateMacRuntime(AppContext.BaseDirectory)
+            ?? throw new FileNotFoundException(
+                "The bundled macOS VLC runtime is incomplete. Reinstall the matching "
+                + "Mission Planner architecture.");
+        // libvlc reads this when it creates its first instance and may load modules later,
+        // so retain the exact bundled path for the lifetime of the process.
+        Environment.SetEnvironmentVariable("VLC_PLUGIN_PATH", runtime.PluginDirectory);
+        LibVLCSharp.Shared.Core.Initialize(runtime.LibraryDirectory);
+      } else {
+        LibVLCSharp.Shared.Core.Initialize();
+      }
+      Volatile.Write(ref _initialized, 1);
+    }
+  }
+
+  internal static MacVlcRuntimePaths? LocateMacRuntime(string baseDirectory) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(baseDirectory);
+    string libraryDirectory = Path.Combine(baseDirectory, "lib");
+    string pluginDirectory = Path.Combine(baseDirectory, "plugins");
+    string libVlc = Path.Combine(libraryDirectory, "libvlc.dylib");
+    string libVlcCore = Path.Combine(libraryDirectory, "libvlccore.dylib");
+    string pluginCache = Path.Combine(pluginDirectory, "plugins.dat");
+    return File.Exists(libVlc) && File.Exists(libVlcCore) && File.Exists(pluginCache)
+        ? new MacVlcRuntimePaths(libraryDirectory, pluginDirectory)
+        : null;
   }
 
   private static void ConfigureLinuxResolver() {
@@ -62,3 +98,5 @@ internal static class LibVlcBootstrap {
     yield return "/lib/aarch64-linux-gnu/libvlc.so.5";
   }
 }
+
+internal sealed record MacVlcRuntimePaths(string LibraryDirectory, string PluginDirectory);

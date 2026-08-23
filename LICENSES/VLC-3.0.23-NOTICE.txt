@@ -1,0 +1,31 @@
+VLC media player 3.0.23 macOS runtime
+=====================================
+
+The macOS Mission Planner artifacts redistribute the unmodified libvlc, libvlccore, plugin and
+runtime-data directories extracted from the official VLC media player 3.0.23 application images.
+The original lib/plugins/share sibling layout is preserved. Mission Planner does not redistribute
+the VLC user interface or executable.
+
+VLC and its modules are copyright their respective VideoLAN authors and contributors. libvlc and
+libvlccore are licensed under GNU LGPL version 2.1 or later; VLC modules carry the GPL/LGPL and
+compatible dependency licenses identified in the corresponding source. The authoritative license
+texts are included in that source as COPYING and COPYING.LIB:
+https://code.videolan.org/videolan/vlc/-/blob/3.0.23/COPYING
+https://code.videolan.org/videolan/vlc/-/blob/3.0.23/COPYING.LIB
+
+Official macOS binary images:
+https://download.videolan.org/pub/videolan/vlc/3.0.23/macosx/vlc-3.0.23-intel64.dmg
+  size: 57544217 bytes
+  SHA-256: ec01530ce69d849dd057fba8876e68ac39bf279dc28de4e9c04e4aec11fc98db
+https://download.videolan.org/pub/videolan/vlc/3.0.23/macosx/vlc-3.0.23-arm64.dmg
+  size: 51273389 bytes
+  SHA-256: fc6fac08d87f538517d44aca0c5e7a244b67c8c4cb589bf478363a7315fd5e0d
+
+Complete corresponding VLC source:
+https://download.videolan.org/pub/videolan/vlc/3.0.23/vlc-3.0.23.tar.xz
+  size: 26486988 bytes
+  SHA-256: e891cae6aa3ccda69bf94173d5105cbc55c7a7d9b1d21b9b21666e69eff3e7e0
+
+The build downloads over HTTPS, requires the exact architecture-specific archive size and SHA-256,
+checks the extracted libvlc/libvlccore/plugin-cache hashes, rejects any dylib of the wrong Mach-O
+architecture and records a complete runtime-file checksum manifest. See build/vlc/fetch-macos.sh.

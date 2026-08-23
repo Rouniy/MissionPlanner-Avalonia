@@ -203,9 +203,12 @@ public class OsdVideoOverlayTests {
 
   [Fact]
   public async Task Libvlc_pipeline_exports_a_playable_mjpeg_avi_when_runtime_is_available() {
-    if (!OperatingSystem.IsLinux()
-        || (!File.Exists("/lib/x86_64-linux-gnu/libvlc.so.5")
-            && !File.Exists("/usr/lib/aarch64-linux-gnu/libvlc.so.5"))) {
+    bool linuxRuntime = OperatingSystem.IsLinux()
+        && (File.Exists("/lib/x86_64-linux-gnu/libvlc.so.5")
+            || File.Exists("/usr/lib/aarch64-linux-gnu/libvlc.so.5"));
+    bool macRuntime = OperatingSystem.IsMacOS()
+        && LibVlcBootstrap.LocateMacRuntime(AppContext.BaseDirectory) != null;
+    if (!linuxRuntime && !macRuntime) {
       return;
     }
 
