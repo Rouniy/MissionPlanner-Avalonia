@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using MissionPlannerAvalonia.Services;
 using MissionPlannerAvalonia.ViewModels;
 
 namespace MissionPlannerAvalonia.Views;
@@ -24,6 +25,13 @@ public partial class MainWindow : Window {
     }
     var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
     if (ShouldPreserveFocusedInput(focused as Control, e.Key)) {
+      return;
+    }
+    FlightCommandShortcut? flightShortcut = FlightCommandShortcutFor(
+        e.Key, e.KeyModifiers);
+    if (flightShortcut.HasValue && vm.FlightCommandShortcutsEnabled) {
+      _ = vm.ExecuteFlightCommandShortcutAsync(flightShortcut.Value);
+      e.Handled = true;
       return;
     }
     bool ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
@@ -102,6 +110,24 @@ public partial class MainWindow : Window {
 
   internal static int ShortcutTabIndex(Key key) =>
       key == Key.D0 ? 9 : (int)key - (int)Key.D1;
+
+  internal static FlightCommandShortcut? FlightCommandShortcutFor(
+      Key key, KeyModifiers modifiers) {
+    if (modifiers != KeyModifiers.Alt) {
+      return null;
+    }
+    return key switch {
+      Key.A => FlightCommandShortcut.Auto,
+      Key.G => FlightCommandShortcut.Loiter,
+      Key.U => FlightCommandShortcut.AltHold,
+      Key.S => FlightCommandShortcut.Stabilize,
+      Key.H => FlightCommandShortcut.Rtl,
+      Key.T => FlightCommandShortcut.Takeoff,
+      Key.L => FlightCommandShortcut.Land,
+      Key.D0 => FlightCommandShortcut.MinimumThrottle,
+      _ => null,
+    };
+  }
 
   internal static bool ShouldPreserveFocusedInput(Control? focused, Key key) {
     for (Control? control = focused; control != null; control = control.Parent as Control) {

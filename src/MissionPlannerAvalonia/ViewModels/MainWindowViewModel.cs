@@ -5,6 +5,8 @@ using CommunityToolkit.Mvvm.Input;
 namespace MissionPlannerAvalonia.ViewModels;
 
 public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
+  private readonly Services.FlightCommandShortcutService _flightCommandShortcuts;
+
   public ConnectionViewModel Connection { get; } = new();
 
   public FlightDataViewModel FlightData { get; } = new();
@@ -44,6 +46,8 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
   public double HeaderHeight => HeaderHeightFor(MenuAutoHide, HeaderHovered);
 
   public MainWindowViewModel() {
+    _flightCommandShortcuts = new Services.FlightCommandShortcutService(
+        status => FlightData.Messages += status + System.Environment.NewLine);
     Simulation = new SimulationViewModel(Connection);
     _currentScreen = FlightData;
     _menuAutoHide = MissionPlanner.Utilities.Settings.Instance.GetBoolean("menu_autohide", false);
@@ -59,6 +63,14 @@ public partial class MainWindowViewModel : ViewModelBase, System.IDisposable {
         Avalonia.Threading.Dispatcher.UIThread.Post(() => _ = Navigate("DATA"));
     _ = Services.KIndexService.RefreshAsync();
   }
+
+  internal bool FlightCommandShortcutsEnabled =>
+      MissionPlanner.Utilities.Settings.Instance.GetBoolean(
+          Services.FlightCommandShortcuts.EnabledSettingKey, false);
+
+  internal System.Threading.Tasks.Task ExecuteFlightCommandShortcutAsync(
+      Services.FlightCommandShortcut shortcut) =>
+      _flightCommandShortcuts.ExecuteAsync(shortcut);
 
   private void OnConnectionChanged() =>
       Avalonia.Threading.Dispatcher.UIThread.Post(() => WindowTitle = BuildWindowTitle());

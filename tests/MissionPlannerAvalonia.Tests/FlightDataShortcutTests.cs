@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using MissionPlannerAvalonia.Services;
 using MissionPlannerAvalonia.ViewModels;
 using MissionPlannerAvalonia.Views;
 
@@ -26,6 +27,30 @@ public class FlightDataShortcutTests {
   public void Playback_speed_shortcuts_match_upstream_steps(
       double current, int direction, double expected) {
     Assert.Equal(expected, FlightDataViewModel.NextTlogSpeed(current, direction), 6);
+  }
+
+  [Theory]
+  [InlineData(Key.A, "Auto")]
+  [InlineData(Key.G, "Loiter")]
+  [InlineData(Key.U, "AltHold")]
+  [InlineData(Key.S, "Stabilize")]
+  [InlineData(Key.H, "Rtl")]
+  [InlineData(Key.T, "Takeoff")]
+  [InlineData(Key.L, "Land")]
+  [InlineData(Key.D0, "MinimumThrottle")]
+  public void Optional_flight_shortcuts_match_all_official_plugin_actions(
+      Key key, string expected) {
+    Assert.Equal(
+        Enum.Parse<FlightCommandShortcut>(expected),
+        MainWindow.FlightCommandShortcutFor(key, KeyModifiers.Alt));
+  }
+
+  [Fact]
+  public void Flight_shortcuts_require_the_exact_alt_modifier() {
+    Assert.Null(MainWindow.FlightCommandShortcutFor(Key.A, KeyModifiers.None));
+    Assert.Null(MainWindow.FlightCommandShortcutFor(
+        Key.A, KeyModifiers.Alt | KeyModifiers.Control));
+    Assert.Null(MainWindow.FlightCommandShortcutFor(Key.F1, KeyModifiers.Alt));
   }
 
   [AvaloniaFact]

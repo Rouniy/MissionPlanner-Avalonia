@@ -73,6 +73,13 @@
         <CheckBox Content="Low Speed" IsChecked="{Binding SpeechLowSpeed, Mode=TwoWay}" Margin="0,0,14,0" />
       </WrapPanel>
 
+      <TextBlock Classes="grp" Text="Flight Command Shortcuts" />
+      <CheckBox Name="FlightCommandShortcutsToggle"
+                Content="Enable global Alt-key flight commands (official Shortcuts plugin)"
+                IsChecked="{Binding EnableFlightCommandShortcuts, Mode=TwoWay}" />
+      <TextBlock Name="FlightCommandShortcutsLegend" Classes="lbl" TextWrapping="Wrap"
+                 Text="Alt+A AUTO · Alt+G LOITER · Alt+U ALT HOLD · Alt+S STABILIZE · Alt+H RTL · Alt+T TAKEOFF 2 m · Alt+L LAND · Alt+0 throttle channel 3 = 1000 us. Enabling and every command require explicit confirmation; stale telemetry, read-only links, disarmed hazardous actions and target changes are rejected." />
+
       <TextBlock Classes="grp" Text="Waypoints / Connect" />
       <WrapPanel>
         <CheckBox Content="Load Waypoints on connect" IsChecked="{Binding LoadWaypointsOnConnect, Mode=TwoWay}" Margin="0,0,14,0" />

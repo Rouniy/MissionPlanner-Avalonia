@@ -14,6 +14,7 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
 
   private readonly MAVLinkInterface _comPort = AppState.comPort;
   private bool _loading;
+  private bool _enablingFlightCommandShortcuts;
 
   public ObservableCollection<string> DistUnitsOptions { get; } = new() { "Meters", "Feet" };
   public ObservableCollection<string> SpeedUnitsOptions { get; } =
@@ -134,6 +135,9 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
 
   [ObservableProperty]
   private bool _enableHudOverlay = true;
+
+  [ObservableProperty]
+  private bool _enableFlightCommandShortcuts;
 
   [ObservableProperty]
   private bool _loadWaypointsOnConnect;
@@ -290,6 +294,8 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
     SpeechLowSpeed = s.GetBoolean("speechlowspeedenabled", SpeechLowSpeed);
 
     EnableHudOverlay = s.GetBoolean("CHK_hudshow", EnableHudOverlay);
+    EnableFlightCommandShortcuts = s.GetBoolean(
+        FlightCommandShortcuts.EnabledSettingKey, EnableFlightCommandShortcuts);
     LoadWaypointsOnConnect = s.GetBoolean("loadwpsonconnect", LoadWaypointsOnConnect);
     DisplayInFlightData = s.GetBoolean("CHK_disttohomeflightdata", DisplayInFlightData);
     MapFollowPlane = s.GetBoolean("CHK_maprotation", MapFollowPlane);
@@ -598,6 +604,47 @@ public partial class ConfigPlannerViewModel : ViewModelBase, System.IDisposable 
   partial void OnEnableHudOverlayChanged(bool value) {
     if (_loading) return;
     Settings.Instance["CHK_hudshow"] = value.ToString();
+  }
+
+  partial void OnEnableFlightCommandShortcutsChanged(bool value) {
+    if (_loading) return;
+    if (!value) {
+      Settings.Instance[FlightCommandShortcuts.EnabledSettingKey] = false.ToString();
+      return;
+    }
+
+    // A checked box must never enable global vehicle commands before the reject-by-default
+    // warning has been explicitly accepted.
+    _loading = true;
+    EnableFlightCommandShortcuts = false;
+    _loading = false;
+    if (!_enablingFlightCommandShortcuts) {
+      _ = ConfirmEnableFlightCommandShortcutsAsync();
+    }
+  }
+
+  private async System.Threading.Tasks.Task ConfirmEnableFlightCommandShortcutsAsync() {
+    _enablingFlightCommandShortcuts = true;
+    try {
+      bool accepted = await Dialogs.ConfirmDangerous(
+          "Enable Flight Command Shortcuts",
+          "Enable the official Shortcuts-plugin commands globally?\n\n"
+          + "Alt+A AUTO; Alt+G LOITER; Alt+U ALT HOLD; Alt+S STABILIZE; Alt+H RTL; "
+          + "Alt+T TAKEOFF 2 m; Alt+L LAND; Alt+0 throttle channel 3 to 1000 us.\n\n"
+          + "Every use still requires a separate reject-by-default confirmation and fresh "
+          + "telemetry from the exact selected modem/vehicle. Takeoff, LAND and throttle "
+          + "override are blocked while disarmed.",
+          "Enable Shortcuts");
+      _loading = true;
+      try {
+        EnableFlightCommandShortcuts = accepted;
+        Settings.Instance[FlightCommandShortcuts.EnabledSettingKey] = accepted.ToString();
+      } finally {
+        _loading = false;
+      }
+    } finally {
+      _enablingFlightCommandShortcuts = false;
+    }
   }
 
   partial void OnLoadWaypointsOnConnectChanged(bool value) {
