@@ -59,6 +59,7 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
       artifact: ${{ steps.ver.outputs.artifact }}
       prerelease: ${{ steps.ver.outputs.prerelease }}
+      signed_updates: ${{ steps.ver.outputs.signed_updates }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -67,6 +68,8 @@ jobs:
       - name: Resolve version once for all platforms
         id: ver
         shell: bash
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
         run: |
           PRERELEASE=false
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
@@ -86,6 +89,12 @@ jobs:
           echo "version=$MP_PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
           echo "artifact=$MP_ARTIFACT_VERSION" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          if [[ -n "$UPDATE_SIGNING_KEY" ]]; then
+            echo "signed_updates=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed_updates=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::UPDATE_SIGNING_KEY is not configured; release binaries will still be published, but updater manifests and Pages deployment are skipped."
+          fi
 
   package:
     needs: resolve-version
@@ -216,6 +225,7 @@ jobs:
           ./build/linux/package.sh all
 
       - name: Build + sign update manifest
+        if: needs.resolve-version.outputs.signed_updates == 'true'
         shell: bash
         env:
           SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
@@ -281,6 +291,7 @@ jobs:
           name: pages-${{ matrix.rid }}
           path: site/${{ matrix.rid }}
           include-hidden-files: true
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v7
         with:
@@ -296,6 +307,13 @@ jobs:
         with:
           pattern: dist-*
           path: artifacts
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          mkdir -p artifacts/checksums
+          find artifacts -type f ! -path 'artifacts/checksums/*' -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > artifacts/checksums/SHA256SUMS
       - uses: softprops/action-gh-release@v3
         with:
           files: artifacts/**/*
@@ -305,7 +323,11 @@ jobs:
   # Host the per-platform loose file tree + signed manifest for the in-app auto-updater.
   pages:
     needs: [resolve-version, package]
-    if: startsWith(github.ref, 'refs/tags/') && needs.resolve-version.outputs.prerelease != 'true'
+    if: >-
+      startsWith(github.ref, 'refs/tags/') &&
+      needs.resolve-version.outputs.prerelease != 'true' &&
+      needs.resolve-version.outputs.signed_updates == 'true' &&
+      vars.ENABLE_RELEASE_PAGES == 'true'
     runs-on: ubuntu-latest
     permissions:
       pages: write
