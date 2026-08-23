@@ -26,6 +26,9 @@ interface of **ArduPilot Mission Planner**.
   transport under Apache License 2.0; see `LICENSES/Apache-2.0.txt`.
 - `Tmds.DBus` © Tom Deseyn and Alp Toker is used by that transport under the MIT
   License; see `LICENSES/MIT-Tmds.DBus.txt`.
+- Unmodified `SimpleBLE` 0.7.3 provides the official Mission Planner-compatible Windows transport
+  and the macOS CoreBluetooth transport under GPLv3; exact source, release assets and pinned hashes
+  are recorded in `LICENSES/SimpleBLE-0.7.3-NOTICE.txt`.
 
 ## macOS joystick dependency
 

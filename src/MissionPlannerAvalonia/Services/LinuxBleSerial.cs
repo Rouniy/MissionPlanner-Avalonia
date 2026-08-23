@@ -18,8 +18,9 @@ internal static class BleEndpoint {
 
   internal static string Create(string? name, string address) {
     string compactAddress = new(address.Where(Uri.IsHexDigit).ToArray());
-    if (compactAddress.Length != 12) {
-      throw new ArgumentException("A BLE address must contain exactly 12 hexadecimal digits.",
+    if (compactAddress.Length is not 12 and not 32) {
+      throw new ArgumentException(
+          "A BLE address must be a 48-bit hardware address or a CoreBluetooth UUID.",
           nameof(address));
     }
 
@@ -46,15 +47,19 @@ internal static class BleEndpoint {
       return false;
     }
     int separator = endpoint.LastIndexOf('_');
-    if (separator < Prefix.Length || endpoint.Length - separator - 1 != 12) {
+    if (separator < Prefix.Length) {
       return false;
     }
     string compact = endpoint[(separator + 1)..];
-    if (!compact.All(Uri.IsHexDigit)) {
+    if (compact.Length is not 12 and not 32 || !compact.All(Uri.IsHexDigit)) {
       return false;
     }
-    address = string.Join(':', Enumerable.Range(0, 6)
-        .Select(index => compact.Substring(index * 2, 2).ToUpperInvariant()));
+    compact = compact.ToUpperInvariant();
+    address = compact.Length == 12
+        ? string.Join(':', Enumerable.Range(0, 6)
+            .Select(index => compact.Substring(index * 2, 2)))
+        : string.Join('-', compact[..8], compact.Substring(8, 4), compact.Substring(12, 4),
+            compact.Substring(16, 4), compact[20..]);
     return true;
   }
 }
@@ -77,11 +82,10 @@ internal interface IBleUartSession : IAsyncDisposable {
 }
 
 /// <summary>
-/// Linux implementation of Mission Planner's Nordic-UART BLE serial transport. The official
-/// transport ships a Windows-only SimpleBLE 0.7.3 DLL; this backend uses BlueZ over D-Bus and
-/// therefore needs no platform-native binary in the Linux package.
+/// Cross-platform Mission Planner Nordic-UART BLE serial stream. Platform backends provide the
+/// native transport while this layer owns bounded buffering, timeouts and cancellation semantics.
 /// </summary>
-internal sealed class LinuxBleSerial : Stream, ICommsSerial {
+internal sealed class BleSerial : Stream, ICommsSerial {
   private const int MaximumReceiveBytes = 4 * 1024 * 1024;
   private readonly object _sync = new();
   private readonly Queue<byte> _receive = new();
@@ -93,17 +97,18 @@ internal sealed class LinuxBleSerial : Stream, ICommsSerial {
   private bool _isOpen;
   private bool _disposed;
 
-  internal LinuxBleSerial(string portName, IBleUartBackend? backend = null) {
+  internal BleSerial(string portName, IBleUartBackend? backend = null) {
     PortName = portName;
-    _backend = backend ?? LinuxBluezBleBackend.Instance;
+    _backend = backend ?? PlatformBackend() ?? throw new PlatformNotSupportedException(
+        "Bluetooth LE serial is available on Linux, macOS and Windows.");
   }
 
   internal static Task<IReadOnlyList<BleDeviceInfo>> DiscoverAsync(
       TimeSpan duration, CancellationToken cancellationToken) {
-    if (!OperatingSystem.IsLinux()) {
-      return Task.FromResult<IReadOnlyList<BleDeviceInfo>>([]);
-    }
-    return LinuxBluezBleBackend.Instance.DiscoverAsync(duration, cancellationToken);
+    IBleUartBackend? backend = PlatformBackend();
+    return backend == null
+        ? Task.FromResult<IReadOnlyList<BleDeviceInfo>>([])
+        : backend.DiscoverAsync(duration, cancellationToken);
   }
 
   public Stream BaseStream => this;
@@ -145,6 +150,11 @@ internal sealed class LinuxBleSerial : Stream, ICommsSerial {
   public void Open() {
     if (!OperatingSystem.IsLinux() && _backend is LinuxBluezBleBackend) {
       throw new PlatformNotSupportedException("The BlueZ BLE transport is available only on Linux.");
+    }
+    if (!OperatingSystem.IsMacOS() && !OperatingSystem.IsWindows() &&
+        _backend is NativeSimpleBleBackend) {
+      throw new PlatformNotSupportedException(
+          "The native SimpleBLE transport is available only on macOS and Windows.");
     }
     if (!BleEndpoint.TryAddress(PortName, out string address)) {
       throw new IOException($"Invalid BLE endpoint '{PortName}'. Refresh the port list and select a BLE device.");
@@ -391,6 +401,16 @@ internal sealed class LinuxBleSerial : Stream, ICommsSerial {
       _isOpen = false;
       Monitor.PulseAll(_sync);
     }
+  }
+
+  private static IBleUartBackend? PlatformBackend() {
+    if (OperatingSystem.IsLinux()) {
+      return LinuxBluezBleBackend.Instance;
+    }
+    if (OperatingSystem.IsMacOS() || OperatingSystem.IsWindows()) {
+      return NativeSimpleBleBackend.Instance;
+    }
+    return null;
   }
 }
 

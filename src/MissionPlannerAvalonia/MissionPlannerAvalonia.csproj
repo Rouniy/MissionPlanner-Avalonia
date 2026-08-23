@@ -89,6 +89,46 @@
     <PackageReference Include="VideoLAN.LibVLC.Windows" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <SimpleBleMacRid Condition="'$(RuntimeIdentifier)' == 'osx-x64' Or
+                                    '$(RuntimeIdentifier)' == 'osx-arm64'">$(RuntimeIdentifier)</SimpleBleMacRid>
+    <SimpleBleMacRid Condition="'$(SimpleBleMacRid)' == '' And
+                                    $([MSBuild]::IsOSPlatform('OSX'))">$(NETCoreSdkPortableRuntimeIdentifier)</SimpleBleMacRid>
+    <SimpleBleMacNativeDir Condition="'$(SimpleBleMacRid)' != ''">$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/$(BaseIntermediateOutputPath)simpleble/$(SimpleBleMacRid)'))</SimpleBleMacNativeDir>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(SimpleBleMacRid)' != ''">
+    <Content Include="$(SimpleBleMacNativeDir)/libsimpleble-c.dylib" Link="libsimpleble-c.dylib">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="$(SimpleBleMacNativeDir)/libsimpleble.0.dylib" Link="libsimpleble.0.dylib">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="../../LICENSE" Link="LICENSE">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="../../LICENSES/SimpleBLE-0.7.3-NOTICE.txt"
+             Link="LICENSES/SimpleBLE-0.7.3-NOTICE.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <Target Name="FetchMacSimpleBle"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(SimpleBleMacRid)' != ''">
+    <Error Condition="'$(SimpleBleMacRid)' != 'osx-x64' And
+                      '$(SimpleBleMacRid)' != 'osx-arm64'"
+           Text="Unsupported macOS SimpleBLE runtime identifier: $(SimpleBleMacRid)" />
+    <Exec Command="bash &quot;$(MSBuildProjectDirectory)/../../build/simpleble/fetch-macos.sh&quot; &quot;$(SimpleBleMacRid)&quot; &quot;$(SimpleBleMacNativeDir)&quot;" />
+  </Target>
+
   <ItemGroup>
 
     <Compile Include="../../external/MissionPlanner/Radio/Uploader.cs" Link="Radio/Uploader.cs" />
@@ -139,9 +179,13 @@
     <InternalsVisibleTo Include="MissionPlannerAvalonia.Tests" />
   </ItemGroup>
 
-  <Target Name="RemoveWindowsNativeBinariesFromLinuxPublish"
+  <Target Name="RemoveWindowsNativeBinariesFromNonWindowsPublish"
           AfterTargets="ComputeFilesToPublish"
-          Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+          Condition="'$(RuntimeIdentifier)' == 'linux-x64' Or
+                     '$(RuntimeIdentifier)' == 'osx-x64' Or
+                     '$(RuntimeIdentifier)' == 'osx-arm64' Or
+                     ('$(RuntimeIdentifier)' == '' And
+                      !$([MSBuild]::IsOSPlatform('Windows')))">
     <ItemGroup>
       <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
                              Condition="'%(Filename)%(Extension)' == 'libusb-1.0.dll' Or

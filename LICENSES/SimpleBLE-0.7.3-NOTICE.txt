@@ -1,0 +1,17 @@
+SimpleBLE 0.7.3
+================
+
+Mission Planner uses the unmodified SimpleBLE 0.7.3 C and C++ shared libraries on macOS and
+Windows. SimpleBLE 0.7.3 is licensed under GNU GPL version 3; the complete GPLv3 text is provided
+in the top-level LICENSE file distributed with this application.
+
+Project and corresponding source:
+https://github.com/simpleble/simpleble/tree/v0.7.3
+https://github.com/simpleble/simpleble/archive/refs/tags/v0.7.3.tar.gz
+
+Official macOS binary release assets:
+https://github.com/simpleble/simpleble/releases/tag/v0.7.3
+
+The macOS archives and extracted libraries are selected by architecture and independently verified
+against their pinned SHA-256 digests by build/simpleble/fetch-macos.sh. Windows uses the x64
+SimpleBLE 0.7.3 binaries pinned in the official Mission Planner source submodule.
