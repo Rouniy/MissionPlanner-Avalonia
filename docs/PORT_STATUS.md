@@ -11,7 +11,7 @@ first-class release targets and still require runtime acceptance on their native
 | --- | --- | --- |
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC runtime | Cross-publish passed and PE32+ executable inspected; native Windows execution pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled libVLC; CI signing/notarization when credentials are configured | Cross-publish passed; native macOS execution pending. Runs on Apple Silicon through Rosetta 2 |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 1016 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/Hong-Kong-NoFly/GeoTIFF/DTED/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 1020 tests verified; the portable-plugin-host/HUD-recording/OSD-tlog-video/Grid-v2-editor/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/Hong-Kong-NoFly/GeoTIFF/DTED/native-GDAL/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/Linux-BLE `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
@@ -341,6 +341,13 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   cancellation and preserves the official GeoTIFF -> DTED -> downloaded-SRTM altitude priority.
   Changing an already active DEM directory is staged for restart so stale and new terrain indexes
   cannot be mixed invisibly in one session.
+- The same setup page restores the official `GDAL Custom` map provider when a current native GDAL
+  runtime is installed. The port discovers GDAL dynamically instead of bundling upstream's obsolete
+  Windows-only 2.3.2 package, opens candidate datasets read-only, creates north-up EPSG:3857 warped
+  views, and samples only each requested tile. Multiple local rasters retain transparency and are
+  overlaid coarse-to-fine on Google satellite imagery; corrupt or unsupported files are isolated and
+  reported without disabling the managed elevation path. Startup and manual scans are asynchronous
+  and cancellable, and replacing an index closes its dataset handles safely.
 - `Load Waypoints on connect` now opens the planner and reads the mission, while `Params Background
   Load` performs a cancellable live parameter-protocol read without holding the connect UI open.
 - Flight Planner can read and write mission, fence and rally storage through ArduPilot's MAVFTP
@@ -446,6 +453,8 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   optional native OGR runtime. Standard GeoPackage geometry headers, points, lines, polygons,
   collections, quoted table names and declared coordinate-system reprojection are supported. As in
   official Mission Planner, imported vector geometry appears in both Flight Planner and Flight Data.
+  The pinned application's only user-facing OGR call is this GeoPackage import, so the managed reader
+  provides that workflow without making an optional native vector library a separate parity gap.
 - Flight Planner and Flight Data use the same persisted map provider and update together. Google,
   OpenStreetMap, Esri and Bing have distinct tile sources; the Bing selector no longer silently serves
   Esri imagery.
@@ -596,7 +605,7 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 1016 passed, 0 failed, including Settings concurrency/null-reset stress,
+- Automated tests: 1020 passed, 0 failed, including Settings concurrency/null-reset stress,
   WMS/WMTS capabilities and tile addressing, raw/Socket.IO WebSocket protocol, fragmentation,
   reconnect and bounded-close integration, real
   loopback-UDP Moving Base input, blocking serial cancellation, exact multi-modem target isolation
@@ -627,7 +636,7 @@ native-platform acceptance testing.
   its safe defaults were visually verified.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 1016-test source on 2026-08-23. Package metadata,
+- The `.deb` target is rebuilt from the current 1020-test source on 2026-08-23. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; all 401 packaged-file checksums match after extraction, including the
   portable plugin API, BLE dependency licenses and byte-for-byte pinned 8,443,722-byte `airports.csv`.
@@ -649,7 +658,7 @@ The most recent Debian artifact is
 `out/packages/missionplanner-avalonia_1.3.83-20260823.31ced4b_amd64.deb`
 (54,253,938 bytes; SHA-256
 `3b09d76e098f99e33c922502c25d671bcd71e7ec9617383bcf69086444db04ce`), built from commit
-`31ced4b` and the current 1016-test source including the portable plugin host, HUD-to-MJPEG/AVI
+`31ced4b` and the current 1020-test source including the portable plugin host, HUD-to-MJPEG/AVI
 recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
@@ -728,7 +737,7 @@ not remove required Windows-native files from `win-x64` builds.
 
 ## Remaining cross-platform parity and release work
 
-This list contains six concrete open areas. The handler-level audit of the hidden developer form is
+This list contains five concrete open areas. The handler-level audit of the hidden developer form is
 complete and enforced against the pinned upstream source by a test. Completed workflows are
 documented above rather than being left in the gap table.
 NativeAOT is tracked separately as an optional runtime experiment and is not counted as a
@@ -737,7 +746,6 @@ Mission Planner functional-parity gap.
 | Area | Affected targets | Current state and direction |
 | --- | --- | --- |
 | Legacy Mission Planner plugin compatibility | All | Portable DLL discovery, dependency loading, `Init`/`Loaded`/`Loop`/`Exit`, enable/disable UI, current MAVLink/settings access, Flight Data actions and HUD overlays are native and operational. Existing DLLs compiled against Mission Planner's WinForms executable are not binary-compatible; their UI must be adapted to Avalonia and rebuilt. Loose `.cs` runtime compilation is intentionally not treated as DLL compatibility. |
-| Optional native GDAL/OGR map drivers | All | GeoPackage feature layers, SHP and DXF are available through managed cross-platform readers. The generic native OGR/GDAL driver path for additional formats remains absent. |
 | Signed beta application updates | All | Stable signed updates work. The Beta Updates control is disabled until this project publishes and signs a separate beta manifest/channel. |
 | Joystick input on macOS | macOS | Upstream only supplies DirectInput and Linux joydev backends; a GameController/HID backend is required. |
 | Native macOS arm64 release with video | macOS Apple Silicon | The Avalonia apphost cross-publishes as arm64, but the official `VideoLAN.LibVLC.Mac` 3.1.3.1 package contains an x86-64-only dylib. The operational release stays `osx-x64`/Rosetta until an arm64 libVLC runtime is built and packaged. |

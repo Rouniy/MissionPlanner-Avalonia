@@ -55,8 +55,8 @@ Status meanings:
 | `but_optflowcalib_Click` | `ported` | PX4Flow live frame/calibration page. |
 | `but_gpsinj_Click` | `ported` | Developer Tools > Extract GPS Corrections. |
 | `but_followswarm_Click` | `ported` | Tools > Swarm Waypoint Leader. |
-| `myButton3_Click` | `replaced` | Same upstream action as GDAL; covered by Elevation Sources. |
-| `but_GDAL_Click` | `replaced` | Managed GeoTIFF/DTED elevation source scanning, coverage and lookup. |
+| `myButton3_Click` | `ported` | Same upstream action as GDAL; covered by Elevation & Local Raster Sources. |
+| `but_GDAL_Click` | `ported` | Managed GeoTIFF/DTED elevation plus optional native GDAL raster-map scanning and overlays. |
 | `but_sortlogs_Click` | `ported` | Developer Tools > Organize Log Directory. |
 | `but_logdlscp_Click` | `replaced` | Verified-host-key SFTP DataFlash download workflow. |
 | `but_td_Click` | `ported` | Developer Tools > Download MAVFTP File. |

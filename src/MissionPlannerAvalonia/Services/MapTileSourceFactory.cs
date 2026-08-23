@@ -52,6 +52,13 @@ internal static class MapTileSourceFactory {
 
   internal static TileLayer CreateMapLayer(string? mapType) {
     string normalized = NormalizeMapType(mapType);
+    if (normalized == NativeGdalMapService.MapType) {
+      HttpTileSource satellite = CreateSourceForMapType(
+          "GoogleSatelliteMap", CurrentAccessMode);
+      return new TileLayer(NativeGdalMapService.CreateTileSource(satellite, _prefetchClient)) {
+        Name = normalized,
+      };
+    }
     if (OgcMapProvider.TryCreateDefinition(normalized, out OgcTileDefinition definition)) {
       HttpTileSource ogcSource = CreateSource(
           definition.Name,
@@ -89,6 +96,8 @@ internal static class MapTileSourceFactory {
       OgcMapProvider.WmsMapType,
     OgcMapProvider.WmtsMapType when OgcMapProvider.HasConfiguration(OgcMapProvider.WmtsMapType) =>
       OgcMapProvider.WmtsMapType,
+    NativeGdalMapService.MapType when NativeGdalMapService.HasConfiguration =>
+      NativeGdalMapService.MapType,
     _ => "GoogleSatelliteMap",
   };
 
@@ -268,7 +277,7 @@ internal static class MapTileSourceFactory {
         persistentCache);
   }
 
-  private static HttpTileSource CreateSourceForMapType(
+  internal static HttpTileSource CreateSourceForMapType(
       string normalized, MapTileAccessMode mode) {
     if (OgcMapProvider.TryCreateDefinition(normalized, out OgcTileDefinition definition)) {
       return CreateSource(

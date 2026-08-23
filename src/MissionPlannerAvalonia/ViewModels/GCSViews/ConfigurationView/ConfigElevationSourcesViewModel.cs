@@ -19,7 +19,10 @@ public sealed partial class ConfigElevationSourcesViewModel : ViewModelBase, IDi
   private string _directoryPath = ElevationSourceService.SavedDirectory;
 
   [ObservableProperty]
-  private string _status = "Choose a directory containing GeoTIFF or DTED elevation files.";
+  private string _status = "Choose a directory containing local elevation or raster-map files.";
+
+  [ObservableProperty]
+  private string _nativeGdalStatus = "Checking the optional native GDAL raster backend…";
 
   [ObservableProperty]
   private int _progress;
@@ -31,14 +34,31 @@ public sealed partial class ConfigElevationSourcesViewModel : ViewModelBase, IDi
   private bool _isBusy;
 
   public ObservableCollection<ElevationSourceFile> Files { get; } = [];
+  public ObservableCollection<NativeGdalRasterFile> RasterFiles { get; } = [];
 
   public ConfigElevationSourcesViewModel() {
     if (ElevationSourceService.LastResult is { } result) {
-      ApplyResult(result);
-    } else if (ElevationSourceService.StartupTask is { IsCompleted: false } startup) {
-      IsBusy = true;
-      Status = "Restoring the saved elevation directory in the background…";
-      _activeScan = ObserveStartupAsync(startup);
+      ApplyElevationResult(result);
+    }
+    if (NativeGdalMapService.LastResult is { } rasterResult) {
+      ApplyNativeGdalResult(rasterResult);
+    } else {
+      NativeGdalStatus = "Raster map: " + NativeGdalMapService.BackendStatus;
+    }
+
+    Task<ElevationScanResult>? elevationStartup = ElevationSourceService.LastResult == null
+        ? ElevationSourceService.StartupTask
+        : null;
+    Task<NativeGdalScanResult>? nativeStartup = NativeGdalMapService.LastResult == null
+        ? NativeGdalMapService.StartupTask
+        : null;
+    if (elevationStartup != null || nativeStartup != null) {
+      IsBusy = elevationStartup is { IsCompleted: false }
+          || nativeStartup is { IsCompleted: false };
+      if (IsBusy) {
+        Status = "Restoring the saved local elevation and raster directory in the background…";
+      }
+      _activeScan = ObserveStartupAsync(elevationStartup, nativeStartup);
     }
   }
 
@@ -71,7 +91,7 @@ public sealed partial class ConfigElevationSourcesViewModel : ViewModelBase, IDi
       }
       await ScanDirectoryAsync(normalized);
     } catch (Exception ex) {
-      Status = "Elevation scan failed: " + ex.Message;
+      Status = "Local-source scan failed: " + ex.Message;
     }
   }
 
@@ -93,7 +113,10 @@ public sealed partial class ConfigElevationSourcesViewModel : ViewModelBase, IDi
       return;
     }
     ElevationSourceService.ClearSavedDirectory();
+    NativeGdalMapService.Unload();
     DirectoryPath = "";
+    RasterFiles.Clear();
+    NativeGdalStatus = "Raster map unloaded. " + NativeGdalMapService.BackendStatus;
     Status = "Saved elevation directory cleared. Restart to unload files already indexed in this session.";
   }
 
@@ -102,30 +125,62 @@ public sealed partial class ConfigElevationSourcesViewModel : ViewModelBase, IDi
     Progress = 0;
     ProgressMaximum = 1;
     IsBusy = true;
-    Status = "Discovering GeoTIFF and DTED files…";
+    Status = "Discovering local elevation and GDAL raster-map files…";
+    NativeGdalStatus = "Scanning the directory with the optional native GDAL backend…";
     var cancellation = new CancellationTokenSource();
     _scanCancellation = cancellation;
-    var progress = new Progress<ElevationScanProgress>(item => {
+    int elevationCompleted = 0;
+    int elevationTotal = 0;
+    int rasterCompleted = 0;
+    int rasterTotal = 0;
+    void UpdateProgress() {
+      ProgressMaximum = Math.Max(1, elevationTotal + rasterTotal);
+      Progress = elevationCompleted + rasterCompleted;
+    }
+    var elevationProgress = new Progress<ElevationScanProgress>(item => {
       if (_disposed) {
         return;
       }
-      ProgressMaximum = Math.Max(1, item.Total);
-      Progress = item.Completed;
+      elevationCompleted = item.Completed;
+      elevationTotal = item.Total;
+      UpdateProgress();
       Status = item.Completed >= item.Total
           ? "Finishing elevation index…"
           : $"Indexing {item.Completed + 1}/{item.Total}: {Path.GetFileName(item.CurrentFile)}";
     });
+    var rasterProgress = new Progress<NativeGdalScanProgress>(item => {
+      if (_disposed) {
+        return;
+      }
+      rasterCompleted = item.Completed;
+      rasterTotal = item.Total;
+      UpdateProgress();
+      NativeGdalStatus = item.Completed >= item.Total
+          ? "Finishing native GDAL raster index…"
+          : $"GDAL {item.Completed + 1}/{item.Total}: {Path.GetFileName(item.CurrentFile)}";
+    });
 
-    Task<ElevationScanResult> operation = ElevationSourceService.ScanAsync(
-        directory, progress, cancellation.Token);
+    Task<ElevationScanResult> elevationOperation = ElevationSourceService.ScanAsync(
+        directory, elevationProgress, cancellation.Token);
+    Task<NativeGdalScanResult> rasterOperation = NativeGdalMapService.ScanAsync(
+        directory, rasterProgress, cancellation.Token);
+    Task operation = Task.WhenAll(elevationOperation, rasterOperation);
     _activeScan = operation;
     try {
-      ElevationScanResult result = await operation;
-      ApplyResult(result);
+      await operation;
+      ApplyElevationResult(await elevationOperation);
+      ApplyNativeGdalResult(await rasterOperation);
+      if (string.Equals(
+              MissionPlanner.Utilities.Settings.Instance["MapType"],
+              NativeGdalMapService.MapType,
+              StringComparison.Ordinal)) {
+        MapTileSourceFactory.RefreshMapType(NativeGdalMapService.MapType);
+      }
     } catch (OperationCanceledException) {
-      Status = "Elevation indexing cancelled. Files completed before cancellation remain active.";
+      Status = "Local-source indexing cancelled. The previously complete indexes remain active.";
+      NativeGdalStatus = "Native GDAL raster indexing cancelled.";
     } catch (Exception ex) {
-      Status = "Elevation scan failed: " + ex.Message;
+      Status = "Local-source scan failed: " + ex.Message;
     } finally {
       if (ReferenceEquals(_scanCancellation, cancellation)) {
         _scanCancellation = null;
@@ -138,15 +193,33 @@ public sealed partial class ConfigElevationSourcesViewModel : ViewModelBase, IDi
     }
   }
 
-  private async Task ObserveStartupAsync(Task<ElevationScanResult> startup) {
+  private async Task ObserveStartupAsync(
+      Task<ElevationScanResult>? elevationStartup,
+      Task<NativeGdalScanResult>? nativeStartup) {
     try {
-      ElevationScanResult result = await startup;
-      if (!_disposed) {
-        ApplyResult(result);
+      if (elevationStartup != null) {
+        try {
+          ElevationScanResult result = await elevationStartup;
+          if (!_disposed) {
+            ApplyElevationResult(result);
+          }
+        } catch (Exception ex) {
+          if (!_disposed) {
+            Status = "Saved elevation directory failed to load: " + ex.Message;
+          }
+        }
       }
-    } catch (Exception ex) {
-      if (!_disposed) {
-        Status = "Saved elevation directory failed to load: " + ex.Message;
+      if (nativeStartup != null) {
+        try {
+          NativeGdalScanResult result = await nativeStartup;
+          if (!_disposed) {
+            ApplyNativeGdalResult(result);
+          }
+        } catch (Exception ex) {
+          if (!_disposed) {
+            NativeGdalStatus = "Saved native raster directory failed to load: " + ex.Message;
+          }
+        }
       }
     } finally {
       if (!_disposed) {
@@ -156,9 +229,9 @@ public sealed partial class ConfigElevationSourcesViewModel : ViewModelBase, IDi
     }
   }
 
-  private void ApplyResult(ElevationScanResult result) {
+  private void ApplyElevationResult(ElevationScanResult result) {
     if (!Dispatcher.UIThread.CheckAccess()) {
-      Dispatcher.UIThread.Post(() => ApplyResult(result));
+      Dispatcher.UIThread.Post(() => ApplyElevationResult(result));
       return;
     }
     DirectoryPath = result.Directory;
@@ -174,6 +247,31 @@ public sealed partial class ConfigElevationSourcesViewModel : ViewModelBase, IDi
           $"{result.GeoTiffCount} GeoTIFF, {result.DtedCount} DTED" +
           (result.ErrorCount == 0 ? "." : $"; {result.ErrorCount} error(s).") +
           " Local DEM data takes priority over downloaded SRTM.";
+  }
+
+  private void ApplyNativeGdalResult(NativeGdalScanResult result) {
+    if (!Dispatcher.UIThread.CheckAccess()) {
+      Dispatcher.UIThread.Post(() => ApplyNativeGdalResult(result));
+      return;
+    }
+    DirectoryPath = result.Directory;
+    RasterFiles.Clear();
+    foreach (NativeGdalRasterFile file in result.Files) {
+      RasterFiles.Add(file);
+    }
+    string ignored = result.UnrecognizedFiles == 0
+        ? ""
+        : $"; {result.UnrecognizedFiles} unrecognized file(s) ignored";
+    NativeGdalStatus = !NativeGdalMapService.IsAvailable
+        ? result.Backend
+        : result.IndexedCount == 0
+        ? result.Backend + (result.ExaminedFiles == 0
+            ? ". No candidate files of at least 1 KiB were found."
+            : $". No georeferenced raster was indexed{ignored}.")
+        : $"{result.Backend}. Indexed {result.IndexedCount}/{result.Files.Count} raster(s)" +
+          (result.ErrorCount == 0 ? ignored + "." :
+              $"; {result.ErrorCount} error(s){ignored}.") +
+          " Select GDAL Custom in Flight Planner to overlay them on satellite imagery.";
   }
 
   public void Dispose() {
