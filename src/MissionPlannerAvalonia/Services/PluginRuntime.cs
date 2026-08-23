@@ -1,3 +1,5 @@
+extern alias LegacyPluginContract;
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -8,6 +10,9 @@ using System.Runtime.Loader;
 using System.Threading;
 using System.Threading.Tasks;
 using MissionPlanner.Plugin;
+using LegacyMainV2 = LegacyPluginContract::MissionPlanner.MainV2;
+using LegacyPlugin = LegacyPluginContract::MissionPlanner.Plugin.Plugin;
+using LegacyPluginHost = LegacyPluginContract::MissionPlanner.Plugin.PluginHost;
 using PortablePlugin = MissionPlanner.Plugin.Plugin;
 
 namespace MissionPlannerAvalonia.Services;
@@ -204,10 +209,18 @@ internal sealed class PluginRuntime : IAsyncDisposable {
         try {
           plugin = (PortablePlugin?)Activator.CreateInstance(type)
               ?? throw new InvalidOperationException("The plugin constructor returned null.");
-          host = _hostFactory(file.Path, type);
+          PluginHost nativeHost = _hostFactory(file.Path, type);
+          host = plugin is LegacyPlugin
+              ? new LegacyPluginHostBridge(nativeHost)
+              : nativeHost;
           plugin.Assembly = assembly;
           plugin.FileName = file.FileName;
           plugin.Host = host;
+          if (plugin is LegacyPlugin legacyPlugin) {
+            legacyPlugin.Assembly = assembly;
+            legacyPlugin.FileName = file.FileName;
+            legacyPlugin.Host = (LegacyPluginHost)host;
+          }
 
           bool initialized = await Task.Run(plugin.Init, cancellationToken).ConfigureAwait(false);
           if (!initialized) {
@@ -527,6 +540,100 @@ internal sealed class PluginRuntime : IAsyncDisposable {
     }
   }
 
+  private sealed class LegacyPluginHostBridge : LegacyPluginHost, IDisposable {
+    private PluginHost? _inner;
+    private readonly MissionPlanner.MAVLinkInterface _lastPort;
+
+    public LegacyPluginHostBridge(PluginHost inner) {
+      _inner = inner;
+      _lastPort = inner.comPort;
+      inner.ConnectionChanged += OnConnectionChanged;
+      SynchronizeMainV2();
+    }
+
+    private PluginHost Inner => _inner
+        ?? throw new ObjectDisposedException(nameof(LegacyPluginHostBridge));
+
+    public override MissionPlanner.MAVLinkInterface comPort => Inner.comPort;
+
+    public override IReadOnlyList<MissionPlanner.MAVLinkInterface> comPorts => Inner.comPorts;
+
+    public override MissionPlanner.CurrentState cs => Inner.cs;
+
+    public override MissionPlanner.Utilities.Settings config => Inner.config;
+
+    public override string DataDirectory => Inner.DataDirectory;
+
+    public override event Action? ConnectionChanged {
+      add => Inner.ConnectionChanged += value;
+      remove {
+        if (_inner != null) {
+          _inner.ConnectionChanged -= value;
+        }
+      }
+    }
+
+    public override IDisposable RegisterFlightAction(
+        string action, Action<string> handler, string? after = null, string? before = null) =>
+        Inner.RegisterFlightAction(action, handler, after, before);
+
+    public override IDisposable RegisterHudOverlay(Action<HudOverlayContext> painter) =>
+        Inner.RegisterHudOverlay(painter);
+
+    public override void PostToUi(Action action) => Inner.PostToUi(action);
+
+    public override void Navigate(string screen) => Inner.Navigate(screen);
+
+    public override void Log(string message) => Inner.Log(message);
+
+    public override int AddWPtoList(
+        MAVLink.MAV_CMD cmd,
+        double p1,
+        double p2,
+        double p3,
+        double p4,
+        double x,
+        double y,
+        double z,
+        object? tag = null) => Inner.AddWPtoList(cmd, p1, p2, p3, p4, x, y, z, tag);
+
+    public override void InsertWP(
+        int idx,
+        MAVLink.MAV_CMD cmd,
+        double p1,
+        double p2,
+        double p3,
+        double p4,
+        double x,
+        double y,
+        double z,
+        object? tag = null) => Inner.InsertWP(idx, cmd, p1, p2, p3, p4, x, y, z, tag);
+
+    public override void GetWPs() => Inner.GetWPs();
+
+    public void Dispose() {
+      PluginHost? inner = Interlocked.Exchange(ref _inner, null);
+      if (inner == null) {
+        return;
+      }
+      inner.ConnectionChanged -= OnConnectionChanged;
+      DisposeHost(inner);
+    }
+
+    private void OnConnectionChanged() {
+      SynchronizeMainV2();
+      ProcessConnectionChanged();
+      ProcessDeviceChanged(LegacyMainV2.WM_DEVICECHANGE_enum.DBT_DEVNODES_CHANGED);
+      LegacyMainV2.instance.ProcessDeviceChanged(
+          LegacyMainV2.WM_DEVICECHANGE_enum.DBT_DEVNODES_CHANGED);
+    }
+
+    private void SynchronizeMainV2() {
+      LegacyMainV2.ComPortProvider = () => _inner?.comPort ?? _lastPort;
+      LegacyMainV2.Comports = [.. (_inner?.comPorts ?? [_lastPort]).Distinct()];
+    }
+  }
+
   private sealed class PluginLoadContext : AssemblyLoadContext {
     private readonly AssemblyDependencyResolver _resolver;
     private readonly string _pluginDirectory;
@@ -538,6 +645,10 @@ internal sealed class PluginRuntime : IAsyncDisposable {
     }
 
     protected override Assembly? Load(AssemblyName assemblyName) {
+      if (string.Equals(assemblyName.Name, typeof(LegacyPlugin).Assembly.GetName().Name,
+              StringComparison.OrdinalIgnoreCase)) {
+        return typeof(LegacyPlugin).Assembly;
+      }
       Assembly? shared = Default.Assemblies.FirstOrDefault(assembly =>
           AssemblyName.ReferenceMatchesDefinition(assembly.GetName(), assemblyName));
       if (shared != null) {

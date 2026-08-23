@@ -17,6 +17,35 @@ using AvaloniaRect = Avalonia.Rect;
 namespace MissionPlannerAvalonia.Tests;
 
 public class PlannerPortParityTests {
+  [AvaloniaFact]
+  public void Legacy_plugin_mission_calls_preserve_official_coordinate_and_parameter_order() {
+    using var vm = new FlightPlannerViewModel {
+      VerifyHeight = false,
+      DefaultFrame = "Terrain",
+    };
+    object tag = new();
+
+    int added = vm.AddPluginCommand(MAVLink.MAV_CMD.WAYPOINT,
+        1, 2, 3, 4, 33.25, 44.5, 120, tag);
+    vm.InsertPluginCommand(0, MAVLink.MAV_CMD.DO_SET_SERVO,
+        9, 1500, 0, 0, 0, 0, 0);
+
+    Assert.Equal(0, added);
+    Assert.Equal(2, vm.Waypoints.Count);
+    Assert.Equal(new[] { 0, 1 }, vm.Waypoints.Select(row => row.Seq));
+    WpRow inserted = vm.Waypoints[0];
+    Assert.Equal((ushort)MAVLink.MAV_CMD.DO_SET_SERVO, inserted.Command);
+    Assert.Equal((9d, 1500d), (inserted.P1, inserted.P2));
+    WpRow waypoint = vm.Waypoints[1];
+    Assert.Equal((44.5d, 33.25d, 120d), (waypoint.Lat, waypoint.Lng, waypoint.Alt));
+    Assert.Equal((1d, 2d, 3d, 4d), (waypoint.P1, waypoint.P2, waypoint.P3, waypoint.P4));
+    Assert.Equal((byte)MAVLink.MAV_FRAME.GLOBAL_TERRAIN_ALT, waypoint.Frame);
+    Assert.Same(tag, waypoint.Tag);
+    vm.MissionType = "Rally";
+    vm.MissionType = "Mission";
+    Assert.Same(tag, vm.Waypoints[1].Tag);
+  }
+
   [Theory]
   [InlineData(MAVLink.MAV_MISSION_TYPE.MISSION, "@MISSION/mission.dat")]
   [InlineData(MAVLink.MAV_MISSION_TYPE.FENCE, "@MISSION/fence.dat")]

@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>MissionPlannerAvalonia.LegacyTestPlugin</AssemblyName>
+    <RootNamespace>MissionPlannerAvalonia.LegacyTestPlugin</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../MissionPlannerAvalonia.LegacyReference/MissionPlannerAvalonia.LegacyReference.csproj" />
+  </ItemGroup>
+</Project>
