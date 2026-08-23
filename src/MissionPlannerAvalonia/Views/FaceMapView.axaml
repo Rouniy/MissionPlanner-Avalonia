@@ -1,0 +1,232 @@
+<UserControl
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  xmlns:controls="using:MissionPlannerAvalonia.Controls"
+  mc:Ignorable="d"
+  d:DesignWidth="980"
+  d:DesignHeight="820"
+  x:Class="MissionPlannerAvalonia.Views.FaceMapView"
+  x:DataType="vm:FaceMapViewModel"
+  Background="{DynamicResource MpControlBg}">
+
+  <Grid Margin="14" RowDefinitions="Auto,330,*,Auto,Auto">
+    <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="12">
+      <TextBlock Classes="pagetitle" Text="Face Map" />
+      <TextBlock VerticalAlignment="Center" Opacity="0.75"
+                 Text="Vertical facade / quarry bench mission generator" />
+    </StackPanel>
+
+    <Border Grid.Row="1" Margin="0,8,0,0" BorderBrush="{DynamicResource MpBorderBrush}"
+            BorderThickness="1" CornerRadius="4" ClipToBounds="True">
+      <Grid>
+        <controls:FaceMapPreviewMap x:Name="PreviewMap" />
+        <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8"
+                Padding="8,5" CornerRadius="4" Background="#D0202224">
+          <TextBlock Text="Drag a red numbered point to edit the face path" />
+        </Border>
+        <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
+                Padding="8,5" CornerRadius="4" Background="#D0202224">
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <CheckBox Content="Face path" IsChecked="{Binding ShowFacePath}" />
+            <CheckBox Content="Route" IsChecked="{Binding ShowRoute}" />
+            <CheckBox Content="Markers" IsChecked="{Binding ShowMarkers}" />
+            <Button Content="Fit" Padding="8,2" Click="OnFitPreview" />
+          </StackPanel>
+        </Border>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="2" ColumnDefinitions="*,12,300" Margin="0,8,0,0">
+      <TabControl Grid.Column="0">
+        <TabItem Header="Face geometry">
+          <ScrollViewer>
+            <StackPanel Margin="8" Spacing="8">
+              <Grid ColumnDefinitions="180,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8">
+                <TextBlock Grid.Row="0" Grid.Column="0" Classes="fieldlbl" Text="Bench height (m)" VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="0" Grid.Column="1" Minimum="1" Maximum="99999" Increment="0.5" Value="{Binding BenchHeight}" />
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Classes="fieldlbl" Text="Face angle (°)" VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="1" Grid.Column="1" Minimum="1" Maximum="90" Increment="1" Value="{Binding FaceAngle}" />
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Classes="fieldlbl" Text="Number of benches" VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="2" Grid.Column="1" Minimum="1" Maximum="9999" Increment="1" Value="{Binding BenchCount}" />
+
+                <TextBlock Grid.Row="3" Grid.Column="0" Classes="fieldlbl" Text="Berm depth (m)" VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="3" Grid.Column="1" Minimum="0" Maximum="9999" Increment="0.5" Value="{Binding BermDepth}" />
+
+                <TextBlock Grid.Row="4" Grid.Column="0" Classes="fieldlbl" Text="Distance from face (m)" VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="4" Grid.Column="1" Minimum="0.1" Maximum="9999" Increment="0.5" Value="{Binding DistanceFromFace}" />
+
+                <TextBlock Grid.Row="5" Grid.Column="0" Classes="fieldlbl" Text="Camera pitch down (°)" VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="5" Grid.Column="1" Minimum="0" Maximum="89" Increment="1"
+                               IsEnabled="{Binding UnlockCameraPitch}" Value="{Binding CameraPitch}" />
+
+                <CheckBox Grid.Row="6" Grid.Column="1" Content="Unlock camera pitch"
+                          IsChecked="{Binding UnlockCameraPitch}" />
+
+                <TextBlock Grid.Row="7" Grid.Column="0" Classes="fieldlbl" Text="Toe vertical offset (m)" VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="7" Grid.Column="1" Minimum="-9999" Maximum="9999" Increment="0.5" Value="{Binding ToeHeight}" />
+
+                <TextBlock Grid.Row="8" Grid.Column="0" Classes="fieldlbl" Text="Toe point height (m)" VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="8" Grid.Column="1" Minimum="0" Maximum="9999" Increment="0.5" Value="{Binding ToePointHeight}" />
+
+                <TextBlock Grid.Row="9" Grid.Column="0" Classes="fieldlbl" Text="Extra toe passes" VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="9" Grid.Column="1" Minimum="0" Maximum="9999" Increment="1" Value="{Binding ToePointRuns}" />
+
+                <CheckBox Grid.Row="10" Grid.Column="1" Content="Reverse face side / first direction"
+                          IsChecked="{Binding FlipDirection}" />
+                <CheckBox Grid.Row="11" Grid.Column="1" Content="Return along face path when needed"
+                          IsChecked="{Binding FollowPathHome}" />
+              </Grid>
+            </StackPanel>
+          </ScrollViewer>
+        </TabItem>
+
+        <TabItem Header="Camera &amp; coverage">
+          <ScrollViewer>
+            <StackPanel Margin="8" Spacing="8">
+              <Grid ColumnDefinitions="180,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8">
+                <TextBlock Grid.Row="0" Grid.Column="0" Classes="fieldlbl" Text="Camera profile" VerticalAlignment="Center" />
+                <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding Cameras}"
+                          SelectedItem="{Binding SelectedCamera}" HorizontalAlignment="Stretch" />
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Classes="fieldlbl" Text="Focal length (mm)" VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="1" Grid.Column="1" Minimum="0.1" Maximum="500" Increment="0.1" Value="{Binding FocalLength}" />
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Classes="fieldlbl" Text="Sensor W × H (mm)" VerticalAlignment="Center" />
+                <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                  <TextBox Width="120" Text="{Binding SensorWidth}" />
+                  <TextBox Width="120" Text="{Binding SensorHeight}" />
+                </StackPanel>
+
+                <TextBlock Grid.Row="3" Grid.Column="0" Classes="fieldlbl" Text="Image W × H (px)" VerticalAlignment="Center" />
+                <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                  <TextBox Width="120" Text="{Binding ImageWidth}" />
+                  <TextBox Width="120" Text="{Binding ImageHeight}" />
+                </StackPanel>
+
+                <TextBlock Grid.Row="4" Grid.Column="0" Classes="fieldlbl" Text="Forward overlap (%)" VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="4" Grid.Column="1" Minimum="0" Maximum="99" Increment="1" Value="{Binding Overlap}" />
+
+                <TextBlock Grid.Row="5" Grid.Column="0" Classes="fieldlbl" Text="Side overlap (%)" VerticalAlignment="Center" />
+                <NumericUpDown Grid.Row="5" Grid.Column="1" Minimum="0" Maximum="99" Increment="1" Value="{Binding Sidelap}" />
+
+                <TextBlock Grid.Row="6" Grid.Column="0" Classes="fieldlbl" Text="Image footprint" />
+                <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding FootprintText}" />
+                <TextBlock Grid.Row="7" Grid.Column="0" Classes="fieldlbl" Text="Vertical lane spacing" />
+                <TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding VerticalSpacing, StringFormat={}{0:0.##} m}" />
+                <TextBlock Grid.Row="8" Grid.Column="0" Classes="fieldlbl" Text="Trigger distance" />
+                <TextBlock Grid.Row="8" Grid.Column="1" Text="{Binding TriggerDistance, StringFormat={}{0:0.##} m}" />
+                <TextBlock Grid.Row="9" Grid.Column="0" Classes="fieldlbl" Text="FOV / resolution" />
+                <StackPanel Grid.Row="9" Grid.Column="1" Orientation="Horizontal" Spacing="10">
+                  <TextBlock Text="{Binding FovText}" />
+                  <TextBlock Text="{Binding GroundResolutionText}" />
+                </StackPanel>
+              </Grid>
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Load sample JPEG…" Click="OnLoadSamplePhoto" />
+                <Button Content="Save camera profile…" Click="OnSaveCameraProfile" />
+              </StackPanel>
+            </StackPanel>
+          </ScrollViewer>
+        </TabItem>
+
+        <TabItem Header="Mission">
+          <ScrollViewer>
+            <StackPanel Margin="8" Spacing="8">
+              <Grid ColumnDefinitions="180,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8">
+                <CheckBox Grid.Row="0" Grid.Column="1" Content="Set survey speed" IsChecked="{Binding UseSpeed}" />
+                <TextBlock Grid.Row="1" Grid.Column="0" Classes="fieldlbl" Text="Flying speed (m/s)" />
+                <NumericUpDown Grid.Row="1" Grid.Column="1" Minimum="0.1" Maximum="360" Increment="0.1"
+                               IsEnabled="{Binding UseSpeed}" Value="{Binding FlyingSpeed}" />
+                <CheckBox Grid.Row="2" Grid.Column="1" Content="Add takeoff" IsChecked="{Binding AddTakeoff}" />
+                <TextBlock Grid.Row="3" Grid.Column="0" Classes="fieldlbl" Text="Finish action" />
+                <ComboBox Grid.Row="3" Grid.Column="1" ItemsSource="{Binding FinishActions}" SelectedItem="{Binding FinishAction}" />
+                <TextBlock Grid.Row="4" Grid.Column="0" Classes="fieldlbl" Text="Mission flights / splits" />
+                <NumericUpDown Grid.Row="4" Grid.Column="1" Minimum="1" Maximum="300" Increment="1" Value="{Binding SplitCount}" />
+                <CheckBox Grid.Row="5" Grid.Column="1" Content="Extra images before/after turns" IsChecked="{Binding ExtraImages}" />
+                <TextBlock Grid.Row="6" Grid.Column="0" Classes="fieldlbl" Text="Image delay (s)" />
+                <NumericUpDown Grid.Row="6" Grid.Column="1" Minimum="0" Maximum="60" Increment="0.5" Value="{Binding CopterDelay}" />
+              </Grid>
+
+              <Border Background="{DynamicResource MpInputBg}" CornerRadius="4" Padding="10">
+                <StackPanel Spacing="8">
+                  <Grid ColumnDefinitions="180,*" RowDefinitions="Auto,Auto">
+                    <TextBlock Grid.Row="0" Grid.Column="0" Classes="fieldlbl" Text="Camera trigger" />
+                    <ComboBox Grid.Row="0" Grid.Column="1" ItemsSource="{Binding TriggerModes}" SelectedItem="{Binding TriggerMode}" />
+                    <CheckBox Grid.Row="1" Grid.Column="1" Margin="0,8,0,0"
+                              Content="Stop/start trigger at every strip" IsChecked="{Binding StopTriggerAtStripEnds}" />
+                  </Grid>
+
+                  <Grid IsVisible="{Binding HasRepeatServoOptions}" ColumnDefinitions="180,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8">
+                    <TextBlock Grid.Row="0" Grid.Column="0" Classes="fieldlbl" Text="Servo number / PWM" />
+                    <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                      <NumericUpDown Width="100" Minimum="1" Maximum="16" Value="{Binding ServoNumber}" />
+                      <NumericUpDown Width="120" Minimum="800" Maximum="2200" Value="{Binding ServoPwm}" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="1" Grid.Column="0" Classes="fieldlbl" Text="Repeat cycle (s)" />
+                    <NumericUpDown Grid.Row="1" Grid.Column="1" Minimum="0" Maximum="60" Increment="0.1" Value="{Binding ServoRepeatSeconds}" />
+                  </Grid>
+
+                  <Grid IsVisible="{Binding HasSetServoOptions}" ColumnDefinitions="180,*" RowDefinitions="Auto,Auto" RowSpacing="8">
+                    <TextBlock Grid.Row="0" Grid.Column="0" Classes="fieldlbl" Text="Servo number" />
+                    <NumericUpDown Grid.Row="0" Grid.Column="1" Minimum="1" Maximum="16" Value="{Binding ServoNumber}" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Classes="fieldlbl" Text="Start / stop PWM" />
+                    <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                      <NumericUpDown Width="120" Minimum="800" Maximum="2200" Value="{Binding ServoLowPwm}" />
+                      <NumericUpDown Width="120" Minimum="800" Maximum="2200" Value="{Binding ServoHighPwm}" />
+                    </StackPanel>
+                  </Grid>
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </ScrollViewer>
+        </TabItem>
+      </TabControl>
+
+      <Border Grid.Column="2" Background="{DynamicResource MpInputBg}" CornerRadius="4" Padding="12">
+        <ScrollViewer>
+          <StackPanel Spacing="7">
+          <TextBlock Classes="fieldlbl" FontSize="15" Text="Face Map stats" />
+          <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="5">
+            <TextBlock Grid.Row="0" Grid.Column="0" Classes="fieldlbl" Text="Face path points" />
+            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding PathPointCount}" />
+            <TextBlock Grid.Row="1" Grid.Column="0" Classes="fieldlbl" Text="Strips" />
+            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding StripCount}" />
+            <TextBlock Grid.Row="2" Grid.Column="0" Classes="fieldlbl" Text="Navigation points" />
+            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding WaypointCount}" />
+            <TextBlock Grid.Row="3" Grid.Column="0" Classes="fieldlbl" Text="Estimated photos" />
+            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding PhotoCount}" />
+            <TextBlock Grid.Row="4" Grid.Column="0" Classes="fieldlbl" Text="Route distance" />
+            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding DistanceText}" />
+            <TextBlock Grid.Row="5" Grid.Column="0" Classes="fieldlbl" Text="Flight time" />
+            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding FlightTimeText}" />
+            <TextBlock Grid.Row="6" Grid.Column="0" Classes="fieldlbl" Text="Toe pitch step" />
+            <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding RadialPitchStep, StringFormat={}{0:0.#}°}" />
+          </Grid>
+          <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Opacity="0.75"
+                     Text="Red is the surveyed face path; yellow is the generated alternating flight route. Altitudes are stored in the planner's selected frame." />
+          <TextBlock Margin="0,8,0,0" Classes="fieldlbl" Text="Bench cross-section" />
+          <Border BorderBrush="{DynamicResource MpBorderBrush}" BorderThickness="1"
+                  CornerRadius="4" ClipToBounds="True">
+            <controls:FaceMapProfileControl Height="170" />
+          </Border>
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+
+    <TextBlock Grid.Row="3" Margin="0,8,0,0" Text="{Binding Status}"
+               Foreground="{DynamicResource MpAccentBrush}" TextWrapping="Wrap" />
+
+    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,8,0,0">
+      <Button Content="Load .facemap…" Click="OnLoadFaceMap" />
+      <Button Content="Save .facemap…" Click="OnSaveFaceMap" />
+      <Button Content="Cancel" Command="{Binding CloseCommand}" />
+      <Button Content="Accept" Command="{Binding AcceptCommand}" />
+    </StackPanel>
+  </Grid>
+</UserControl>

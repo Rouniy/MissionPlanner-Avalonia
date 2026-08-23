@@ -14,7 +14,7 @@ their native runners.
 | Windows x64 (`win-x64`) | Self-contained folder, PE apphost; bundled libVLC and native SimpleBLE runtime | Cross-publish passed and PE32+ executable/native DLLs inspected; native Windows application and physical BLE-modem acceptance remain pending |
 | macOS x64 (`osx-x64`) | Self-contained `.app`, Mach-O/dylibs; bundled official Intel VLC 3.0.23 and pinned x64 SimpleBLE runtime; CI signing/notarization when credentials are configured | Cross-publish passed; the apphost and every bundled native dependency were inspected as x86-64, and all 444 checksummed VLC runtime files, including 343 plugin dylibs, were verified. Full native Intel application and physical-device acceptance remain pending. Also runs on Apple Silicon through Rosetta 2. |
 | macOS ARM64 (`osx-arm64`) | Self-contained `.app`, native Apple-Silicon apphost/dylibs; bundled official ARM64 VLC 3.0.23 and pinned ARM64 SimpleBLE runtime; CI signing/notarization when credentials are configured | Cross-publish passed; the apphost and every bundled native dependency were inspected as ARM64, and all 438 checksummed VLC runtime files, including 337 plugin dylibs, were verified. Native ARM64 CI loads libVLC/SimpleBLE/IOKit, enumerates available hardware and decodes the real MJPEG callback/export pipeline. Full application and physical-device acceptance remain pending. |
-| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 1061 tests verified; the portable-plugin-host/legacy-plugin-ABI/HUD-recording/OSD-tlog-video/Grid-v2-editor/Terrain-DAT-Maker/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/signed-beta-updates/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/Hong-Kong-NoFly/GeoTIFF/DTED/native-GDAL/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/cross-platform-BLE/macOS-ARM64-video `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
+| Linux x64 (`linux-x64`) | Self-contained ELF/CoreCLR `tar.gz` and FHS-compliant amd64 `.deb` with native dependencies | Current source: Release build and 1076 tests verified; the portable-plugin-host/legacy-plugin-ABI/HUD-recording/OSD-tlog-video/Grid-v2-editor/Face-Map/Terrain-DAT-Maker/interactive-gimbal-video/gimbal-video-layouts/all-interface-antenna-tracker/DroneCAN-multicast/direct-SLCAN/session-safety/thread-safe-settings/signed-beta-updates/managed-WebSocket/MicroDrone/device-operations/default-settings/barometer-altitude/MAVLink-serial-TCP-bridge/firmware-archive/camera-overlay/SHP/SHP-to-POLY/DXF/GeoPackage/KML-GroundOverlay/Hong-Kong-NoFly/GeoTIFF/DTED/native-GDAL/airport-alpha/Rally/docking/detachable-Flight-Data-panels/WMS-WMTS/map-tile-import/SSH/SFTP/LogIndex/MagFit/Heli/connection-safety/nonblocking-device-loss/multi-link/Plane-Formation/FollowPath/FollowMe/MovingBase/WaypointLeader/FollowLeader/Sequence/Translation-RESX/Terrain-3D/cross-platform-BLE/macOS-ARM64-video `.deb` is rebuilt and verified after each functional commit; the portable tarball predates the latest rounds |
 
 Speech is implemented per platform: Windows uses `System.Speech` through PowerShell, macOS uses
 `say`, and Linux uses `speech-dispatcher` with the real `espeak-ng` output module
@@ -282,6 +282,16 @@ submodule. UI-only changes were translated to Avalonia where applicable:
   while its min/max speed values only populate otherwise unused fields. The six historical 3DR
   profiles merely limit a redundant altitude slider without validating the editable altitude or
   generated mission, so those inert/presentation controls are not presented as missing functionality.
+- Face Map is a native `Auto WP` workflow for facade, quarry-wall and multi-bench surveys. It ports
+  the official UTM offset/lawnmower geometry, toe passes, face direction, berm/bench offsets,
+  gimbal-pitch progression, yaw toward the surface, optional return path and extra turn images.
+  Its mission builder supports takeoff, speed, RTL/land, complete-strip split flights with
+  `DO_JUMP`, distance/digicam/repeat-servo/set-servo triggers and stop/start boundaries. The
+  draggable Mapsui route preview and live bench cross-section replace the WinForms/GMap drawing;
+  built-in/user camera profiles, sample-JPEG metadata, persisted `facemap_*` settings and official
+  `.facemap` XML files remain interchangeable. Parallel and near-parallel face legs use a bounded
+  bevel instead of the official plug-in's invalid UTM-zero intersection, and absolute missions add
+  the planned home altitude explicitly rather than emitting relative heights in a global frame.
 - The integrated DroneCAN parameter page now has search, favourites, modified-only filtering and
   `.param` import/export; failed writes remain visibly dirty instead of being accepted locally.
   Its MAVLink-CAN session, forwarding packets and every node parameter/firmware operation are bound
@@ -627,7 +637,7 @@ native-platform acceptance testing.
 - Distribution SDK: `/usr/bin/dotnet` 10.0.111.
 - `global.json`: 10.0.100 with `latestFeature`, so the distribution SDK is accepted.
 - Release build: succeeds with `-m:1`.
-- Automated tests: 1061 passed, 0 failed, including legacy Mission Planner plugin binary loading,
+- Automated tests: 1076 passed, 0 failed, including legacy Mission Planner plugin binary loading,
   lifecycle/host/mission-list ABI, BLE endpoint parsing, native ABI layout,
   platform-backend selection and HID descriptor decoding for signed and unsigned
   axes, Flight Simulation controls, dual sliders, buttons, hats and D-pads; signed beta manifest
@@ -668,7 +678,7 @@ native-platform acceptance testing.
   its safe defaults were visually verified.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 1061-test source on 2026-08-23. Package metadata,
+- The `.deb` target is rebuilt from the current 1076-test source on 2026-08-23. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
   resources were verified; every packaged-file checksum matches after extraction, including the
   portable plugin API, HIDSharp/BLE dependency licenses, the SimpleBLE and VLC source/license
@@ -736,7 +746,7 @@ matched official dylibs instead.
 
 ## Remaining cross-platform parity and release work
 
-The current solution/project audit leaves four concrete upstream user workflows to adapt from
+The current solution/project audit leaves three concrete upstream user workflows to adapt from
 source, plus the permanent binary UI-compatibility boundary described below. The handler-level
 audit of the hidden developer form is complete and enforced against the pinned upstream source by
 a test. Sample/test plugins and workflows already ported natively are not counted as gaps. Historical
@@ -746,7 +756,6 @@ Mission Planner functional-parity gap.
 
 | Area | Affected targets | Current state and direction |
 | --- | --- | --- |
-| Face Map planning plugin | All | The official solution's facade/vertical-surface mapping generator still uses a WinForms dialog and GMap drawing. Its geometry and mission generation must be adapted into the native planner/Grid workflow. |
 | Open Drone ID plugin | All | The official testing-oriented Remote ID tab, external NMEA-GPS input, status/emergency controls and `OPEN_DRONE_ID_*` transmission backend have not yet been adapted to Avalonia. |
 | GPS Tracker Home module input | All | Setting Tracker Home at a planner coordinate is ported. The official plugin's `Obtain from module` path is tied to an old Windows Garmin USB/SetupAPI driver and an obsolete unsigned Google elevation request; a portable serial/NMEA or HID source with local DEM altitude is still required. |
 | Optional Mission Planner Shortcuts plugin | All | The plugin's Alt-key flight-mode/takeoff/land/RC shortcuts are not registered by the Avalonia host. Equivalent normal actions exist, but shortcut parity needs target/disarm validation and visible safety handling before it can be enabled. |
