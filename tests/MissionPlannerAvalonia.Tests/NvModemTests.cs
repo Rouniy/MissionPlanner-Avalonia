@@ -171,6 +171,28 @@ public class NvModemTests {
         && sent.Packet is MAVLink.mavlink_param_request_list_t);
   }
 
+  [Theory]
+  [InlineData("NV_TX", "TX")]
+  [InlineData("nv_rx_433", "RX")]
+  public void Nv4_rfm_detection_uses_legacy_gtu_nvstat_node_signature(
+      string nodeName, string expectedRole) {
+    var transport = new FakeTransport();
+    using var viewModel = new NvModemViewModel(transport, () => DateTime.UtcNow,
+        startTimer: false);
+    var source = new NvModemLink(new MAVLinkInterface(), "shared UDP");
+
+    // Legacy RFM builds did not reliably report version major 4. GTU NVStat
+    // therefore identifies these nodes by the case-insensitive NV_TX/NV_RX prefix.
+    viewModel.HandlePacket(source, NodeInfoPacket(
+        nodeName, 231, 249, hardwareMajor: 0, softwareMajor: 0));
+
+    NvModemDeviceChoice modem = Assert.Single(viewModel.Devices);
+    Assert.Contains("NV4 231:249", modem.Label, StringComparison.Ordinal);
+    Assert.Contains(expectedRole, modem.Label, StringComparison.Ordinal);
+    Assert.Contains(transport.Sent, sent => sent.SystemId == 231 && sent.ComponentId == 249
+        && sent.Packet is MAVLink.mavlink_param_request_list_t);
+  }
+
   [Fact]
   public void Supports_every_current_gtu_identity_mode_without_id_ranges() {
     var transport = new FakeTransport();
@@ -188,10 +210,12 @@ public class NvModemTests {
     viewModel.HandlePacket(source, Packet(NvModemMessageIds.NvRxStat,
         new NvRxStatMessage { Frequency = 433_000_000 }, 90, 91));
     viewModel.HandlePacket(source, NodeInfoPacket("RX_433/70", 199, 254));
+    viewModel.HandlePacket(source,
+        NodeInfoPacket("NV_TX", 77, 250, hardwareMajor: 0, softwareMajor: 0));
     viewModel.HandlePacket(source, ParameterPacket(
         "MODEM_PROFILE", 8, 5, 1, 88, 222));
 
-    Assert.Equal(6, viewModel.Devices.Count);
+    Assert.Equal(7, viewModel.Devices.Count);
     Assert.Contains(viewModel.Devices, item =>
         item.Label.Contains("NV5 213:247", StringComparison.Ordinal)
         && item.Label.Contains("RX", StringComparison.Ordinal));
@@ -205,6 +229,9 @@ public class NvModemTests {
     Assert.Contains(viewModel.Devices, item =>
         item.Label.Contains("NV4 199:254", StringComparison.Ordinal)
         && item.Label.Contains("RX", StringComparison.Ordinal));
+    Assert.Contains(viewModel.Devices, item =>
+        item.Label.Contains("NV4 77:250", StringComparison.Ordinal)
+        && item.Label.Contains("TX", StringComparison.Ordinal));
     Assert.Contains(viewModel.Devices, item =>
         item.Label.Contains("NV5 88:222", StringComparison.Ordinal));
   }

@@ -19,9 +19,11 @@ NV4 replies use the same observed Mission Planner link, which is the port equiva
 addressed-UDP-route fix. Discovery has no system-ID or component-ID range. Current NV4 and NV5
 devices are identified by the periodic `NV_MODEM_INFO` passport (`53016`), including receive-only
 or unconfigured hardware with no live radio traffic. Older NV5 firmware falls back to its private
-live-status/configuration messages. Unmodified NV4 firmware falls back to `NV_RX_STAT` or the strict
-`UAVCAN_NODE_INFO` signature used by current GTU: hardware and software major version 4 with a name
-beginning `TX_` or `RX_`. NV5 parameter-family signatures are also accepted, while an NV4 parameter
+live-status/configuration messages. Unmodified NV4 firmware falls back to `NV_RX_STAT` or either GTU
+`UAVCAN_NODE_INFO` signature: current `NV5Settings` uses hardware and software major version 4 with a
+name beginning `TX_` or `RX_`, while the legacy NVStat/RFM path accepts case-insensitive `NV_TX` or
+`NV_RX` prefixes even when old firmware leaves the version majors unset. NV5 parameter-family
+signatures are also accepted, while an NV4 parameter
 can only refine an already identified device, matching GTU's false-positive protection. The page
 replays all discovery packet types from the shared Mission Planner cache when it is opened after a
 modem was already seen, and requests the passport, NV5 status, and CAN node information from every

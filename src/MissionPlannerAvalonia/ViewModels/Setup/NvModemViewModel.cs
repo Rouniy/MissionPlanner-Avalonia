@@ -1537,12 +1537,18 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
   }
 
   private static bool IsLegacyNv4Node(MAVLink.mavlink_uavcan_node_info_t info) {
-    if (info.hw_version_major != 4 || info.sw_version_major != 4) {
-      return false;
-    }
     string name = NvModemParameterCodec.Name(info.name);
-    return name.StartsWith("TX_", StringComparison.Ordinal)
-        || name.StartsWith("RX_", StringComparison.Ordinal);
+    bool currentSettingsSignature = info.hw_version_major == 4
+        && info.sw_version_major == 4
+        && (name.StartsWith("TX_", StringComparison.Ordinal)
+            || name.StartsWith("RX_", StringComparison.Ordinal));
+
+    // The original GTU NVStat panel predates NV5Settings. Old NV4 RFM firmware
+    // publishes NV_TX/NV_RX node names and does not reliably fill the version
+    // majors, so NVStat identifies it from the first five characters only.
+    bool legacyRfmSignature = name.StartsWith("NV_TX", StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith("NV_RX", StringComparison.OrdinalIgnoreCase);
+    return currentSettingsSignature || legacyRfmSignature;
   }
 
   private void SendRtspRequest(NvModemDeviceState device) {
@@ -1714,6 +1720,12 @@ public partial class NvModemViewModel : ViewModelBase, IDisposable {
         return "TX";
       }
       if (device.LegacyNodeName.StartsWith("RX_", StringComparison.Ordinal)) {
+        return "RX";
+      }
+      if (device.LegacyNodeName.StartsWith("NV_TX", StringComparison.OrdinalIgnoreCase)) {
+        return "TX";
+      }
+      if (device.LegacyNodeName.StartsWith("NV_RX", StringComparison.OrdinalIgnoreCase)) {
         return "RX";
       }
     }
