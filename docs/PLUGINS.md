@@ -88,11 +88,21 @@ HUD drawing is already on the UI thread and its drawing context is valid only fo
 
 ## Compatibility and trust
 
-Official Mission Planner plugins compiled against the WinForms executable are not binary-compatible
-with this Avalonia application. Their control/menu code must be replaced and the source rebuilt
-against the portable API. Runtime compilation of loose `.cs` plugin files is not provided; compile
-them into DLLs first. The reusable lifecycle and direct MAVLink/settings access intentionally stay
-close to upstream to keep that adaptation small.
+The application ships a compatibility assembly named `MissionPlanner.dll`. Existing official
+Mission Planner plugin DLLs can therefore run without recompilation when they use the non-visual
+contract: `Plugin` lifecycle and metadata, `Host.comPort`, `Host.cs`, `Host.config`,
+`Host.DeviceChanged`, `Host.MainForm` identity/device events, `MainV2.comPort`, the current
+`MainV2.Comports` connection snapshot, and `AddWPtoList`/`InsertWP`/`GetWPs`. The loader deliberately
+binds a plugin's `MissionPlanner` assembly reference to this shim even when the original executable
+had a different 1.3-era assembly version. This path is regression-tested with an untouched .NET
+Framework 4.7.2 plugin binary compiled against a separate old-shape reference assembly.
+
+Old plugins that reference WinForms/GMap Windows controls or UI members such as `FDMenuMap`,
+`FDMenuHud`, `FPMenuMap`, `FPGMapControl`, `FDGMapControl`, `FPDrawnPolygon`, or the original
+WinForms members of `MainV2` still need source adaptation to the portable Avalonia actions, HUD and
+UI-dispatch API. Their private dependencies must also be loadable on the current platform and .NET
+runtime. Runtime compilation of loose `.cs` plugin files is not provided; compile them into DLLs
+first. New cross-platform plugins should reference `MissionPlannerAvalonia.PluginApi.dll` directly.
 
 Plugins are trusted in-process code, not scripts in a security sandbox. They have the same file,
 network, serial-device and vehicle access as the application. Install only code you trust. A plugin

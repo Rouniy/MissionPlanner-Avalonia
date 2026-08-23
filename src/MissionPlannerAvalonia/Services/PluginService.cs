@@ -197,6 +197,9 @@ internal static class PluginService {
 
     public override MissionPlanner.MAVLinkInterface comPort => AppState.comPort;
 
+    public override IReadOnlyList<MissionPlanner.MAVLinkInterface> comPorts =>
+        AppState.Connections.Snapshot().Select(connection => connection.Link).ToArray();
+
     public override string DataDirectory { get; }
 
     public override event Action? ConnectionChanged {
@@ -259,6 +262,39 @@ internal static class PluginService {
     }
 
     public override void Log(string message) => Report($"Plugin {_pluginLabel}: {message}");
+
+    public override int AddWPtoList(
+        MAVLink.MAV_CMD cmd,
+        double p1,
+        double p2,
+        double p3,
+        double p4,
+        double x,
+        double y,
+        double z,
+        object? tag = null) {
+      int result = -1;
+      RunOnUi(() => result = _mainViewModel.FlightPlanner.AddPluginCommand(
+          cmd, p1, p2, p3, p4, x, y, z, tag));
+      return result;
+    }
+
+    public override void InsertWP(
+        int idx,
+        MAVLink.MAV_CMD cmd,
+        double p1,
+        double p2,
+        double p3,
+        double p4,
+        double x,
+        double y,
+        double z,
+        object? tag = null) => RunOnUi(() =>
+        _mainViewModel.FlightPlanner.InsertPluginCommand(
+            idx, cmd, p1, p2, p3, p4, x, y, z, tag));
+
+    public override void GetWPs() =>
+        PostToUi(_mainViewModel.FlightPlanner.ReadPluginMission);
 
     public void Dispose() {
       IDisposable[] registrations;

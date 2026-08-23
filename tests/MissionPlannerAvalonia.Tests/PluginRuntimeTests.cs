@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Runtime.Loader;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
@@ -71,6 +73,58 @@ public sealed class PluginRuntimeTests {
         hosts[nameof(TestPlugin.FaultingLoopPlugin)].DataDirectory, "exited.txt")));
     Assert.Contains(diagnostics,
         line => line.Contains("disabled after three consecutive failures", StringComparison.Ordinal));
+  }
+
+  [Fact]
+  public async Task LegacyDllCompiledAgainstOfficialAssemblyRunsWithoutRebuild() {
+    string root = CreateTempRoot();
+    string plugins = Path.Combine(root, "plugins");
+    Directory.CreateDirectory(plugins);
+    string pluginPath = CopyLegacyFixturePlugin(plugins);
+    string outputPath = Path.Combine(root, "legacy-lifecycle.txt");
+    Assert.Equal(new Version(1, 3, 9999, 0),
+        ReadAssemblyReferenceVersion(pluginPath, "MissionPlanner"));
+    Assert.False(File.Exists(Path.Combine(plugins, "MissionPlanner.dll")),
+        "The test must load the production compatibility shim, not its compile-time reference.");
+    var hosts = new ConcurrentDictionary<string, FakePluginHost>();
+    var runtime = new PluginRuntime(
+        [plugins],
+        [],
+        (_, type) => hosts.GetOrAdd(type.Name,
+            name => new FakePluginHost(Path.Combine(root, "data", name))));
+    Environment.SetEnvironmentVariable("MP_LEGACY_PLUGIN_FIXTURE", outputPath);
+
+    try {
+      await runtime.RefreshAsync();
+      await WaitUntilAsync(() => File.Exists(outputPath)
+          && File.ReadAllLines(outputPath).Contains("Loop"));
+
+      PluginFileSnapshot snapshot = Assert.Single(runtime.Snapshot());
+      Assert.Equal(pluginPath, snapshot.Path);
+      Assert.Equal(PluginFileState.Loaded, snapshot.State);
+      Assert.Equal("Legacy Binary Fixture", snapshot.Name);
+      Assert.Equal("1.3-era", snapshot.Version);
+      Assert.Equal("Mission Planner ABI test", snapshot.Author);
+      Assert.Empty(snapshot.Error);
+
+      FakePluginHost host = hosts["LegacyLifecyclePlugin"];
+      Assert.Equal(17, Assert.Single(host.AddedWaypoints).Result);
+      Assert.Equal(MAVLink.MAV_CMD.WAYPOINT, host.AddedWaypoints[0].Command);
+      Assert.Equal(33.25, host.AddedWaypoints[0].Longitude);
+      Assert.Equal(44.5, host.AddedWaypoints[0].Latitude);
+      Assert.Equal("legacy-tag", host.AddedWaypoints[0].Tag);
+      Assert.Equal(MAVLink.MAV_CMD.DO_SET_SERVO, Assert.Single(host.InsertedWaypoints).Command);
+      Assert.Equal(1, host.MissionReadCount);
+
+      host.RaiseConnectionChanged();
+      await WaitUntilAsync(() => File.ReadAllLines(outputPath)
+          .Any(line => line == "DeviceChanged:DBT_DEVNODES_CHANGED"));
+    } finally {
+      await runtime.DisposeAsync();
+      Environment.SetEnvironmentVariable("MP_LEGACY_PLUGIN_FIXTURE", null);
+    }
+
+    Assert.Equal("Exit", File.ReadAllLines(outputPath)[^1]);
   }
 
   [Fact]
@@ -222,6 +276,29 @@ public sealed class PluginRuntimeTests {
     return destination;
   }
 
+  private static string CopyLegacyFixturePlugin(string directory) {
+    string source = Path.Combine(AppContext.BaseDirectory,
+        "MissionPlannerAvalonia.LegacyTestPlugin.dll");
+    Assert.True(File.Exists(source), "The legacy binary fixture output was not copied.");
+    string destination = Path.Combine(directory, Path.GetFileName(source));
+    File.Copy(source, destination);
+    return destination;
+  }
+
+  private static Version ReadAssemblyReferenceVersion(string path, string assemblyName) {
+    using var stream = File.OpenRead(path);
+    using var pe = new PEReader(stream);
+    MetadataReader metadata = pe.GetMetadataReader();
+    foreach (AssemblyReferenceHandle handle in metadata.AssemblyReferences) {
+      AssemblyReference reference = metadata.GetAssemblyReference(handle);
+      if (string.Equals(metadata.GetString(reference.Name), assemblyName,
+              StringComparison.OrdinalIgnoreCase)) {
+        return reference.Version;
+      }
+    }
+    throw new InvalidDataException($"{path} does not reference {assemblyName}.");
+  }
+
   private static async Task WaitUntilAsync(Func<bool> predicate) {
     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     while (!predicate()) {
@@ -258,6 +335,12 @@ public sealed class PluginRuntimeTests {
 
     public int HudCount => _hud.Count;
 
+    public List<AddedWaypoint> AddedWaypoints { get; } = [];
+
+    public List<InsertedWaypoint> InsertedWaypoints { get; } = [];
+
+    public int MissionReadCount { get; private set; }
+
     public override MissionPlanner.MAVLinkInterface comPort => _port;
 
     public override string DataDirectory { get; }
@@ -286,6 +369,37 @@ public sealed class PluginRuntimeTests {
     public override void Log(string message) {
     }
 
+    public override int AddWPtoList(
+        MAVLink.MAV_CMD cmd,
+        double p1,
+        double p2,
+        double p3,
+        double p4,
+        double x,
+        double y,
+        double z,
+        object? tag = null) {
+      const int result = 17;
+      AddedWaypoints.Add(new AddedWaypoint(
+          cmd, p1, p2, p3, p4, x, y, z, tag, result));
+      return result;
+    }
+
+    public override void InsertWP(
+        int idx,
+        MAVLink.MAV_CMD cmd,
+        double p1,
+        double p2,
+        double p3,
+        double p4,
+        double x,
+        double y,
+        double z,
+        object? tag = null) => InsertedWaypoints.Add(new InsertedWaypoint(
+            idx, cmd, p1, p2, p3, p4, x, y, z, tag));
+
+    public override void GetWPs() => MissionReadCount++;
+
     public void InvokeAction(string action) => _actions[action](action);
 
     public void DrawHud() {
@@ -310,4 +424,28 @@ public sealed class PluginRuntimeTests {
       public void Dispose() => Interlocked.Exchange(ref _dispose, null)?.Invoke();
     }
   }
+
+  private sealed record AddedWaypoint(
+      MAVLink.MAV_CMD Command,
+      double P1,
+      double P2,
+      double P3,
+      double P4,
+      double Longitude,
+      double Latitude,
+      double Altitude,
+      object? Tag,
+      int Result);
+
+  private sealed record InsertedWaypoint(
+      int Index,
+      MAVLink.MAV_CMD Command,
+      double P1,
+      double P2,
+      double P3,
+      double P4,
+      double Longitude,
+      double Latitude,
+      double Altitude,
+      object? Tag);
 }

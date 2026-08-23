@@ -24,7 +24,8 @@ discovered by the enabled Beta Updates preference without replacing the stable G
 See [port status](docs/PORT_STATUS.md) for the Windows/macOS/Linux support matrix, upstream
 synchronization details, and the explicit list of missing or intentionally disabled functionality.
 The native [portable plugin host](docs/PLUGINS.md) documents the official-style plugin lifecycle,
-installation paths, Avalonia extension API and legacy WinForms compatibility boundary.
+installation paths, Avalonia extension API, binary compatibility for non-visual legacy plugins and
+the remaining WinForms UI boundary.
 
 ## Platform targets
 

@@ -220,6 +220,7 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
     Lat = row.Lat,
     Lng = row.Lng,
     Alt = row.Alt,
+    Tag = row.Tag,
   };
 
   private static bool SameMission(MissionSnapshot left, MissionSnapshot right) =>
@@ -2359,6 +2360,58 @@ public partial class FlightPlannerViewModel : ViewModelBase, IDisposable {
     return row;
   }
 
+  internal int AddPluginCommand(
+      MAVLink.MAV_CMD cmd,
+      double p1,
+      double p2,
+      double p3,
+      double p4,
+      double longitude,
+      double latitude,
+      double altitude,
+      object? tag = null) {
+    using var undo = BeginUndoMutation();
+    WpRow row = AddCommandRow(cmd, latitude, longitude, altitude, p1, p2, p3, p4,
+        DefaultFrameId);
+    row.Tag = tag;
+    return row.Seq;
+  }
+
+  internal void InsertPluginCommand(
+      int index,
+      MAVLink.MAV_CMD cmd,
+      double p1,
+      double p2,
+      double p3,
+      double p4,
+      double longitude,
+      double latitude,
+      double altitude,
+      object? tag = null) {
+    if (index >= Waypoints.Count) {
+      AddPluginCommand(cmd, p1, p2, p3, p4, longitude, latitude, altitude, tag);
+      return;
+    }
+    using var undo = BeginUndoMutation();
+    var row = new WpRow {
+      Command = (ushort)cmd,
+      Frame = DefaultFrameId,
+      Alt = altitude,
+      Lat = latitude,
+      Lng = longitude,
+      P1 = p1,
+      P2 = p2,
+      P3 = p3,
+      P4 = p4,
+      Tag = tag,
+    };
+    Waypoints.Insert(Math.Max(0, index), row);
+    Renumber();
+    WaypointsChanged?.Invoke();
+  }
+
+  internal void ReadPluginMission() => _ = ReadMissionOnConnectAsync();
+
   public void InsertWaypointAt(double lat, double lng) {
     if (SelectedWaypoint != null) {
       InsertWaypointAfterSeq(SelectedWaypoint.Seq, lat, lng, spline: false);
@@ -3015,6 +3068,9 @@ public partial class WpRow : ObservableObject {
 
   [ObservableProperty]
   private byte _frame = (byte)MAVLink.MAV_FRAME.GLOBAL_RELATIVE_ALT;
+
+  /// <summary>Opaque metadata retained for official plugin-generated mission rows.</summary>
+  public object? Tag { get; set; }
 
   [ObservableProperty]
   private string _zone = "";

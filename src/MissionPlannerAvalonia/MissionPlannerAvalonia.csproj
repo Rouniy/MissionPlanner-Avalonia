@@ -190,6 +190,9 @@
     <ProjectReference Include="../../external/MissionPlanner/ExtLibs/ArduPilot/MissionPlanner.ArduPilot.csproj" />
     <ProjectReference Include="../../external/MissionPlanner/ExtLibs/alglibnet/alglibnet.csproj" />
     <ProjectReference Include="../../external/MissionPlanner/ExtLibs/DroneCAN/DroneCAN.csproj" />
+    <ProjectReference Include="../MissionPlannerAvalonia.LegacyPluginApi/MissionPlannerAvalonia.LegacyPluginApi.csproj">
+      <Aliases>LegacyPluginContract</Aliases>
+    </ProjectReference>
     <ProjectReference Include="../MissionPlannerAvalonia.PluginApi/MissionPlannerAvalonia.PluginApi.csproj" />
     <ProjectReference Include="../Px4Uploader/Px4Uploader.csproj" />
   </ItemGroup>

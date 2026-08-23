@@ -39,10 +39,13 @@
     <Project Path="external/MissionPlanner/ExtLibs/Zeroconf/Zeroconf/Zeroconf.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/MissionPlannerAvalonia.LegacyPluginApi/MissionPlannerAvalonia.LegacyPluginApi.csproj" />
     <Project Path="src/MissionPlannerAvalonia.PluginApi/MissionPlannerAvalonia.PluginApi.csproj" />
     <Project Path="src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/MissionPlannerAvalonia.LegacyReference/MissionPlannerAvalonia.LegacyReference.csproj" />
+    <Project Path="tests/MissionPlannerAvalonia.LegacyTestPlugin/MissionPlannerAvalonia.LegacyTestPlugin.csproj" />
     <Project Path="tests/MissionPlannerAvalonia.Tests/MissionPlannerAvalonia.Tests.csproj" />
     <Project Path="tests/MissionPlannerAvalonia.TestPlugin.Dependency/MissionPlannerAvalonia.TestPlugin.Dependency.csproj" />
     <Project Path="tests/MissionPlannerAvalonia.TestPlugin/MissionPlannerAvalonia.TestPlugin.csproj" />

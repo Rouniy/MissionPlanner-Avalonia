@@ -17,8 +17,19 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/MissionPlannerAvalonia/MissionPlannerAvalonia.csproj" />
+    <ProjectReference Include="../../src/MissionPlannerAvalonia.LegacyPluginApi/MissionPlannerAvalonia.LegacyPluginApi.csproj">
+      <Aliases>LegacyPluginContract</Aliases>
+    </ProjectReference>
+    <ProjectReference Include="../MissionPlannerAvalonia.LegacyTestPlugin/MissionPlannerAvalonia.LegacyTestPlugin.csproj"
+                      ReferenceOutputAssembly="false"
+                      SkipGetTargetFrameworkProperties="true" />
     <ProjectReference Include="../MissionPlannerAvalonia.TestPlugin/MissionPlannerAvalonia.TestPlugin.csproj" />
   </ItemGroup>
+
+  <Target Name="CopyLegacyPluginFixture" AfterTargets="Build">
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)../MissionPlannerAvalonia.LegacyTestPlugin/bin/$(Configuration)/net472/MissionPlannerAvalonia.LegacyTestPlugin.dll"
+          DestinationFolder="$(TargetDir)" />
+  </Target>
 
   <ItemGroup>
     <Using Include="Xunit" />
