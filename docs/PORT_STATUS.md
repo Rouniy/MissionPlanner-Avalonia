@@ -647,10 +647,11 @@ native-platform acceptance testing.
   its safe defaults were visually verified.
 - The production multicast transport simultaneously joined CAN1 and CAN2 on a real active IPv4
   interface and released both reused UDP 57732 sockets cleanly.
-- The `.deb` target is rebuilt from the current 1024-test source on 2026-08-23. Package metadata,
+- The `.deb` target is rebuilt from the current 1035-test source on 2026-08-23. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
-  resources were verified; all 401 packaged-file checksums match after extraction, including the
-  portable plugin API, BLE dependency licenses and byte-for-byte pinned 8,443,722-byte `airports.csv`.
+  resources were verified; all 402 packaged-file checksums match after extraction, including the
+  portable plugin API, HIDSharp/BLE dependency licenses and byte-for-byte pinned 8,443,722-byte
+  `airports.csv`.
 - `lintian --fail-on error,warning` passes without diagnostics. The extracted x86-64 ELF apphost
   reaches the normal event loop under Xvfb and has no unresolved direct library dependencies.
   Complete and checkpoint-only HUD AVI samples are recognized as 25 fps MJPEG by `ffprobe`.
@@ -667,10 +668,11 @@ native-platform acceptance testing.
   traffic test.
 
 The most recent Debian artifact is
-`out/packages/missionplanner-avalonia_1.3.83-20260823.b6e462c_amd64.deb`
-(54,281,204 bytes; SHA-256
-`ad411c248c57bccfd7aba0314db3fe425f7d0496763b8c1d890e075cb7eb52bf`), built from commit
-`b6e462c` and the current 1024-test source including serialized firmware-archive progress, the signed beta update channel, portable plugin host, HUD-to-MJPEG/AVI
+`out/packages/missionplanner-avalonia_1.3.83-20260823.e4bc337_amd64.deb`
+(54,379,010 bytes; SHA-256
+`124feb3b456d3df41e1956d9f070adf1f1e45baa4655b1cc5d9780bb3a3c3ed4`), built from commit
+`e4bc337` and the current 1035-test source including the macOS IOKit HID joystick backend,
+serialized firmware-archive progress, the signed beta update channel, portable plugin host, HUD-to-MJPEG/AVI
 recording, synchronized
 OSD-video rendering from tlog, the integrated
 Grid v2 boundary editor,
@@ -712,8 +714,8 @@ exports identified during the current CodeQL triage, plus concurrent global-sett
 serialized settings-file writes, and a cancellable bounded WebSocket transport with explicit
 raw-WebSocket/Socket.IO protocol separation and reconnect lifecycle ownership.
 Its APT version is
-`1:1.3.83+20260823.r271.b6e462c`; epoch 1 preserves upgrade ordering from the old CalVer
-packages and `r271` orders same-day builds before comparing hashes. The existing
+`1:1.3.83+20260823.r274.e4bc337`; epoch 1 preserves upgrade ordering from the old CalVer
+packages and `r274` orders same-day builds before comparing hashes. The existing
 `out/packages/MissionPlannerAvalonia-2026.8.0-linux-x64.tar.gz` predates the latest source changes.
 The apphost is an x86-64 ELF PIE, native libraries are ELF `.so` files and the `.dll` files are
 managed assemblies.
