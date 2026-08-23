@@ -661,7 +661,7 @@ native-platform acceptance testing.
   interface and released both reused UDP 57732 sockets cleanly.
 - The `.deb` target is rebuilt from the current 1046-test source on 2026-08-23. Package metadata,
   launcher, desktop entry, icon, man page, native dependencies and required checklist/parameter/log
-  resources were verified; all 407 packaged-file checksums match after extraction, including the
+  resources were verified; every packaged-file checksum matches after extraction, including the
   portable plugin API, HIDSharp/BLE dependency licenses, the SimpleBLE and VLC source/license
   notices and byte-for-byte pinned 8,443,722-byte `airports.csv`.
 - `lintian --fail-on error,warning` passes without diagnostics. The extracted x86-64 ELF apphost
