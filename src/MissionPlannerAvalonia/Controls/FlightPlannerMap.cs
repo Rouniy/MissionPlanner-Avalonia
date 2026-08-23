@@ -894,6 +894,23 @@ public class FlightPlannerMap : MapControl {
     }
   }
 
+  internal bool TryGetVisibleTerrainBounds(out TerrainBounds bounds) {
+    MRect extent = Map.Navigator.Viewport.ToExtent();
+    (double west, double south) = SphericalMercator.ToLonLat(extent.MinX, extent.MinY);
+    (double east, double north) = SphericalMercator.ToLonLat(extent.MaxX, extent.MaxY);
+    south = Math.Clamp(south, -90, 90);
+    north = Math.Clamp(north, -90, 90);
+    west = Math.Clamp(west, -180, 180);
+    east = Math.Clamp(east, -180, 180);
+    bounds = new TerrainBounds(south, west, north, east);
+    return double.IsFinite(south)
+        && double.IsFinite(west)
+        && double.IsFinite(north)
+        && double.IsFinite(east)
+        && south < north
+        && west < east;
+  }
+
   public void RotateTo(double degrees) => Map.Navigator.RotateTo((degrees % 360 + 360) % 360);
 
   public void CenterOnAndZoom(double lat, double lng, double level) {

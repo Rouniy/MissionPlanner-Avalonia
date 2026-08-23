@@ -170,6 +170,11 @@ Portable plugin DLLs live under the user-data `plugins` directory and can be man
 access; install only plugins you trust. See [portable plugins](docs/PLUGINS.md) for the API and
 platform paths.
 
+The official TerrainMakerPlugin is built into Flight Planner as **Make Terrain DAT…**. It creates
+ArduPilot whole-degree DAT tiles from the visible map area using the configured local DEM/SRTM
+sources, reports the exact estimated output size, supports cancellation and atomically replaces only
+complete tiles.
+
 ## Development
 
 ```bash

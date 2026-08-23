@@ -11,6 +11,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using MissionPlannerAvalonia.Services;
 using MissionPlannerAvalonia.ViewModels;
 
 namespace MissionPlannerAvalonia.Views;
@@ -221,6 +222,9 @@ public partial class FlightPlannerView : UserControl {
         (_, _, _) => _ = PrefetchMapTilesAsync(pathOnly: false)));
     menu.Items.Add(Item("Prefetch WP Path…",
         (_, _, _) => _ = PrefetchMapTilesAsync(pathOnly: true)));
+    var terrainDat = new MenuItem { Header = "Make Terrain DAT…" };
+    terrainDat.Click += (_, _) => OpenTerrainMaker();
+    menu.Items.Add(terrainDat);
     menu.Items.Add(Item("Enter UTM Coordinate…",
         (vm, lat, lng) => _ = vm.AddWaypointFromUtmAsync(lat, lng)));
     var trackerHome = Item("Set Tracker Home…",
@@ -361,6 +365,16 @@ public partial class FlightPlannerView : UserControl {
     poly.Items.Add(savePolygon);
     menu.Items.Add(poly);
     return menu;
+  }
+
+  private void OpenTerrainMaker() {
+    if (!Map.TryGetVisibleTerrainBounds(out TerrainBounds bounds)) {
+      if (Vm != null) {
+        Vm.Status = "The visible map area is not ready for Terrain DAT generation.";
+      }
+      return;
+    }
+    TerrainMakerWindow.OpenWindow(bounds);
   }
 
   private void OnZoomSliderChanged(object? sender, Avalonia.Controls.Primitives.RangeBaseValueChangedEventArgs e) {

@@ -1,0 +1,130 @@
+<Window
+  xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:vm="using:MissionPlannerAvalonia.ViewModels"
+  mc:Ignorable="d"
+  d:DesignWidth="820"
+  d:DesignHeight="610"
+  x:Class="MissionPlannerAvalonia.Views.TerrainMakerWindow"
+  x:DataType="vm:TerrainMakerViewModel"
+  Title="Terrain DAT Maker"
+  Width="820"
+  Height="610"
+  MinWidth="680"
+  MinHeight="540"
+  WindowStartupLocation="CenterOwner"
+  Background="{DynamicResource MpControlBg}"
+>
+  <Grid Margin="16" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto" RowSpacing="12">
+    <StackPanel Grid.Row="0" Spacing="4">
+      <TextBlock Classes="pagetitle" Text="ArduPilot Terrain DAT Maker" />
+      <TextBlock
+        Classes="fieldlbl"
+        TextWrapping="Wrap"
+        Text="Cross-platform port of Mission Planner's TerrainMakerPlugin. The visible Flight Planner area is expanded to whole one-degree DAT tiles. Local GeoTIFF and DTED sources take precedence over cached or downloaded SRTM."
+      />
+    </StackPanel>
+
+    <Border Grid.Row="1" Padding="12" BorderBrush="#555" BorderThickness="1" CornerRadius="4">
+      <Grid ColumnDefinitions="Auto,140,Auto,140" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="8">
+        <TextBlock Grid.Row="0" Grid.Column="0" Classes="fieldlbl" Text="South latitude" VerticalAlignment="Center" />
+        <NumericUpDown
+          Grid.Row="0"
+          Grid.Column="1"
+          Value="{Binding South}"
+          Minimum="-90"
+          Maximum="90"
+          Increment="0.000001"
+          FormatString="0.0000000"
+          IsEnabled="{Binding CanEdit}"
+        />
+        <TextBlock Grid.Row="0" Grid.Column="2" Classes="fieldlbl" Text="North latitude" VerticalAlignment="Center" />
+        <NumericUpDown
+          Grid.Row="0"
+          Grid.Column="3"
+          Value="{Binding North}"
+          Minimum="-90"
+          Maximum="90"
+          Increment="0.000001"
+          FormatString="0.0000000"
+          IsEnabled="{Binding CanEdit}"
+        />
+        <TextBlock Grid.Row="1" Grid.Column="0" Classes="fieldlbl" Text="West longitude" VerticalAlignment="Center" />
+        <NumericUpDown
+          Grid.Row="1"
+          Grid.Column="1"
+          Value="{Binding West}"
+          Minimum="-180"
+          Maximum="180"
+          Increment="0.000001"
+          FormatString="0.0000000"
+          IsEnabled="{Binding CanEdit}"
+        />
+        <TextBlock Grid.Row="1" Grid.Column="2" Classes="fieldlbl" Text="East longitude" VerticalAlignment="Center" />
+        <NumericUpDown
+          Grid.Row="1"
+          Grid.Column="3"
+          Value="{Binding East}"
+          Minimum="-180"
+          Maximum="180"
+          Increment="0.000001"
+          FormatString="0.0000000"
+          IsEnabled="{Binding CanEdit}"
+        />
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="2" ColumnDefinitions="Auto,140,*" ColumnSpacing="10">
+      <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Grid spacing (metres)" VerticalAlignment="Center" />
+      <NumericUpDown
+        Grid.Column="1"
+        Value="{Binding SpacingMeters}"
+        Minimum="5"
+        Maximum="100"
+        Increment="1"
+        FormatString="0"
+        IsEnabled="{Binding CanEdit}"
+      />
+      <TextBlock
+        Grid.Column="2"
+        Classes="fieldlbl"
+        Text="Mission Planner allows 5–100 m. Smaller spacing increases file size and generation time sharply."
+        TextWrapping="Wrap"
+        VerticalAlignment="Center"
+      />
+    </Grid>
+
+    <Grid Grid.Row="3" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+      <TextBlock Grid.Column="0" Classes="fieldlbl" Text="Output folder" VerticalAlignment="Center" />
+      <TextBox Grid.Column="1" Text="{Binding OutputDirectory}" IsEnabled="{Binding CanEdit}" />
+      <Button Grid.Column="2" Content="Browse…" Command="{Binding BrowseOutputCommand}" IsEnabled="{Binding CanEdit}" />
+    </Grid>
+
+    <Border Grid.Row="4" Padding="10" Background="#202830" CornerRadius="4">
+      <StackPanel Spacing="4">
+        <TextBlock FontWeight="Bold" Text="Generation estimate" />
+        <TextBlock x:Name="EstimateText" Text="{Binding EstimateText}" TextWrapping="Wrap" />
+      </StackPanel>
+    </Border>
+
+    <Border Grid.Row="5" Padding="10" BorderBrush="#444" BorderThickness="1" CornerRadius="4">
+      <TextBlock Text="{Binding Status}" Foreground="#9CDCFE" TextWrapping="Wrap" />
+    </Border>
+
+    <Grid Grid.Row="6" RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+      <ProgressBar
+        Grid.Row="0"
+        Grid.Column="0"
+        Grid.ColumnSpan="4"
+        Minimum="0"
+        Maximum="100"
+        Value="{Binding ProgressPercent}"
+      />
+      <Button Grid.Row="1" Grid.Column="1" Content="Generate" Command="{Binding StartCommand}" IsEnabled="{Binding CanEdit}" MinWidth="100" />
+      <Button Grid.Row="1" Grid.Column="2" Content="Cancel" Command="{Binding CancelCommand}" IsEnabled="{Binding IsBusy}" MinWidth="90" />
+      <Button Grid.Row="1" Grid.Column="3" Content="Close" Click="OnClose" MinWidth="90" />
+    </Grid>
+  </Grid>
+</Window>
